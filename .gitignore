@@ -1,0 +1,21 @@
+# Dependencias
+node_modules
+
+# Archivos de build y producción
+dist
+dist-ssr
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Archivos de entorno
+.env
+.env.local
+.env.*.local
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
