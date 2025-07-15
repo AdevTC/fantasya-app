@@ -1,7 +1,7 @@
 import React from 'react';
 import { Plus, CheckCircle2, XCircle, MinusCircle, HelpCircle } from 'lucide-react';
 
-export default function PlayerSlot({ player, position, onClick, onSetCaptain, isCaptain, isEditable, onToggleActive, isInline = false }) {
+export default function PlayerSlot({ player, position, onClick, onSetCaptain, isCaptain, isEditable, onToggleActive, isInline = false, isCoach = false }) {
     const hasPlayer = player && player.name;
 
     const handleActionClick = (e, action) => {
@@ -15,9 +15,10 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
     let borderColor = 'border-transparent';
 
     if (hasPlayer) {
+        // Lógica de borde según el estado
         if (isCaptain) {
             borderColor = 'border-yellow-500';
-        } else if (player.status === 'playing' || player.active) {
+        } else if (player.active || player.status === 'playing') {
             borderColor = 'border-emerald-500';
         } else if (player.status === 'did_not_play') {
             borderColor = 'border-red-500';
@@ -27,21 +28,21 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
             borderColor = 'border-gray-400';
         }
         
-        // El botón 'T' es para suplentes y entrenador
-        if (typeof onToggleActive === 'function') {
-            statusIcon = (
-                <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
-                    <span className="font-bold text-sm">T</span>
-                </button>
-            );
-        } else if(player.status) { // El icono de estado es para los titulares
-             switch (player.status) {
-                case 'playing': statusIcon = <div title="Jugando" className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center"><CheckCircle2 size={16}/></div>; break;
-                case 'did_not_play': statusIcon = <div title="No jugó" className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center"><XCircle size={16}/></div>; break;
-                case 'not_called_up': statusIcon = <div title="No convocado" className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-yellow-500 text-white flex items-center justify-center"><MinusCircle size={16}/></div>; break;
-                case 'por_definir': statusIcon = <div title="Por definir" className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-gray-400 text-white flex items-center justify-center"><HelpCircle size={16}/></div>; break;
-                default: break;
+        // Icono de estado (para todos los jugadores con estado definido)
+        const getStatusIcon = (status) => {
+            switch (status) {
+                case 'playing': return <div title="Jugando" className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center"><CheckCircle2 size={16}/></div>;
+                case 'did_not_play': return <div title="No jugó" className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center"><XCircle size={16}/></div>;
+                case 'not_called_up': return <div title="No convocado" className="w-6 h-6 rounded-full bg-yellow-500 text-white flex items-center justify-center"><MinusCircle size={16}/></div>;
+                case 'por_definir': return <div title="Por definir" className="w-6 h-6 rounded-full bg-gray-400 text-white flex items-center justify-center"><HelpCircle size={16}/></div>;
+                default: return null;
             }
+        };
+        
+        // Posicionamiento del icono de estado
+        if (player.status) {
+            const iconPosition = onToggleActive ? 'absolute -top-2 -right-2' : 'absolute -bottom-2 -right-2';
+            statusIcon = <div className={iconPosition}>{getStatusIcon(player.status)}</div>;
         }
     }
 
@@ -53,7 +54,16 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
                         <span className="font-bold text-sm">C</span>
                     </button>
                 )}
+                
                 {statusIcon}
+                
+                {/* El botón 'T' es para suplentes (pero no para el entrenador) */}
+                {hasPlayer && typeof onToggleActive === 'function' && !isCoach && (
+                     <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
+                        <span className="font-bold text-sm">T</span>
+                    </button>
+                )}
+
                 {hasPlayer ? (
                     <div className="flex flex-col items-center justify-center w-full px-1">
                         <p className="text-xs font-bold text-gray-800 whitespace-nowrap">{player.name}</p>

@@ -22,6 +22,10 @@ export default {
         'deep-blue': '#1E40AF',
         'vibrant-purple': '#7C3AED',
         'energetic-orange': '#F59E0B',
+        // --- NUEVOS COLORES PARA EL PODIO ---
+        'podium-gold': '#FFFBEB',   // Un amarillo muy pálido
+        'podium-silver': '#F9FAFB', // Un gris muy claro
+        'podium-bronze': '#FFF7ED', // Un naranja muy pálido
       }
     },
   },

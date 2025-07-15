@@ -9,7 +9,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
     const [price, setPrice] = useState('');
     const [buyerId, setBuyerId] = useState('');
     const [sellerId, setSellerId] = useState('market');
-    const [transferType, setTransferType] = useState('puja'); // Cambiado a 'puja' por defecto
+    const [transferType, setTransferType] = useState('puja');
     const [loading, setLoading] = useState(false);
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
@@ -40,12 +40,17 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
         }
     }, [isOpen, existingTransfer, league.members]);
 
-    // --- NUEVA LÓGICA: Si el tipo es 'puja', fuerza al vendedor a ser 'mercado' ---
+    // --- LÓGICA DE Fichajes (Vendedor y Comprador) ---
     useEffect(() => {
+        // Si es una puja, el vendedor siempre es el mercado.
         if (transferType === 'puja') {
             setSellerId('market');
         }
-    }, [transferType]);
+        // Si el mercado compra, es siempre un acuerdo.
+        if (buyerId === 'market') {
+            setTransferType('acuerdo');
+        }
+    }, [transferType, buyerId]);
 
 
     const handleSubmit = async (e) => {
@@ -66,7 +71,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
             playerName: player.name,
             price: parseFloat(String(price).replace(',', '.')) || 0,
             buyerId,
-            buyerName: league.members[buyerId]?.teamName,
+            buyerName: buyerId === 'market' ? 'Mercado' : league.members[buyerId]?.teamName,
             sellerId,
             sellerName: sellerId === 'market' ? 'Mercado' : league.members[sellerId]?.teamName,
             type: transferType,
@@ -106,7 +111,14 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
                         <div><label className="label">Hora del Fichaje</label><input type="time" value={time} onChange={e => setTime(e.target.value)} className="input" /></div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="label">Comprador</label><select value={buyerId} onChange={e => setBuyerId(e.target.value)} className="input">{Object.entries(league.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}</select></div>
+                        <div>
+                            <label className="label">Comprador</label>
+                            {/* --- Opción de Mercado añadida al comprador --- */}
+                            <select value={buyerId} onChange={e => setBuyerId(e.target.value)} className="input">
+                                <option value="market">Mercado</option>
+                                {Object.entries(league.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}
+                            </select>
+                        </div>
                         <div>
                             <label className="label">Vendedor</label>
                             {/* El selector de vendedor se deshabilita si el tipo es 'puja' */}
@@ -120,8 +132,8 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
                         <div><label className="label">Precio (€)</label><input type="text" value={price} onChange={e => setPrice(e.target.value)} className="input" placeholder="Ej: 120000000,50" /></div>
                         <div>
                             <label className="label">Tipo de Movimiento</label>
-                             {/* --- OPCIONES CORREGIDAS --- */}
-                            <select value={transferType} onChange={e => setTransferType(e.target.value)} className="input capitalize">
+                             {/* El selector de tipo se deshabilita si el comprador es el mercado */}
+                            <select value={transferType} onChange={e => setTransferType(e.target.value)} className="input capitalize" disabled={buyerId === 'market'}>
                                 <option value="puja">Puja</option>
                                 <option value="clausulazo">Clausulazo</option>
                                 <option value="acuerdo">Acuerdo</option>
