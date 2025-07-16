@@ -2,13 +2,14 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { Toaster } from 'react-hot-toast';
+import { ThemeProvider } from './context/ThemeContext';
 
 // Importaciones de páginas y componentes
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import LeaguePage from './pages/LeaguePage';
 import CompleteProfilePage from './pages/CompleteProfilePage';
-import UserProfilePage from './pages/UserProfilePage'; // <-- Nueva importación
+import UserProfilePage from './pages/UserProfilePage';
 import ProtectedRoute from './components/ProtectedRoute';
 import PlayersDatabasePage from './pages/PlayersDatabasePage';
 
@@ -18,7 +19,7 @@ function NavigateToCorrectPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
+            <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
                 <p className="text-xl">Cargando...</p>
             </div>
         );
@@ -29,20 +30,20 @@ function NavigateToCorrectPage() {
 
 function App() {
   return (
-    <>
+    <ThemeProvider>
       <Toaster 
         position="top-center" 
         reverseOrder={false}
         toastOptions={{
           success: {
             duration: 3000,
-            theme: {
-              primary: 'green',
-              secondary: 'black',
-            },
           },
           error: {
             duration: 5000,
+          },
+          style: {
+            background: '#333',
+            color: '#fff',
           },
         }}
       />
@@ -64,7 +65,7 @@ function App() {
           <Route path="/" element={<NavigateToCorrectPage />} />
         </Routes>
       </Router>
-    </>
+    </ThemeProvider>
   );
 }
 

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../config/firebase';
-import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
 
-export default function RegisterTransferModal({ isOpen, onClose, league, onTransferRegistered, existingTransfer }) {
+export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
     const [player, setPlayer] = useState(null);
     const [price, setPrice] = useState('');
     const [buyerId, setBuyerId] = useState('');
@@ -31,22 +31,20 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
                 const now = new Date();
                 setPlayer(null);
                 setPrice('');
-                setBuyerId(Object.keys(league.members)[0] || '');
+                // CORRECCIÓN: Usar season.members para el valor inicial
+                setBuyerId(season?.members ? Object.keys(season.members)[0] || '' : '');
                 setSellerId('market');
                 setTransferType('puja');
                 setDate(now.toISOString().split('T')[0]);
                 setTime(now.toTimeString().slice(0, 5));
             }
         }
-    }, [isOpen, existingTransfer, league.members]);
+    }, [isOpen, existingTransfer, season]);
 
-    // --- LÓGICA DE Fichajes (Vendedor y Comprador) ---
     useEffect(() => {
-        // Si es una puja, el vendedor siempre es el mercado.
         if (transferType === 'puja') {
             setSellerId('market');
         }
-        // Si el mercado compra, es siempre un acuerdo.
         if (buyerId === 'market') {
             setTransferType('acuerdo');
         }
@@ -71,21 +69,22 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
             playerName: player.name,
             price: parseFloat(String(price).replace(',', '.')) || 0,
             buyerId,
-            buyerName: buyerId === 'market' ? 'Mercado' : league.members[buyerId]?.teamName,
+            buyerName: buyerId === 'market' ? 'Mercado' : season.members[buyerId]?.teamName,
             sellerId,
-            sellerName: sellerId === 'market' ? 'Mercado' : league.members[sellerId]?.teamName,
+            sellerName: sellerId === 'market' ? 'Mercado' : season.members[sellerId]?.teamName,
             type: transferType,
             timestamp: combinedDateTime,
         };
 
         try {
+            // CORRECCIÓN: La ruta ahora incluye el ID de la temporada
+            const basePath = collection(db, 'leagues', league.id, 'seasons', season.id, 'transfers');
             if (existingTransfer) {
-                const transferRef = doc(db, 'leagues', league.id, 'transfers', existingTransfer.id);
+                const transferRef = doc(basePath, existingTransfer.id);
                 await updateDoc(transferRef, transferData);
                 toast.success('Fichaje actualizado correctamente', { id: loadingToast });
             } else {
-                const transfersRef = collection(db, 'leagues', league.id, 'transfers');
-                await addDoc(transfersRef, transferData);
+                await addDoc(basePath, transferData);
                 toast.success('Fichaje registrado correctamente', { id: loadingToast });
             }
             onTransferRegistered();
@@ -102,46 +101,48 @@ export default function RegisterTransferModal({ isOpen, onClose, league, onTrans
 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 w-full max-w-lg shadow-lg">
-                <h3 className="text-2xl font-bold text-gray-800 mb-6">{existingTransfer ? 'Editar Fichaje' : 'Registrar Nuevo Fichaje'}</h3>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div><label className="label">Jugador</label><PlayerAutocomplete onPlayerSelect={setPlayer} initialValue={player?.name}/></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="label">Fecha del Fichaje</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="input" /></div>
-                        <div><label className="label">Hora del Fichaje</label><input type="time" value={time} onChange={e => setTime(e.target.value)} className="input" /></div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="label">Comprador</label>
-                            {/* --- Opción de Mercado añadida al comprador --- */}
-                            <select value={buyerId} onChange={e => setBuyerId(e.target.value)} className="input">
-                                <option value="market">Mercado</option>
-                                {Object.entries(league.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}
-                            </select>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-lg border dark:border-gray-700">
+                <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">{existingTransfer ? 'Editar Fichaje' : 'Registrar Nuevo Fichaje'}</h3>
+                {/* CORRECCIÓN: Añadir comprobación de que `season` existe antes de renderizar el formulario */}
+                {season ? (
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div><label className="label dark:text-gray-300">Jugador</label><PlayerAutocomplete onPlayerSelect={setPlayer} initialValue={player?.name}/></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label className="label dark:text-gray-300">Fecha del Fichaje</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" /></div>
+                            <div><label className="label dark:text-gray-300">Hora del Fichaje</label><input type="time" value={time} onChange={e => setTime(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" /></div>
                         </div>
-                        <div>
-                            <label className="label">Vendedor</label>
-                            {/* El selector de vendedor se deshabilita si el tipo es 'puja' */}
-                            <select value={sellerId} onChange={e => setSellerId(e.target.value)} className="input" disabled={transferType === 'puja'}>
-                                <option value="market">Mercado</option>
-                                {Object.entries(league.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}
-                            </select>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="label dark:text-gray-300">Comprador</label>
+                                <select value={buyerId} onChange={e => setBuyerId(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                    <option value="market">Mercado</option>
+                                    {Object.entries(season.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="label dark:text-gray-300">Vendedor</label>
+                                <select value={sellerId} onChange={e => setSellerId(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={transferType === 'puja'}>
+                                    <option value="market">Mercado</option>
+                                    {Object.entries(season.members).map(([uid, member]) => (<option key={uid} value={uid}>{member.teamName}</option>))}
+                                </select>
+                            </div>
                         </div>
-                    </div>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="label">Precio (€)</label><input type="text" value={price} onChange={e => setPrice(e.target.value)} className="input" placeholder="Ej: 120000000,50" /></div>
-                        <div>
-                            <label className="label">Tipo de Movimiento</label>
-                             {/* El selector de tipo se deshabilita si el comprador es el mercado */}
-                            <select value={transferType} onChange={e => setTransferType(e.target.value)} className="input capitalize" disabled={buyerId === 'market'}>
-                                <option value="puja">Puja</option>
-                                <option value="clausulazo">Clausulazo</option>
-                                <option value="acuerdo">Acuerdo</option>
-                            </select>
+                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label className="label dark:text-gray-300">Precio (€)</label><input type="text" value={price} onChange={e => setPrice(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ej: 120000000,50" /></div>
+                            <div>
+                                <label className="label dark:text-gray-300">Tipo de Movimiento</label>
+                                <select value={transferType} onChange={e => setTransferType(e.target.value)} className="input capitalize dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={buyerId === 'market'}>
+                                    <option value="puja">Puja</option>
+                                    <option value="clausulazo">Clausulazo</option>
+                                    <option value="acuerdo">Acuerdo</option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
-                    <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
-                </form>
+                        <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
+                    </form>
+                ) : (
+                    <p className="text-gray-500 dark:text-gray-400">Cargando datos de la temporada...</p>
+                )}
             </div>
         </div>
     );

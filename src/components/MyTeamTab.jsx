@@ -1,3 +1,5 @@
+// src/components/MyTeamTab.jsx
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { db, auth } from '../config/firebase';
 import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, query, getDocs } from 'firebase/firestore';
@@ -10,10 +12,12 @@ import EditSlotModal from './EditSlotModal';
 import { formatCurrency } from '../utils/helpers';
 import LoadingSpinner from './LoadingSpinner';
 
-export default function MyTeamTab({ league, roundsData }) {
+export default function MyTeamTab({ league, season, roundsData }) {
     const userId = auth.currentUser?.uid;
-    const userRole = league.members[userId]?.role;
-    const memberData = league.members[userId];
+    // --- CORRECCIÓN: Comprobar que 'season' y 'season.members' existen antes de acceder a userId ---
+    const memberData = (season && season.members && season.members[userId]) ? season.members[userId] : null;
+    const userRole = memberData?.role;
+    
     const [isEditingFinances, setIsEditingFinances] = useState(false);
     const [finances, setFinances] = useState({});
     const [activeSubTab, setActiveSubTab] = useState('myTeam');
@@ -30,13 +34,14 @@ export default function MyTeamTab({ league, roundsData }) {
     const isEditable = activeSubTab === 'myTeam' || (activeSubTab === 'viewOther' && userRole === 'admin');
 
     const fetchLineup = useCallback(async (round, uId) => {
-        if (!uId) {
+        if (!uId || !season) {
             setLoadingLineup(false);
             setLineup({ formation: '4-4-2', players: {}, coach: {}, bench: {}, captainSlot: null });
             return;
         }
         setLoadingLineup(true);
-        const lineupRef = doc(db, 'leagues', league.id, 'lineups', `${round}-${uId}`);
+        // --- CORRECCIÓN: La ruta a 'lineups' ahora incluye el ID de la temporada ---
+        const lineupRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'lineups', `${round}-${uId}`);
         const docSnap = await getDoc(lineupRef);
         if (docSnap.exists()) {
             const data = docSnap.data();
@@ -45,31 +50,35 @@ export default function MyTeamTab({ league, roundsData }) {
             setLineup({ formation: '4-4-2', players: {}, coach: {}, bench: {}, captainSlot: null });
         }
         setLoadingLineup(false);
-    }, [league.id]);
+    }, [league.id, season]);
 
     useEffect(() => {
         fetchLineup(selectedRound, viewedUserId);
     }, [viewedUserId, selectedRound, fetchLineup]);
 
     useEffect(() => { 
-        setFinances({ budget: memberData?.finances?.budget || 0, teamValue: memberData?.finances?.teamValue || 0 }); 
-        setTeamName(memberData?.teamName || '');
+        if (memberData) {
+            setFinances({ budget: memberData.finances?.budget || 0, teamValue: memberData.finances?.teamValue || 0 }); 
+            setTeamName(memberData.teamName || '');
+        }
     }, [memberData]);
     
     const lastUpdated = memberData?.finances?.lastUpdated;
 
     const handleCancelFinances = () => {
         setIsEditingFinances(false);
-        setFinances({ budget: memberData?.finances?.budget || 0, teamValue: memberData?.finances?.teamValue || 0 });
+        if (memberData) {
+            setFinances({ budget: memberData.finances?.budget || 0, teamValue: memberData.finances?.teamValue || 0 });
+        }
     };
     
     const handleSaveFinances = async () => {
         const loadingToast = toast.loading('Guardando...');
-        const leagueRef = doc(db, 'leagues', league.id);
+        const seasonRef = doc(db, 'leagues', league.id, 'seasons', season.id);
         const budgetToSave = parseFloat(String(finances.budget).replace(',', '.')) || 0;
         const teamValueToSave = parseFloat(String(finances.teamValue).replace(',', '.')) || 0;
         try {
-            await updateDoc(leagueRef, { [`members.${userId}.finances`]: { budget: budgetToSave, teamValue: teamValueToSave, lastUpdated: serverTimestamp() } });
+            await updateDoc(seasonRef, { [`members.${userId}.finances`]: { budget: budgetToSave, teamValue: teamValueToSave, lastUpdated: serverTimestamp() } });
             toast.success('Finanzas actualizadas', { id: loadingToast });
             setIsEditingFinances(false);
         } catch (error) {
@@ -83,9 +92,9 @@ export default function MyTeamTab({ league, roundsData }) {
             return;
         }
         const loadingToast = toast.loading('Actualizando nombre...');
-        const leagueRef = doc(db, 'leagues', league.id);
+        const seasonRef = doc(db, 'leagues', league.id, 'seasons', season.id);
         try {
-            await updateDoc(leagueRef, { [`members.${userId}.teamName`]: teamName.trim() });
+            await updateDoc(seasonRef, { [`members.${userId}.teamName`]: teamName.trim() });
             toast.success('Nombre del equipo actualizado', { id: loadingToast });
             setIsEditingTeamName(false);
         } catch (error) {
@@ -94,7 +103,7 @@ export default function MyTeamTab({ league, roundsData }) {
     };
 
     const handleSlotClick = (slotId) => { if (isEditable) { setEditingSlot(slotId); setIsSlotModalOpen(true); } };
-    const validateAndSaveLineup = useCallback(async (currentLineup) => { const lineupRef = doc(db, 'leagues', league.id, 'lineups', `${selectedRound}-${viewedUserId}`); await setDoc(lineupRef, currentLineup, { merge: true }); toast.success(`Alineación de ${league.members[viewedUserId]?.teamName} guardada.`); }, [league.id, selectedRound, viewedUserId, league.members]);
+    const validateAndSaveLineup = useCallback(async (currentLineup) => { const lineupRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'lineups', `${selectedRound}-${viewedUserId}`); await setDoc(lineupRef, currentLineup, { merge: true }); toast.success(`Alineación de ${season.members[viewedUserId]?.teamName} guardada.`); }, [league.id, season, selectedRound, viewedUserId]);
     const handleSaveSlot = useCallback(async (playerData) => { const updatedLineup = JSON.parse(JSON.stringify(lineup)); const slotType = editingSlot.split('-')[0]; const slotKey = editingSlot.split('-')[1]; if (playerData === null) { if (slotType === 'players') delete updatedLineup.players[editingSlot]; else if (slotType === 'bench') delete updatedLineup.bench[slotKey]; else if (slotType === 'coach') updatedLineup.coach = {}; } else { if (slotType === 'players') updatedLineup.players[editingSlot] = playerData; else if (slotType === 'bench') updatedLineup.bench[slotKey] = playerData; else if (slotType === 'coach') updatedLineup.coach = playerData; } setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [lineup, editingSlot, validateAndSaveLineup]);
     const handleSetCaptain = useCallback(async (slotId) => { if (!isEditable) return; const newCaptainSlot = lineup.captainSlot === slotId ? null : slotId; const updatedLineup = { ...lineup, captainSlot: newCaptainSlot }; setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [isEditable, lineup, validateAndSaveLineup]);
     const handleToggleActive = useCallback(async (slotId) => { if (!isEditable) return; const [slotType, slotKey] = slotId.split('-'); const updatedLineup = JSON.parse(JSON.stringify(lineup)); let playerToUpdate; if (slotType === 'bench') { playerToUpdate = updatedLineup.bench[slotKey]; } if (!playerToUpdate || !playerToUpdate.playerId) { toast.error("Primero debes añadir un jugador a esta posición."); return; } playerToUpdate.active = !playerToUpdate.active; setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [isEditable, lineup, validateAndSaveLineup]);
@@ -105,11 +114,16 @@ export default function MyTeamTab({ league, roundsData }) {
         if (tab === 'myTeam') {
             setViewedUserId(userId);
         } else {
-            const firstOtherUser = Object.keys(league.members).find(uid => uid !== userId);
+            const firstOtherUser = Object.keys(season.members).find(uid => uid !== userId);
             setViewedUserId(firstOtherUser || null);
         }
     };
     
+    // --- CORRECCIÓN: Si no hay datos del miembro, mostrar un mensaje o nada ---
+    if (!memberData && activeSubTab === 'myTeam') {
+        return <div className="text-center p-8 bg-white rounded-xl border">No eres miembro de esta temporada, por lo que no tienes una pestaña de "Mi Equipo".</div>;
+    }
+
     const isScoreValidated = lineupPoints && lineupPoints.officialScore !== undefined && Math.abs(lineupPoints.totalScore - lineupPoints.officialScore) < 0.01;
     const budgetNum = parseFloat(String(finances.budget).replace(',', '.')) || 0;
     const teamValueNum = parseFloat(String(finances.teamValue).replace(',', '.')) || 0;
@@ -159,11 +173,11 @@ export default function MyTeamTab({ league, roundsData }) {
 
             {activeSubTab === 'viewOther' && (
                 <div className="bg-white rounded-xl shadow-sm border p-6">
-                    <div className="flex items-center gap-4 mb-6"><Eye size={20} className="text-gray-600"/><label className="text-lg font-semibold text-gray-800">Viendo el equipo de:</label><select value={viewedUserId || ''} onChange={e => setViewedUserId(e.target.value)} className="input !w-auto !py-1">{Object.entries(league.members).map(([uid, member]) => { if (uid === userId) return null; return <option key={uid} value={uid}>{member.teamName}</option>})}</select></div>
+                    <div className="flex items-center gap-4 mb-6"><Eye size={20} className="text-gray-600"/><label className="text-lg font-semibold text-gray-800">Viendo el equipo de:</label><select value={viewedUserId || ''} onChange={e => setViewedUserId(e.target.value)} className="input !w-auto !py-1">{Object.entries(season.members).map(([uid, member]) => { if (uid === userId) return null; return <option key={uid} value={uid}>{member.teamName}</option>})}</select></div>
                      {loadingLineup ? <LoadingSpinner text="Cargando alineación..." /> : !viewedUserId ? <p className="text-center text-gray-500">No hay otros equipos en la liga para ver.</p> :
                         <div className="space-y-6">
                             <div className={`p-4 rounded-lg border ${isScoreValidated ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                                {(isScoreValidated && lineupPoints.officialScore !== undefined) ? (<div className="flex items-center gap-3"><CheckCircle size={24} className="text-emerald-600"/><div><p className="font-semibold text-emerald-800">Puntos validados de {league.members[viewedUserId]?.teamName}</p><p className="text-2xl font-bold text-emerald-700">{lineupPoints.totalScore} pts</p></div></div>) : (<div className="space-y-2 text-sm"><div className="flex items-center gap-2 font-semibold text-red-800"><AlertTriangle size={20}/> <p>La puntuación de {league.members[viewedUserId]?.teamName} no coincide</p></div><div className="flex justify-between font-bold border-t pt-2 mt-2"><span>TOTAL ALINEACIÓN:</span><span>{lineupPoints.totalScore}</span></div><div className="flex justify-between font-bold text-red-700"><span>TOTAL OFICIAL (Admin):</span><span>{lineupPoints.officialScore ?? 'N/A'}</span></div></div>)}
+                                {(isScoreValidated && lineupPoints.officialScore !== undefined) ? (<div className="flex items-center gap-3"><CheckCircle size={24} className="text-emerald-600"/><div><p className="font-semibold text-emerald-800">Puntos validados de {season.members[viewedUserId]?.teamName}</p><p className="text-2xl font-bold text-emerald-700">{lineupPoints.totalScore} pts</p></div></div>) : (<div className="space-y-2 text-sm"><div className="flex items-center gap-2 font-semibold text-red-800"><AlertTriangle size={20}/> <p>La puntuación de {season.members[viewedUserId]?.teamName} no coincide</p></div><div className="flex justify-between font-bold border-t pt-2 mt-2"><span>TOTAL ALINEACIÓN:</span><span>{lineupPoints.totalScore}</span></div><div className="flex justify-between font-bold text-red-700"><span>TOTAL OFICIAL (Admin):</span><span>{lineupPoints.officialScore ?? 'N/A'}</span></div></div>)}
                             </div>
                             <LineupDisplay lineupData={lineup} setLineupData={setLineup} roundsData={roundsData} selectedRound={selectedRound} onRoundChange={setSelectedRound} onSlotClick={handleSlotClick} isEditable={isEditable} onSetCaptain={handleSetCaptain} captainSlot={lineup.captainSlot} onToggleActive={handleToggleActive} />
                         </div>

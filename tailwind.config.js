@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // --- AÑADIDO: Habilitar modo oscuro por clase ---
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -22,10 +24,9 @@ export default {
         'deep-blue': '#1E40AF',
         'vibrant-purple': '#7C3AED',
         'energetic-orange': '#F59E0B',
-        // --- NUEVOS COLORES PARA EL PODIO ---
-        'podium-gold': '#FFFBEB',   // Un amarillo muy pálido
-        'podium-silver': '#F9FAFB', // Un gris muy claro
-        'podium-bronze': '#FFF7ED', // Un naranja muy pálido
+        'podium-gold': '#FFFBEB',
+        'podium-silver': '#F9FAFB',
+        'podium-bronze': '#FFF7ED',
       }
     },
   },

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, getDoc, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import toast from 'react-hot-toast';
 
@@ -24,28 +24,44 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
       const user = auth.currentUser;
       if (!user) throw new Error("Usuario no autenticado");
 
-      // Obtenemos el perfil del usuario para coger su nombre de usuario global
       const userProfileRef = doc(db, 'users', user.uid);
       const userProfileSnap = await getDoc(userProfileRef);
       if (!userProfileSnap.exists()) throw new Error("No se encontró el perfil del usuario.");
       const username = userProfileSnap.data().username;
 
-      await addDoc(collection(db, 'leagues'), {
+      const newLeagueRef = doc(collection(db, 'leagues'));
+      const batch = writeBatch(db);
+
+      const initialSeasonId = 'season_1';
+
+      // Estructura de la liga principal
+      batch.set(newLeagueRef, {
         name: leagueName,
         createdAt: serverTimestamp(),
         ownerId: user.uid,
+        activeSeason: initialSeasonId, 
+      });
+
+      // Creación de la primera temporada en una subcolección
+      const seasonRef = doc(db, 'leagues', newLeagueRef.id, 'seasons', initialSeasonId);
+      batch.set(seasonRef, {
+        name: 'Temporada 1',
+        seasonNumber: 1,
+        createdAt: serverTimestamp(),
         members: {
-          [user.uid]: {
-            username: username, // <-- Guardamos el nombre de usuario global
-            teamName: teamName.trim(),
-            role: 'admin',
-            budget: 200,
-            team: [],
-            totalPoints: 0
-          }
+            [user.uid]: {
+              username: username,
+              teamName: teamName.trim(),
+              role: 'admin',
+              budget: 200,
+              team: [],
+              totalPoints: 0
+            }
         },
         inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase()
       });
+
+      await batch.commit();
       
       toast.success('¡Liga creada con éxito!');
       onLeagueCreated();
@@ -69,7 +85,7 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
         <div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-bold text-gray-800">Crear Nueva Liga</h3><button onClick={onClose} className="text-gray-500 hover:text-gray-700">&times;</button></div>
         <form onSubmit={handleCreateLeague} className="space-y-4">
           <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de la Liga</label><input type="text" value={leagueName} onChange={(e) => setLeagueName(e.target.value)} className="input" placeholder="Ej: Liga de los Lunes"/></div>
-          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de tu Equipo en esta Liga</label><input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="input" placeholder="Ej: Los Máquinas FC"/></div>
+          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de tu Equipo (Temporada 1)</label><input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="input" placeholder="Ej: Los Máquinas FC"/></div>
           <div className="flex justify-end gap-4 pt-2"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Creando...' : 'Crear Liga'}</button></div>
         </form>
       </div>
