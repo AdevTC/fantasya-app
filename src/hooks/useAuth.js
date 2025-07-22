@@ -1,33 +1,48 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore'; // <-- CAMBIO: Se importa onSnapshot
 import { auth, db } from '../config/firebase';
 
 export function useAuth() {
   const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null); // <-- Estado para el perfil
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeProfile = () => {}; // Función para limpiar el listener
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      // Limpiar el listener de perfil anterior al cambiar de usuario
+      unsubscribeProfile();
+
       if (user) {
         setUser(user);
-        // Al autenticarse, busca su perfil en Firestore
         const userDocRef = doc(db, 'users', user.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          setProfile(userDocSnap.data());
-        } else {
-          setProfile(null); // No tiene perfil
-        }
+        
+        // --- LÓGICA DE TIEMPO REAL AÑADIDA ---
+        // Ahora escuchamos los cambios en el perfil en tiempo real
+        unsubscribeProfile = onSnapshot(userDocRef, (userDocSnap) => {
+          if (userDocSnap.exists()) {
+            setProfile(userDocSnap.data());
+          } else {
+            setProfile(null);
+          }
+          setLoading(false);
+        }, (error) => {
+            console.error("Error al obtener el perfil en tiempo real:", error);
+            setLoading(false);
+        });
       } else {
         setUser(null);
         setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      unsubscribeProfile(); // Asegurarse de limpiar ambos listeners
+    };
   }, []);
 
   return { user, profile, loading };

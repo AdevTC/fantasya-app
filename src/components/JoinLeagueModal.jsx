@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, runTransaction, getDoc, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, runTransaction, getDoc, deleteField, collectionGroup } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import toast from 'react-hot-toast';
 
@@ -104,6 +104,21 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
             [`members.${selectedClaim}`]: deleteField()
           });
 
+          // Migrar trofeos
+          const achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
+          const achievementSnap = await transaction.get(achievementRef);
+
+          if (achievementSnap.exists()) {
+            const userAchievementRef = doc(db, 'users', user.uid, 'achievements', seasonToJoin.id);
+            const achievementData = achievementSnap.data();
+            transaction.set(userAchievementRef, {
+                seasonName: seasonToJoin.name,
+                leagueName: leagueToJoin.name,
+                trophies: achievementData.trophies
+            });
+            transaction.update(achievementRef, { isPlaceholder: false });
+          }
+
         } else {
           if (!teamName.trim() || teamName.length > 24) throw new Error('El nombre de equipo no es válido.');
           const newMember = { username: username, teamName: teamName.trim(), role: 'member', isPlaceholder: false, totalPoints: 0, finances: { budget: 200, teamValue: 0 } };
@@ -128,7 +143,7 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-lg">
         <div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-bold text-gray-800">Unirse a una Temporada</h3><button onClick={onClose} className="text-gray-500 hover:text-gray-700">&times;</button></div>
         
         {step === 1 && (

@@ -15,11 +15,19 @@ export default function ProtectedRoute() {
     );
   }
 
-  // Si no está cargando y no hay usuario, redirige a /login
   if (!user) {
     return <Navigate to="/login" />;
   }
+  
+  // Las cuentas antiguas creadas antes de esta fecha no requieren verificación de email.
+  const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
+  const userCreationDate = new Date(user.metadata.creationTime);
 
-  // Si hay un usuario, muestra el contenido de la ruta protegida
+  // Si el email del usuario no está verificado Y su cuenta fue creada después de la fecha de corte, se le bloquea.
+  if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
+    return <Navigate to="/login" />;
+  }
+
+  // Si hay un usuario y pasa la comprobación de verificación, se muestra el contenido protegido.
   return <Outlet />;
 }

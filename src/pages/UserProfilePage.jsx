@@ -1,35 +1,45 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { collection, query, where, getDocs, doc } from 'firebase/firestore';
-import { db } from '../config/firebase';
-// --- CORRECCIÓN: Se añade el icono 'Star' a la lista de importaciones ---
-import { Mail, Shield, Trophy, Users, Star } from 'lucide-react';
+import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../config/firebase';
+import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
+import TrophyComponent from '../components/Trophy';
+import toast from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth';
 
-// Componente para la tarjeta resumen de cada liga
-const LeagueSummaryCard = ({ league }) => {
+const CareerStatCard = ({ icon, value, label }) => (
+    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+        <div className="text-emerald-500 mx-auto w-fit">{icon}</div>
+        <p className="text-2xl font-bold text-gray-800 dark:text-gray-200 mt-1">{value}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+    </div>
+);
+
+const SeasonSummaryCard = ({ season }) => {
     return (
-        <Link to={`/league/${league.id}`} className="block bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md hover:border-emerald-500 transition-all">
+        <Link to={`/league/${season.leagueId}?season=${season.seasonId}`} className="block bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md hover:border-emerald-500 transition-all">
             <div className="flex justify-between items-start">
                 <div>
-                    <h3 className="text-xl font-bold text-gray-800">{league.name}</h3>
-                    <p className="text-sm text-gray-500">Tu nombre de equipo: <span className="font-semibold text-vibrant-purple">{league.userTeamName}</span></p>
+                    <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">{season.leagueName}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Temporada: <span className="font-semibold text-gray-600 dark:text-gray-300">{season.seasonName}</span></p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Tu nombre de equipo: <span className="font-semibold text-vibrant-purple">{season.userTeamName}</span></p>
                 </div>
-                <span className="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-semibold">{Object.keys(league.members).length} Participantes</span>
+                <span className="bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full text-sm font-semibold">{Object.keys(season.members).length} Participantes</span>
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4 border-t pt-4">
+            <div className="grid grid-cols-2 gap-4 mt-4 border-t dark:border-gray-600 pt-4">
                 <div className="flex items-center gap-2">
                     <Trophy size={18} className="text-yellow-500" />
                     <div>
-                        <p className="text-xs text-gray-500">Posición</p>
-                        <p className="font-bold text-gray-800">{league.userRank}º</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Posición</p>
+                        <p className="font-bold text-gray-800 dark:text-gray-200">{season.userRank}º</p>
                     </div>
                 </div>
                  <div className="flex items-center gap-2">
                     <Star size={18} className="text-blue-500" />
                     <div>
-                        <p className="text-xs text-gray-500">Puntos Totales</p>
-                        <p className="font-bold text-gray-800">{league.userTotalPoints}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Puntos Totales</p>
+                        <p className="font-bold text-gray-800 dark:text-gray-200">{season.userTotalPoints}</p>
                     </div>
                 </div>
             </div>
@@ -37,35 +47,51 @@ const LeagueSummaryCard = ({ league }) => {
     );
 };
 
-
 export default function UserProfilePage() {
     const { username } = useParams();
+    const { profile: currentUserProfile } = useAuth();
     const [profile, setProfile] = useState(null);
-    const [leagues, setLeagues] = useState([]);
+    const [seasons, setSeasons] = useState([]);
+    const [achievements, setAchievements] = useState([]);
+    const [careerStats, setCareerStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const currentUser = auth.currentUser;
 
-    const getRankInLeague = useCallback((leagueData, userId) => {
-        const members = Object.entries(leagueData.members).map(([uid, data]) => ({ uid, ...data }));
+    const getRankInSeason = useCallback((seasonData, userId) => {
+        const members = Object.entries(seasonData.members).map(([uid, data]) => ({ uid, ...data }));
         members.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
-        
         let rank = 0;
         for (let i = 0; i < members.length; i++) {
             if (i > 0 && members[i].totalPoints === members[i - 1].totalPoints) {
-                // Si hay empate, el rank es el mismo que el anterior
-                const previousRank = members.find(p => p.uid === members[i-1].uid)?.rank
-                rank = previousRank;
+                rank = members[i-1].rank;
             } else {
                 rank = i + 1;
             }
-             members[i].rank = rank; // Asignamos el rank para la siguiente iteración
+            members[i].rank = rank;
             if(members[i].uid === userId) return rank;
         }
-        return rank; // Fallback
+        return rank;
     }, []);
+    
+    const handlePinTrophy = async (achievement) => {
+        if (!currentUser || currentUser.uid !== profile.id) return;
+        const userRef = doc(db, 'users', currentUser.uid);
+        try {
+            const newPinnedTrophy = profile.pinnedTrophy?.trophyId === achievement.trophyId && profile.pinnedTrophy?.seasonName === achievement.seasonName ? null : achievement;
+            await updateDoc(userRef, {
+                pinnedTrophy: newPinnedTrophy
+            });
+            toast.success(newPinnedTrophy ? '¡Logro fijado en tu perfil!' : 'Logro desfijado.');
+        } catch (error) {
+            toast.error('No se pudo actualizar el logro.');
+        }
+    };
 
     useEffect(() => {
-        const fetchProfileAndLeagues = async () => {
+        if (!username) return;
+
+        const fetchProfileData = async () => {
             setLoading(true);
             setError('');
             try {
@@ -73,34 +99,63 @@ export default function UserProfilePage() {
                 const qUser = query(usersRef, where("username", "==", username));
                 const userSnapshot = await getDocs(qUser);
 
-                if (userSnapshot.empty) {
-                    throw new Error('No se encontró ningún usuario con ese nombre.');
-                }
+                if (userSnapshot.empty) throw new Error('No se encontró ningún usuario con ese nombre.');
                 
-                const userProfile = userSnapshot.docs[0].data();
-                const userId = userSnapshot.docs[0].id;
-                setProfile(userProfile);
+                const userDoc = userSnapshot.docs[0];
+                const userId = userDoc.id;
+                setProfile({id: userId, ...userDoc.data()});
 
+                // Fetch achievements
+                const achievementsRef = collection(db, 'users', userId, 'achievements');
+                const achievementsSnapshot = await getDocs(query(achievementsRef, orderBy('seasonName', 'desc')));
+                const allAchievements = achievementsSnapshot.docs.flatMap(doc => doc.data().trophies.map(t => ({...t, seasonName: doc.data().seasonName, leagueName: doc.data().leagueName })));
+                setAchievements(allAchievements);
+
+                // Fetch leagues and calculate career stats
                 const leaguesRef = collection(db, 'leagues');
-                const qLeagues = query(leaguesRef, where(`members.${userId}`, '!=', null));
-                const leaguesSnapshot = await getDocs(qLeagues);
+                const leaguesSnapshot = await getDocs(leaguesRef);
+                const userSeasons = [];
+                let totalWins = 0, totalPodiums = 0, roundsPlayed = 0, totalPointsSum = 0;
 
-                const userLeagues = leaguesSnapshot.docs.map(doc => {
-                    const leagueData = doc.data();
-                    const memberData = leagueData.members[userId];
-                    const rank = getRankInLeague(leagueData, userId);
+                for (const leagueDoc of leaguesSnapshot.docs) {
+                    const seasonsRef = collection(db, 'leagues', leagueDoc.id, 'seasons');
+                    const qSeasons = query(seasonsRef, where(`members.${userId}`, '!=', null));
+                    const seasonsSnapshot = await getDocs(qSeasons);
+                    
+                    for (const seasonDoc of seasonsSnapshot.docs) {
+                        const leagueData = leagueDoc.data();
+                        const seasonData = seasonDoc.data();
+                        const memberData = seasonData.members[userId];
+                        const rank = getRankInSeason(seasonData, userId);
+                        userSeasons.push({ leagueId: leagueDoc.id, seasonId: seasonDoc.id, leagueName: leagueData.name, seasonName: seasonData.name, userTeamName: memberData.teamName, userRank: rank, userTotalPoints: memberData.totalPoints || 0, members: seasonData.members });
 
-                    return {
-                        id: doc.id,
-                        name: leagueData.name,
-                        userTeamName: memberData.teamName,
-                        userRank: rank,
-                        userTotalPoints: memberData.totalPoints || 0,
-                        members: leagueData.members
-                    };
+                        // Calculate stats for this season
+                        const roundsRef = collection(db, 'leagues', leagueDoc.id, 'seasons', seasonDoc.id, 'rounds');
+                        const roundsSnapshot = await getDocs(roundsRef);
+                        roundsSnapshot.forEach(roundDoc => {
+                            const scores = roundDoc.data().scores || {};
+                            if (scores[userId] !== undefined && typeof scores[userId] === 'number') {
+                                roundsPlayed++;
+                                totalPointsSum += scores[userId];
+
+                                const rankedRound = Object.entries(scores)
+                                    .filter(([, score]) => typeof score === 'number')
+                                    .map(([uid, points]) => ({ uid, points }))
+                                    .sort((a, b) => b.points - a.points);
+                                
+                                const userRankInRound = rankedRound.findIndex(p => p.uid === userId) + 1;
+                                if (userRankInRound === 1) totalWins++;
+                                if (userRankInRound > 0 && userRankInRound <= 3) totalPodiums++;
+                            }
+                        });
+                    }
+                }
+                setSeasons(userSeasons);
+                setCareerStats({
+                    seasonsPlayed: userSeasons.length,
+                    totalWins, totalPodiums, roundsPlayed,
+                    averagePoints: roundsPlayed > 0 ? (totalPointsSum / roundsPlayed).toFixed(2) : 0
                 });
-
-                setLeagues(userLeagues);
 
             } catch (err) {
                 console.error("Error al buscar el perfil:", err);
@@ -110,45 +165,98 @@ export default function UserProfilePage() {
             }
         };
 
-        if (username) {
-            fetchProfileAndLeagues();
-        }
-    }, [username, getRankInLeague]);
+        fetchProfileData();
+    }, [username, getRankInSeason]);
 
     if (loading) return <LoadingSpinner fullScreen text="Cargando perfil..." />;
-    if (error) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-red-500">{error}</div>;
+    if (error) return <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center text-red-500">{error}</div>;
     if (!profile) return null;
 
     return (
-        <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 md:p-8">
             <div className="max-w-4xl mx-auto">
-                <div className="bg-white rounded-xl shadow-sm border p-8 mb-6">
+                <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-8 mb-8">
                     <div className="flex flex-col sm:flex-row items-center gap-6">
-                        <div className="w-24 h-24 bg-gradient-to-br from-vibrant-purple to-deep-blue rounded-full flex items-center justify-center text-white text-4xl font-bold">
-                            {profile.username.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                            <h1 className="text-4xl font-bold text-gray-800 text-center sm:text-left">{profile.username}</h1>
-                            <div className="flex items-center gap-2 mt-2 text-gray-500 justify-center sm:justify-start">
+                        <img 
+                            src={profile.photoURL || `https://ui-avatars.com/api/?name=${profile.username}&background=random`}
+                            alt="Foto de perfil"
+                            className="w-24 h-24 rounded-full object-cover border-4 border-emerald-400"
+                        />
+                        <div className="flex-1 text-center sm:text-left">
+                            <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{profile.username}</h1>
+                            <div className="flex items-center justify-center sm:justify-start gap-2 mt-2 text-gray-500 dark:text-gray-400">
                                 <Mail size={16} />
                                 <span>{profile.email}</span>
                             </div>
+                            {profile.bio && <p className="mt-4 text-gray-600 dark:text-gray-300">{profile.bio}</p>}
                         </div>
+                        {currentUser?.uid === profile.id && (
+                             <Link to="/edit-profile" className="btn-secondary flex items-center gap-2">
+                                <Edit size={16}/> Editar Perfil
+                            </Link>
+                        )}
                     </div>
                 </div>
+                
+                {careerStats && (
+                    <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-8 mb-8">
+                        <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Estadísticas de Carrera</h2>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                           <CareerStatCard icon={<Trophy size={24}/>} value={careerStats.seasonsPlayed} label="Temporadas Jugadas"/>
+                           <CareerStatCard icon={<Calendar size={24}/>} value={careerStats.roundsPlayed} label="Jornadas Jugadas"/>
+                           <CareerStatCard icon={<Star size={24}/>} value={careerStats.totalWins} label="Victorias en Jornadas"/>
+                           <CareerStatCard icon={<PodiumIcon size={24}/>} value={careerStats.totalPodiums} label="Podios en Jornadas"/>
+                           <CareerStatCard icon={<BarChart2 size={24}/>} value={careerStats.averagePoints} label="Media de Puntos"/>
+                        </div>
+                    </div>
+                )}
+
+
+                {profile.pinnedTrophy && (
+                    <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border-2 border-yellow-400 dark:border-yellow-500 p-8 mb-8">
+                        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-4 text-center">Logro Destacado</h2>
+                        <div className="flex flex-col items-center gap-2">
+                            <TrophyComponent achievement={profile.pinnedTrophy} />
+                            <p className="text-center text-sm text-gray-600 dark:text-gray-400 mt-2">{profile.pinnedTrophy.description}</p>
+                            <p className="text-center text-xs italic text-gray-500">{profile.pinnedTrophy.leagueName} - {profile.pinnedTrophy.seasonName}</p>
+                        </div>
+                    </div>
+                )}
+
+                {achievements.length > 0 && (
+                    <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-8 mb-8">
+                         <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Palmarés</h2>
+                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-6">
+                            {achievements.map((ach, index) => (
+                                <div key={index} className="relative">
+                                    <TrophyComponent achievement={ach} />
+                                    {currentUser?.uid === profile.id && (
+                                        <button 
+                                            onClick={() => handlePinTrophy(ach)} 
+                                            title="Fijar logro"
+                                            className={`absolute -top-2 -right-2 p-1.5 rounded-full transition-colors ${profile.pinnedTrophy?.trophyId === ach.trophyId && profile.pinnedTrophy?.seasonName === ach.seasonName ? 'bg-yellow-400 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-yellow-400 dark:hover:bg-yellow-600'}`}
+                                        >
+                                            <Pin size={12} />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                         </div>
+                    </div>
+                )}
 
                  <div className="space-y-4">
-                    <h2 className="text-2xl font-bold text-gray-800">Ligas en las que participa</h2>
-                    {leagues.length > 0 ? (
-                        leagues.map(league => <LeagueSummaryCard key={league.id} league={league} />)
+                    <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Temporadas en las que participa</h2>
+                    {seasons.length > 0 ? (
+                        seasons.map(season => <SeasonSummaryCard key={season.seasonId} season={season} />)
                     ) : (
-                        <div className="bg-white rounded-xl shadow-sm border p-8 text-center">
-                            <p className="text-gray-600">Este usuario no participa en ninguna liga todavía.</p>
+                        <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-8 text-center">
+                            <p className="text-gray-600 dark:text-gray-400">Este usuario no participa en ninguna temporada todavía.</p>
                         </div>
                     )}
                  </div>
                  <div className="text-center mt-8">
-                    <Link to="/dashboard" className="text-deep-blue hover:underline font-semibold">Volver al Dashboard</Link>
+                    <Link to="/dashboard" className="text-deep-blue dark:text-blue-400 hover:underline font-semibold">Volver al Dashboard</Link>
                 </div>
             </div>
         </div>

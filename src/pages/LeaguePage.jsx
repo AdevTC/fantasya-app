@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown } from 'lucide-react';
+import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords } from 'lucide-react';
 
 import AdminTab from '../components/AdminTab';
 import RoundsTab from '../components/RoundsTab';
@@ -12,6 +12,7 @@ import MyTeamTab from '../components/MyTeamTab';
 import SettingsModal from '../components/SettingsModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ThemeToggleButton from '../components/ThemeToggleButton';
+import HallOfFameTab from '../components/HallOfFameTab';
 
 const StatCard = ({ icon, title, value, colorClass }) => (
     <div className="bg-white dark:bg-gray-800/50 rounded-xl p-4 shadow-sm border dark:border-gray-700">
@@ -25,7 +26,7 @@ const StatCard = ({ icon, title, value, colorClass }) => (
     </div>
 );
 
-const ClassificationRow = ({ player, isUser }) => {
+const ClassificationRow = ({ player, isUser, profile, className = '' }) => {
     const { rank, teamName, username, totalPoints, diff, diffAhead, streak } = player;
 
     const getRowClass = (rank) => {
@@ -37,13 +38,26 @@ const ClassificationRow = ({ player, isUser }) => {
     };
 
     return (
-        <tr className={getRowClass(rank)}>
-            <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center font-bold text-gray-700 dark:text-gray-300">{rank === 1 && <Crown className="text-yellow-500 mr-2" size={20} />}{rank === 2 && <Medal className="text-gray-400 mr-2" size={20} />}{rank === 3 && <Medal className="text-orange-400 mr-2" size={20} />}{rank || 'N/A'}º</div></td>
-            <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center"><div className="w-8 h-8 rounded-full flex items-center justify-center mr-3 bg-gradient-to-r from-gray-400 to-gray-600"><span className="text-white text-sm font-bold">{(teamName || '?').charAt(0)}</span></div>{username ? (<Link to={`/profile/${username}`} className="font-semibold text-gray-800 dark:text-gray-200 hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{teamName || 'Nombre no disponible'}{isUser ? ' (Tú)' : ''}</Link>) : (<span className="font-semibold text-gray-800 dark:text-gray-200">{teamName || 'Nombre no disponible'}{isUser ? ' (Tú)' : ''}</span>)}</div></td>
-            <td className="px-6 py-4 whitespace-nowrap font-bold text-gray-900 dark:text-white">{totalPoints?.toLocaleString() || 0}</td>
-            <td className={`px-6 py-4 whitespace-nowrap font-semibold text-red-600 dark:text-red-500`}>{diff === 0 ? '—' : diff}</td>
-            <td className={`px-6 py-4 whitespace-nowrap font-semibold text-orange-600 dark:text-orange-500`}>{diffAhead === 0 ? '—' : diffAhead}</td>
-            <td className="px-6 py-4 whitespace-nowrap">{streak > 0 && <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-semibold"><TrendingUp size={16} className="mr-1" /> +{streak}</span>}{streak < 0 && <span className="flex items-center text-red-600 dark:text-red-500 font-semibold"><TrendingDown size={16} className="mr-1" /> {streak}</span>}{streak === 0 && <span className="flex items-center text-gray-500 dark:text-gray-400 font-semibold"><Minus size={16} className="mr-1" /></span>}</td>
+        <tr className={`${getRowClass(rank)} ${className}`}>
+            <td className="px-4 sm:px-6 py-4 whitespace-nowrap"><div className="flex items-center font-bold text-gray-700 dark:text-gray-300">{rank === 1 && <Crown className="text-yellow-500 mr-2" size={20} />}{rank === 2 && <Medal className="text-gray-400 mr-2" size={20} />}{rank === 3 && <Medal className="text-orange-400 mr-2" size={20} />}{rank || 'N/A'}º</div></td>
+            <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                    <img 
+                        src={profile?.photoURL || `https://ui-avatars.com/api/?name=${teamName || '?'}&background=random`} 
+                        alt={`Foto de ${teamName}`}
+                        className="w-8 h-8 rounded-full object-cover mr-3"
+                    />
+                    {username ? (
+                        <Link to={`/profile/${username}`} className="font-semibold text-gray-800 dark:text-gray-200 hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{teamName || 'Nombre no disponible'}{isUser ? ' (Tú)' : ''}</Link>
+                    ) : (
+                        <span className="font-semibold text-gray-800 dark:text-gray-200">{teamName || 'Nombre no disponible'}{isUser ? ' (Tú)' : ''}</span>
+                    )}
+                </div>
+            </td>
+            <td className="px-4 sm:px-6 py-4 whitespace-nowrap font-bold text-gray-900 dark:text-white">{totalPoints?.toLocaleString() || 0}</td>
+            <td className={`px-4 sm:px-6 py-4 whitespace-nowrap font-semibold text-red-600 dark:text-red-500`}>{diff === 0 ? '—' : diff}</td>
+            <td className={`px-4 sm:px-6 py-4 whitespace-nowrap font-semibold text-orange-600 dark:text-orange-500`}>{diffAhead === 0 ? '—' : diffAhead}</td>
+            <td className="px-4 sm:px-6 py-4 whitespace-nowrap">{streak > 0 && <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-semibold"><TrendingUp size={16} className="mr-1" /> +{streak}</span>}{streak < 0 && <span className="flex items-center text-red-600 dark:text-red-500 font-semibold"><TrendingDown size={16} className="mr-1" /> {streak}</span>}{streak === 0 && <span className="flex items-center text-gray-500 dark:text-gray-400 font-semibold"><Minus size={16} className="mr-1" /></span>}</td>
         </tr>
     );
 };
@@ -52,12 +66,32 @@ const ClassificationTab = ({ season, roundsData }) => {
     const userId = auth.currentUser?.uid;
     const [isExpanded, setIsExpanded] = useState(false);
     const [selectedRound, setSelectedRound] = useState(roundsData.length > 0 ? roundsData[roundsData.length - 1].roundNumber : 1);
+    const [memberProfiles, setMemberProfiles] = useState({});
 
     useEffect(() => {
         if (roundsData.length > 0) {
             setSelectedRound(roundsData[roundsData.length - 1].roundNumber);
         }
     }, [roundsData]);
+    
+    useEffect(() => {
+        const fetchMemberProfiles = async () => {
+            if (!season || !season.members) return;
+            const memberIds = Object.keys(season.members);
+            if (memberIds.length === 0) return;
+            
+            const usersRef = collection(db, "users");
+            const q = query(usersRef, where("__name__", "in", memberIds));
+            
+            const querySnapshot = await getDocs(q);
+            const profiles = {};
+            querySnapshot.forEach((doc) => {
+                profiles[doc.id] = doc.data();
+            });
+            setMemberProfiles(profiles);
+        };
+        fetchMemberProfiles();
+    }, [season]);
 
     const getRankedPlayersForRound = (roundNumber) => {
         const filteredRounds = roundsData.filter(r => r.roundNumber <= roundNumber);
@@ -68,7 +102,6 @@ const ClassificationTab = ({ season, roundsData }) => {
         filteredRounds.forEach(round => {
             if (round.scores) {
                 Object.entries(round.scores).forEach(([uid, score]) => {
-                    // --- CORRECCIÓN: Asegurarse de que solo se suman números ---
                     if (memberPoints[uid] && typeof score === 'number') {
                         memberPoints[uid].totalPoints += score;
                     }
@@ -115,7 +148,7 @@ const ClassificationTab = ({ season, roundsData }) => {
     }, [season, roundsData, selectedRound]);
     
     const currentUserData = classification.find(p => p.uid === userId);
-    const playersToShow = isExpanded ? classification : classification.slice(0, 3);
+    const playersToShow = isExpanded ? classification : classification.slice(0, 5);
 
     return (
         <div>
@@ -126,7 +159,7 @@ const ClassificationTab = ({ season, roundsData }) => {
                 <StatCard icon={<Flame />} title="Racha" value={currentUserData?.streak ? `${currentUserData.streak > 0 ? '+' : ''}${currentUserData.streak}` : 'N/A'} colorClass={currentUserData?.streak > 0 ? 'text-emerald-500' : currentUserData?.streak < 0 ? 'text-red-500' : 'text-gray-500'} />
             </div>
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 overflow-hidden">
-                <div className="px-6 py-4 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/20 flex justify-between items-center">
+                <div className="px-4 sm:px-6 py-4 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/20 flex flex-col sm:flex-row justify-between items-center gap-4">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Clasificación General</h3>
                     <div className="flex items-center gap-2">
                         <label htmlFor="round-filter" className="text-sm font-medium text-gray-600 dark:text-gray-400">Ver Jornada:</label>
@@ -145,21 +178,22 @@ const ClassificationTab = ({ season, roundsData }) => {
                     <table className="w-full">
                         <thead className="bg-gray-50 dark:bg-gray-800/20">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Pos</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Jugador</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Puntos</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Dif. Líder</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Dif. Delante</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Racha</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Pos</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Jugador</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Puntos</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Dif. Líder</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Dif. Delante</th>
+                                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Racha</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800/40 divide-y divide-gray-200 dark:divide-gray-700">
-                            {playersToShow.map((player) => (<ClassificationRow key={player.uid} player={player} isUser={player.uid === userId} />))}
+                            {classification.map((player) => (<ClassificationRow key={`${player.uid}-mobile`} player={player} isUser={player.uid === userId} profile={memberProfiles[player.uid]} className="md:hidden" />))}
+                            {playersToShow.map((player) => (<ClassificationRow key={`${player.uid}-desktop`} player={player} isUser={player.uid === userId} profile={memberProfiles[player.uid]} className="hidden md:table-row" />))}
                         </tbody>
                     </table>
                 </div>
-                {classification.length > 3 && (
-                    <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800/20 text-center">
+                {classification.length > 5 && (
+                    <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800/20 text-center hidden md:block">
                         <button onClick={() => setIsExpanded(!isExpanded)} className="text-deep-blue dark:text-blue-400 hover:text-deep-blue/80 font-semibold text-sm flex items-center justify-center w-full">
                             <ChevronDown className={`inline mr-2 transition-transform ${isExpanded ? 'rotate-180' : ''}`} size={16} />
                             {isExpanded ? 'Mostrar menos' : 'Ver clasificación completa'}
@@ -269,17 +303,18 @@ export default function LeaguePage() {
 
     const renderTabContent = () => {
         if (!selectedSeason) return <LoadingSpinner />;
-        if (!isMemberOfSelectedSeason && activeTab !== 'clasificacion') {
-            return <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700"><p className="text-gray-600 dark:text-gray-400">No eres miembro de esta temporada. Solo puedes ver la clasificación.</p></div>;
+        if (!isMemberOfSelectedSeason && !['clasificacion', 'estadisticas', 'jornadas', 'salon-de-la-fama'].includes(activeTab)) {
+            return <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700"><p className="text-gray-600 dark:text-gray-400">No eres miembro de esta temporada. Solo puedes ver la información pública.</p></div>;
         }
 
-        const props = { league, season: selectedSeason, roundsData, userRole };
+        const props = { league, season: selectedSeason, roundsData, userRole, seasons };
         switch (activeTab) {
             case 'clasificacion': return <ClassificationTab {...props} />;
             case 'mi-equipo':     return <MyTeamTab {...props} />;
             case 'jornadas':      return <RoundsTab {...props} />;
             case 'fichajes':      return <TransfersTab {...props} />;
             case 'estadisticas':  return <StatsTab {...props} />;
+            case 'salon-de-la-fama': return <HallOfFameTab {...props} />;
             case 'admin':         return userRole === 'admin' ? <AdminTab {...props} /> : null;
             default: return null;
         }
@@ -312,7 +347,7 @@ export default function LeaguePage() {
                             </div>
                             <div className="flex items-center space-x-2">
                                 <ThemeToggleButton />
-                                {userRole === 'admin' && <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-semibold">Admin</span>}
+                                {userRole === 'admin' && <span className="hidden sm:inline-block bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-semibold">Admin</span>}
                                 {league.ownerId === user?.uid && (<button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><Settings size={20} /></button>)}
                             </div>
                         </div>
@@ -320,14 +355,15 @@ export default function LeaguePage() {
                 </header>
                 <div className="bg-white dark:bg-gray-800/50 border-b dark:border-gray-700">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                        <div className="flex space-x-8 -mb-px overflow-x-auto">
+                        <div className="flex space-x-4 sm:space-x-8 -mb-px overflow-x-auto">
                             <TabButton icon={<Trophy size={18} />} text="Clasificación" tabName="clasificacion" />
+                            <TabButton icon={<CalendarDays size={18} />} text="Jornadas" tabName="jornadas" />
+                            <TabButton icon={<BarChart2 size={18} />} text="Estadísticas" tabName="estadisticas" />
+                            <TabButton icon={<Swords size={18} />} text="Salón de la Fama" tabName="salon-de-la-fama" />
                             {isMemberOfSelectedSeason && (
                                 <>
                                     <TabButton icon={<User size={18} />} text="Mi Equipo" tabName="mi-equipo" />
-                                    <TabButton icon={<CalendarDays size={18} />} text="Jornadas" tabName="jornadas" />
                                     <TabButton icon={<Repeat size={18} />} text="Fichajes" tabName="fichajes" />
-                                    <TabButton icon={<BarChart2 size={18} />} text="Estadísticas" tabName="estadisticas" />
                                     {userRole === 'admin' && <TabButton icon={<ShieldCheck size={18} />} text="Admin" tabName="admin" />}
                                 </>
                             )}

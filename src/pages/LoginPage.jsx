@@ -1,26 +1,59 @@
 import React, { useState } from 'react';
-import { GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { FaFutbol } from 'react-icons/fa';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
     const navigate = useNavigate();
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
     const [username, setUsername] = useState('');
+    const [loginIdentifier, setLoginIdentifier] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
 
     const validateUsername = (username) => {
         if (username.length < 3 || username.length > 16) return "El nombre de usuario debe tener entre 3 y 16 caracteres.";
-        if (!/^[a-z0-9_.]+$/.test(username)) return "Solo minúsculas, números, '_' y '.' permitidos.";
+        if (!/^[a-z0-9_.]+$/.test(username)) return "Solo se permiten letras minúsculas del alfabeto inglés, números, '_' y '.'";
         if (username.startsWith('.') || username.endsWith('.')) return "No puede empezar o acabar con un punto.";
+        if (username.includes('..')) return "No puede contener dos puntos seguidos.";
         if (/^\d/.test(username)) return "No puede empezar con un número.";
         return null;
+    };
+
+    const validatePassword = (password) => {
+        if (password.length < 8 || password.length > 24) return "La contraseña debe tener entre 8 y 24 caracteres.";
+        if (!/[a-z]/.test(password)) return "Debe contener al menos una letra minúscula.";
+        if (!/[A-Z]/.test(password)) return "Debe contener al menos una letra mayúscula.";
+        if (!/\d/.test(password)) return "Debe contener al menos un número.";
+        if (!/[@$!%*?&]/.test(password)) return "Debe contener al menos un símbolo (@, $, !, %, *, ?, &).";
+        return null;
+    };
+
+    const handlePasswordReset = async () => {
+        if (!loginIdentifier) {
+            toast.error("Por favor, introduce tu email en el campo 'Email o Nombre de Usuario' para restablecer la contraseña.");
+            return;
+        }
+        if (!loginIdentifier.includes('@')) {
+            toast.error("El restablecimiento de contraseña solo funciona con el email, no con el nombre de usuario.");
+            return;
+        }
+        setLoading(true);
+        try {
+            await sendPasswordResetEmail(auth, loginIdentifier);
+            toast.success("Se ha enviado un correo para restablecer tu contraseña.");
+        } catch (error) {
+            toast.error("No se pudo enviar el correo. Asegúrate de que el email es correcto y está registrado.");
+        }
+        setLoading(false);
     };
 
     const handleAuthSubmit = async (e) => {
@@ -29,6 +62,22 @@ export default function LoginPage() {
         setLoading(true);
 
         if (!isLogin) { // Lógica de Registro
+            const passwordError = validatePassword(password);
+            if (passwordError) {
+                setError(passwordError);
+                toast.error(passwordError);
+                setLoading(false);
+                return;
+            }
+
+            if (password !== confirmPassword) {
+                const err = "Las contraseñas no coinciden.";
+                setError(err);
+                toast.error(err);
+                setLoading(false);
+                return;
+            }
+
             const validationError = validateUsername(username);
             if (validationError) {
                 setError(validationError);
@@ -50,6 +99,8 @@ export default function LoginPage() {
             try {
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
+                
+                await sendEmailVerification(user);
 
                 const batch = writeBatch(db);
                 const userDocRef = doc(db, 'users', user.uid);
@@ -57,8 +108,8 @@ export default function LoginPage() {
                 batch.set(usernameRef, { uid: user.uid });
                 
                 await batch.commit();
-                toast.success('¡Cuenta creada con éxito!');
-                navigate('/dashboard');
+                toast.success('¡Cuenta creada! Revisa tu correo para verificar tu cuenta.');
+                navigate('/login');
 
             } catch (error) {
                 const friendlyError = error.code.includes('email-already-in-use') ? 'Este correo ya está registrado.' : 'Error al crear la cuenta.';
@@ -68,11 +119,38 @@ export default function LoginPage() {
         
         } else { // Lógica de Login
             try {
-                await signInWithEmailAndPassword(auth, email, password);
+                let userEmail = loginIdentifier.toLowerCase();
+                if (!loginIdentifier.includes('@')) {
+                    const q = query(collection(db, "users"), where("username", "==", loginIdentifier));
+                    const querySnapshot = await getDocs(q);
+                    if (!querySnapshot.empty) {
+                        userEmail = querySnapshot.docs[0].data().email;
+                    } else {
+                        throw new Error("User not found");
+                    }
+                }
+
+                const userCredential = await signInWithEmailAndPassword(auth, userEmail, password);
+                const user = userCredential.user;
+                
+                // --- LÓGICA DE VERIFICACIÓN CORREGIDA ---
+                // Solo se comprueba la verificación para cuentas creadas DESPUÉS de una fecha de corte.
+                // Las cuentas antiguas no se ven afectadas.
+                const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
+                const userCreationDate = new Date(user.metadata.creationTime);
+
+                if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
+                    toast.error('Debes verificar tu correo electrónico para iniciar sesión.');
+                    await auth.signOut();
+                    setLoading(false);
+                    return; // Detiene la ejecución
+                }
+                
                 toast.success('¡Bienvenido de nuevo!');
                 navigate('/dashboard');
+
             } catch (error) {
-                const friendlyError = 'Email o contraseña incorrectos.';
+                const friendlyError = 'Usuario o contraseña incorrectos.';
                 setError(friendlyError);
                 toast.error(friendlyError);
             }
@@ -130,13 +208,48 @@ export default function LoginPage() {
                         </div>
                     )}
                     <div className="mb-4">
-                        <label className="block text-white/80 text-sm font-bold mb-2">Email</label>
-                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input" placeholder="tu@email.com"/>
+                        <label className="block text-white/80 text-sm font-bold mb-2">{isLogin ? 'Email o Nombre de Usuario' : 'Email'}</label>
+                        <input 
+                            type="text"
+                            value={isLogin ? loginIdentifier : email} 
+                            onChange={(e) => isLogin ? setLoginIdentifier(e.target.value) : setEmail(e.target.value)} 
+                            className="input" 
+                            placeholder={isLogin ? "tu@email.com o tu_usuario" : "tu@email.com"}
+                            autoCapitalize="none"
+                        />
                     </div>
-                    <div className="mb-6">
+                    <div className="mb-1 relative">
                         <label className="block text-white/80 text-sm font-bold mb-2">Contraseña</label>
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input" placeholder="••••••••"/>
+                        <input 
+                            type={showPassword ? "text" : "password"} 
+                            value={password} 
+                            onChange={(e) => setPassword(e.target.value)} 
+                            className="input" 
+                            placeholder="••••••••"
+                        />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 top-7 pr-3 flex items-center text-sm leading-5">
+                            {showPassword ? <EyeOff className="h-5 w-5 text-gray-500" /> : <Eye className="h-5 w-5 text-gray-500" />}
+                        </button>
                     </div>
+                    {isLogin && (
+                        <div className="text-right mb-4">
+                            <button type="button" onClick={handlePasswordReset} className="text-sm text-emerald-300 hover:text-emerald-200">
+                                ¿Olvidaste la contraseña?
+                            </button>
+                        </div>
+                    )}
+                    {!isLogin && (
+                        <div className="mb-6 relative">
+                            <label className="block text-white/80 text-sm font-bold mb-2">Confirmar Contraseña</label>
+                            <input 
+                                type={showPassword ? "text" : "password"}
+                                value={confirmPassword} 
+                                onChange={(e) => setConfirmPassword(e.target.value)} 
+                                className="input" 
+                                placeholder="••••••••"
+                            />
+                        </div>
+                    )}
                     
                     {error && <p className="text-red-400 text-sm mb-4 text-center">{error}</p>}
                     

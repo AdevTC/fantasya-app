@@ -40,8 +40,6 @@ export default function RoundsTab({ league, season }) {
         if (!selectedRound || !season.members) return null;
         
         const scores = selectedRound.scores || {};
-        
-        // Separar jugadores con puntuación numérica de los que no
         const numericScoresPlayers = [];
         const nonNumericScoresPlayers = [];
 
@@ -61,12 +59,11 @@ export default function RoundsTab({ league, season }) {
                 }
             });
 
-        // Ordenar solo los jugadores con puntuación numérica
         numericScoresPlayers.sort((a, b) => b.points - a.points);
         
         if (numericScoresPlayers.length === 0) {
             return { 
-                playerScores: nonNumericScoresPlayers, // Mostrar solo los que no participaron si nadie puntuó
+                playerScores: nonNumericScoresPlayers,
                 bestScore: 'N/A', 
                 worstScore: 'N/A', 
                 average: 'N/A', 
@@ -93,7 +90,6 @@ export default function RoundsTab({ league, season }) {
         const bestScoreHolders = rankedPlayers.filter(p => p.points === bestScore).map(p => p.name);
         const worstScoreHolders = rankedPlayers.filter(p => p.points === worstScore).map(p => p.name);
 
-        // Combinar las listas al final para la visualización
         const allPlayersToShow = [...rankedPlayers, ...nonNumericScoresPlayers];
 
         return { playerScores: allPlayersToShow, bestScore, bestScoreHolders, worstScore, worstScoreHolders, average };
@@ -117,7 +113,7 @@ export default function RoundsTab({ league, season }) {
     return (
         <div className="grid lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
-                <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
+                <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-4 sm:p-6">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">Seleccionar Jornada</h3>
                     <div className="space-y-2 max-h-96 overflow-y-auto">
                         {roundsData.map(round => (
@@ -137,10 +133,10 @@ export default function RoundsTab({ league, season }) {
             <div className="lg:col-span-2">
                 {selectedRound && roundDetails && (
                     <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
-                        <div className="px-6 py-4 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/20">
+                        <div className="px-4 sm:px-6 py-4 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/20">
                             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Jornada {selectedRound.roundNumber} - Resultados</h3>
                         </div>
-                        <div className="p-6">
+                        <div className="p-4 sm:p-6">
                             <div className="grid md:grid-cols-3 gap-4 mb-6">
                                 <div className="text-center p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded-lg">
                                     <p className="text-sm text-gray-600 dark:text-gray-400">Mejor Puntuación</p>
@@ -160,7 +156,6 @@ export default function RoundsTab({ league, season }) {
                                     <div key={player.uid} className={`flex items-center justify-between p-3 rounded-lg border ${getRowClass(player.rank)}`}>
                                         <div className="flex items-center">
                                             <Link to={`/profile/${player.username}`} className="font-semibold text-gray-800 dark:text-gray-200 hover:text-deep-blue dark:hover:text-blue-400 hover:underline">
-                                                {/* CORRECCIÓN: Mostrar el rango solo si existe */}
                                                 {player.rank ? `${player.rank}º. ` : ''}{player.name}
                                             </Link>
                                         </div>

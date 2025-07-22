@@ -7,14 +7,20 @@ export const formatHolderNames = (names) => {
     return `${names.join(', ')}, y ${last}`;
 };
 
-// --- FUNCIÓN ACTUALIZADA ---
 export const formatCurrency = (value) => {
     const number = Number(value) || 0;
-    // Usamos el formato español para los separadores y la coma decimal
     return new Intl.NumberFormat('es-ES', { 
         style: 'currency', 
         currency: 'EUR',
-        minimumFractionDigits: 2, // Siempre mostrar 2 decimales
+        minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(number);
+};
+
+// --- FUNCIÓN AÑADIDA Y EXPORTADA ---
+export const calculateStandardDeviation = (array) => {
+    const n = array.length;
+    if (n < 2) return 0;
+    const mean = array.reduce((a, b) => a + b) / n;
+    return Math.sqrt(array.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / (n - 1));
 };
