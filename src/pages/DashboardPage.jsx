@@ -1,42 +1,96 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { auth, db } from '../config/firebase';
-import { signOut } from 'firebase/auth';
-import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import CreateLeagueModal from '../components/CreateLeagueModal';
 import JoinLeagueModal from '../components/JoinLeagueModal';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { Shield, User, UserCog, Search, Rss, Bookmark, LogOut } from 'lucide-react';
-import ThemeToggleButton from '../components/ThemeToggleButton';
-import { useAuth } from '../hooks/useAuth';
+import InfoModal from '../components/InfoModal';
+import RulesModal from '../components/RulesModal';
+import RequestJoinModal from '../components/RequestJoinModal';
+import LeagueSummaryModal from '../components/LeagueSummaryModal';
+import { Plus, Users, ShieldCheck, Info, BookOpen, Copy, CheckCircle, Flag, Send, Eye } from 'lucide-react';
+import toast from 'react-hot-toast';
 
-const LeagueCard = ({ league }) => {
+const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, isMember }) => {
     const navigate = useNavigate();
+
+    const handleCopyCode = (e, code) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(code);
+        toast.success("¡Código de invitación copiado!");
+    };
+    
+    const isActive = league.activeSeason === league.seasonId;
+
     return (
-        <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md dark:hover:border-emerald-500 transition-shadow">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">{league.name}</h3>
-                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${league.userRole === 'admin' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'}`}>{league.userRole === 'admin' ? 'Admin' : 'Miembro'}</span>
+        <div className="bento-card group flex flex-col">
+            <div 
+                className="cursor-pointer flex-grow"
+                onClick={() => navigate(`/league/${league.id}?season=${league.seasonId}`)}
+            >
+                <div className="relative">
+                    <div 
+                        className="h-48 bg-gray-200 dark:bg-gray-700 rounded-lg mb-4 bg-cover bg-center" 
+                        style={{ backgroundImage: `url(${league.seasonPhotoURL || 'https://source.unsplash.com/random/800x600?soccer,stadium'})`}}
+                    ></div>
+                     <div className={`absolute top-3 right-3 px-2 py-1 text-xs font-bold text-white rounded-full flex items-center gap-1.5 ${isActive ? 'bg-emerald-500/90' : 'bg-gray-500/80'}`}>
+                        {isActive ? <CheckCircle size={14} /> : <Flag size={14} />}
+                        {isActive ? 'Activa' : 'Finalizada'}
+                    </div>
+                </div>
+
+                <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{league.name}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{league.seasonName}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-2 flex-grow">{league.description}</p>
             </div>
-            <div className="space-y-2 mb-4">
-                <div className="flex justify-between text-sm"><span className="text-gray-600 dark:text-gray-400">Temporada:</span><span className="font-semibold dark:text-gray-100">{league.seasonName}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-600 dark:text-gray-400">Participantes:</span><span className="font-semibold dark:text-gray-100">{Object.keys(league.members).length}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-600 dark:text-gray-400">Código de temporada:</span><span className="font-semibold text-deep-blue dark:text-blue-400">{league.inviteCode}</span></div>
+            
+            <div className="mt-auto pt-4 space-y-3">
+                {isMember ? (
+                    <div 
+                        onClick={(e) => handleCopyCode(e, league.inviteCode)}
+                        className="flex items-center justify-between text-sm p-2 bg-gray-100 dark:bg-gray-900/50 rounded-lg cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700"
+                    >
+                        <span className="text-gray-600 dark:text-gray-400">Código: <span className="font-bold text-gray-800 dark:text-gray-200">{league.inviteCode}</span></span>
+                        <Copy size={16} className="text-gray-500"/>
+                    </div>
+                ) : (
+                    <button onClick={() => onShowRequest(league)} className="w-full btn-secondary flex items-center justify-center gap-2">
+                        <Send size={16}/> Solicitar Unirse
+                    </button>
+                )}
+                <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center text-gray-600 dark:text-gray-300">
+                        <Users size={16} className="mr-2" />
+                        <span>{Object.keys(league.members).length} Participantes</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => onShowSummary(league)} className="font-semibold text-gray-500 dark:text-gray-400 hover:text-emerald-500 flex items-center gap-1" title="Ver Resumen">
+                            <Eye size={16} />
+                        </button>
+                        <button onClick={() => onShowRules(league.name, league.rules)} className="font-semibold text-gray-500 dark:text-gray-400 hover:text-emerald-500 flex items-center gap-1" title="Ver Reglas">
+                            <BookOpen size={16} />
+                        </button>
+                    </div>
+                </div>
             </div>
-            <button onClick={() => navigate(`/league/${league.id}?season=${league.seasonId}`)} className="w-full bg-deep-blue hover:bg-deep-blue/90 text-white py-2 rounded-lg font-semibold transition-colors">
-                Ver Temporada
-            </button>
         </div>
     );
 };
 
 export default function DashboardPage() {
-    const navigate = useNavigate();
     const { profile } = useAuth();
-    const [leagues, setLeagues] = useState([]);
+    const [myLeagues, setMyLeagues] = useState([]);
+    const [otherLeagues, setOtherLeagues] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+    const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
+    const [rulesModal, setRulesModal] = useState({ isOpen: false, name: '', rules: '' });
+    const [requestModal, setRequestModal] = useState({ isOpen: false, league: null });
+    const [summaryModal, setSummaryModal] = useState({ isOpen: false, league: null, season: null });
+    const [activeView, setActiveView] = useState('myLeagues');
 
     const fetchLeagues = useCallback(() => {
         const user = auth.currentUser;
@@ -49,28 +103,37 @@ export default function DashboardPage() {
         const leaguesQuery = query(collection(db, 'leagues'));
         
         const unsubscribe = onSnapshot(leaguesQuery, async (leaguesSnapshot) => {
-            const userLeaguesAndSeasons = [];
+            const allLeaguesAndSeasons = [];
             for (const leagueDoc of leaguesSnapshot.docs) {
                 const seasonsRef = collection(db, 'leagues', leagueDoc.id, 'seasons');
-                const seasonsQuery = query(seasonsRef, where(`members.${user.uid}`, '!=', null));
-                
-                const seasonsSnapshot = await getDocs(seasonsQuery);
+                const seasonsSnapshot = await getDocs(seasonsRef);
                 
                 seasonsSnapshot.forEach(seasonDoc => {
                     const leagueData = leagueDoc.data();
                     const seasonData = seasonDoc.data();
-                    userLeaguesAndSeasons.push({
+                    allLeaguesAndSeasons.push({
                         id: leagueDoc.id,
                         name: leagueData.name,
+                        ownerId: leagueData.ownerId,
+                        activeSeason: leagueData.activeSeason,
+                        rules: leagueData.rules || '',
                         seasonId: seasonDoc.id,
                         seasonName: seasonData.name,
-                        members: seasonData.members,
+                        seasonPhotoURL: seasonData.seasonPhotoURL,
+                        description: seasonData.description || '',
+                        prizes: seasonData.prizes || '',
+                        members: seasonData.members || {},
                         inviteCode: seasonData.inviteCode,
-                        userRole: seasonData.members[user.uid].role
                     });
                 });
             }
-            setLeagues(userLeaguesAndSeasons);
+
+            const myLeaguesData = allLeaguesAndSeasons.filter(l => l.members[user.uid]);
+            const otherLeaguesData = allLeaguesAndSeasons.filter(l => !l.members[user.uid]);
+            const shuffledOtherLeagues = otherLeaguesData.sort(() => 0.5 - Math.random()).slice(0, 6);
+
+            setMyLeagues(myLeaguesData);
+            setOtherLeagues(shuffledOtherLeagues);
             setLoading(false);
         }, (error) => {
             console.error("Error al obtener las ligas y temporadas:", error);
@@ -87,88 +150,97 @@ export default function DashboardPage() {
         };
     }, [fetchLeagues]);
 
-    const handleLogout = async () => { await signOut(auth); navigate('/login'); };
+    const handleShowRules = (name, rules) => setRulesModal({ isOpen: true, name, rules });
+    const handleShowRequest = (league) => setRequestModal({ isOpen: true, league });
+    const handleShowSummary = (league) => {
+        const season = { 
+            seasonName: league.seasonName, 
+            seasonPhotoURL: league.seasonPhotoURL, 
+            description: league.description, 
+            prizes: league.prizes 
+        };
+        setSummaryModal({ isOpen: true, league, season });
+    };
 
+    if (loading) {
+        return <LoadingSpinner fullScreen text="Cargando tu panel..." />;
+    }
+    
     return (
         <>
             <CreateLeagueModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} onLeagueCreated={() => {}} />
             <JoinLeagueModal isOpen={isJoinModalOpen} onClose={() => setIsJoinModalOpen(false)} onLeagueJoined={() => {}} />
-            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-                <div className="bg-white dark:bg-gray-800/50 shadow-sm border-b dark:border-gray-700">
-                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                        <div className="flex justify-between items-center h-16">
-                            <h1 className="text-xl font-bold text-gray-800 dark:text-gray-200">Fantasya</h1>
-                            <div className="flex items-center gap-1 sm:gap-2">
-                                <ThemeToggleButton />
-                                <div className="hidden md:flex items-center gap-1 sm:gap-2">
-                                    <Link to="/feed" title="Feed" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                                        <Rss size={20} />
-                                    </Link>
-                                    <Link to="/search" title="Buscar" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                                        <Search size={20} />
-                                    </Link>
-                                    <Link to="/saved-posts" title="Guardados" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                                        <Bookmark size={20} />
-                                    </Link>
-                                    {profile?.username && (
-                                        <Link to={`/profile/${profile.username}`} title="Mi Perfil" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                                            <User size={20} />
-                                        </Link>
-                                    )}
+            <InfoModal isOpen={isInfoModalOpen} onClose={() => setIsInfoModalOpen(false)} />
+            <RulesModal isOpen={rulesModal.isOpen} onClose={() => setRulesModal({ isOpen: false, name: '', rules: '' })} leagueName={rulesModal.name} rules={rulesModal.rules} />
+            <RequestJoinModal isOpen={requestModal.isOpen} onClose={() => setRequestModal({ isOpen: false, league: null })} league={requestModal.league} />
+            <LeagueSummaryModal isOpen={summaryModal.isOpen} onClose={() => setSummaryModal({ isOpen: false, league: null, season: null })} league={summaryModal.league} season={summaryModal.season} />
+            
+            <div className="p-4 sm:p-6 md:p-8">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-gray-200">Dashboard</h2>
+                        <button onClick={() => setIsInfoModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="Información de la App">
+                            <Info size={20} />
+                        </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                        <button onClick={() => setIsJoinModalOpen(true)} className="btn-secondary w-full sm:w-auto">Unirse con código</button>
+                        <button onClick={() => setIsCreateModalOpen(true)} className="btn-primary w-full sm:w-auto flex items-center justify-center gap-2">
+                            <Plus size={20} />Crear Liga
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex border-b dark:border-gray-700 mb-6">
+                    <button 
+                        onClick={() => setActiveView('myLeagues')}
+                        className={`px-4 py-3 font-semibold transition-colors ${activeView === 'myLeagues' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                    >
+                        Mis Ligas ({myLeagues.length})
+                    </button>
+                    <button 
+                        onClick={() => setActiveView('otherLeagues')}
+                        className={`px-4 py-3 font-semibold transition-colors ${activeView === 'otherLeagues' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                    >
+                        Otras Ligas
+                    </button>
+                </div>
+                
+                {loading ? (
+                    <LoadingSpinner text="Cargando ligas..." />
+                ) : (
+                    <div>
+                        {activeView === 'myLeagues' && (
+                            myLeagues.length > 0 ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {myLeagues.map(league => (
+                                        <LeagueCard key={`${league.id}-${league.seasonId}`} league={league} onShowRules={handleShowRules} onShowSummary={handleShowSummary} isMember={true} />
+                                    ))}
                                 </div>
-                                <button onClick={handleLogout} title="Cerrar Sesión" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                                    <LogOut size={20} />
-                                </button>
-                            </div>
-                        </div>
+                            ) : (
+                                <div className="bento-card text-center p-12">
+                                    <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No estás en ninguna temporada</h3>
+                                    <p className="text-gray-500 dark:text-gray-400 mt-2">Crea tu propia liga o únete a una con su código de invitación.</p>
+                                </div>
+                            )
+                        )}
+
+                        {activeView === 'otherLeagues' && (
+                             otherLeagues.length > 0 ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {otherLeagues.map(league => (
+                                        <LeagueCard key={`${league.id}-${league.seasonId}`} league={league} onShowRules={handleShowRules} onShowRequest={handleShowRequest} onShowSummary={handleShowSummary} isMember={false} />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="bento-card text-center p-12">
+                                    <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No hay otras ligas disponibles</h3>
+                                    <p className="text-gray-500 dark:text-gray-400 mt-2">¡Parece que eres de los primeros! Anímate y crea la tuya.</p>
+                                </div>
+                            )
+                        )}
                     </div>
-                </div>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-                        <div>
-                            <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-gray-200">Mis Temporadas</h2>
-                            <p className="text-gray-600 dark:text-gray-400">Gestiona todas tus temporadas activas desde aquí.</p>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                            <button onClick={() => setIsJoinModalOpen(true)} className="btn-secondary w-full">Unirse a Temporada</button>
-                            <button onClick={() => setIsCreateModalOpen(true)} className="btn-primary w-full"><span className="mr-2 font-light">+</span>Crear Nueva Liga</button>
-                        </div>
-                    </div>
-                    
-                    {loading ? (
-                        <LoadingSpinner text="Cargando tus ligas y temporadas..." />
-                    ) : leagues.length > 0 ? (
-                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{leagues.map(league => (<LeagueCard key={`${league.id}-${league.seasonId}`} league={league} />))}</div>
-                    ) : (
-                        <div className="text-center bg-white dark:bg-gray-800/50 p-12 rounded-xl border border-dashed dark:border-gray-700">
-                            <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No estás en ninguna temporada todavía</h3>
-                            <p className="text-gray-500 dark:text-gray-400 mt-2">Crea una nueva liga o únete a una temporada existente con un código de invitación.</p>
-                        </div>
-                    )}
-                    
-                    {profile && profile.appRole === 'superadmin' && (
-                        <div className="mt-12">
-                            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Panel de Super Administración</h2>
-                            <p className="text-gray-600 dark:text-gray-400 mb-4">Herramientas para gestionar el juego y los usuarios.</p>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <Link to="/players-database" className="bg-white dark:bg-gray-800/50 p-6 rounded-xl shadow-sm border dark:border-gray-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md transition-all flex items-center gap-4">
-                                    <Shield className="text-emerald-500" size={32} />
-                                    <div>
-                                        <h3 className="font-bold text-lg text-gray-700 dark:text-gray-300">Base de Datos de Jugadores</h3>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">Añade o edita los jugadores.</p>
-                                    </div>
-                                </Link>
-                                <Link to="/super-admin" className="bg-white dark:bg-gray-800/50 p-6 rounded-xl shadow-sm border dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all flex items-center gap-4">
-                                    <UserCog className="text-blue-500" size={32} />
-                                    <div>
-                                        <h3 className="font-bold text-lg text-gray-700 dark:text-gray-300">Gestionar Roles de Usuario</h3>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">Asigna roles de superadmin.</p>
-                                    </div>
-                                </Link>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                )}
             </div>
         </>
     );

@@ -104,7 +104,13 @@ export default function LoginPage() {
 
                 const batch = writeBatch(db);
                 const userDocRef = doc(db, 'users', user.uid);
-                batch.set(userDocRef, { username, email, createdAt: new Date() });
+                batch.set(userDocRef, { 
+                    username, 
+                    email, 
+                    createdAt: new Date(),
+                    followers: [],
+                    following: [] 
+                });
                 batch.set(usernameRef, { uid: user.uid });
                 
                 await batch.commit();
@@ -133,9 +139,6 @@ export default function LoginPage() {
                 const userCredential = await signInWithEmailAndPassword(auth, userEmail, password);
                 const user = userCredential.user;
                 
-                // --- LÓGICA DE VERIFICACIÓN CORREGIDA ---
-                // Solo se comprueba la verificación para cuentas creadas DESPUÉS de una fecha de corte.
-                // Las cuentas antiguas no se ven afectadas.
                 const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
                 const userCreationDate = new Date(user.metadata.creationTime);
 
@@ -143,7 +146,7 @@ export default function LoginPage() {
                     toast.error('Debes verificar tu correo electrónico para iniciar sesión.');
                     await auth.signOut();
                     setLoading(false);
-                    return; // Detiene la ejecución
+                    return;
                 }
                 
                 toast.success('¡Bienvenido de nuevo!');

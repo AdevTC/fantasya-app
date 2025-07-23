@@ -70,7 +70,8 @@ export default function Post({ post }) {
     };
     
     return (
-        <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
+        <div className="bento-card flex flex-col gap-4">
+            {/* -- CABECERA DEL POST -- */}
             <div className="flex items-start gap-4">
                 <Link to={`/profile/${authorUsername}`}>
                      <img 
@@ -90,48 +91,50 @@ export default function Post({ post }) {
                             </p>
                         </div>
                         {canDelete && (
-                            <button onClick={handleDelete} className="text-gray-400 hover:text-red-500">
+                            <button onClick={handleDelete} className="text-gray-400 hover:text-red-500 p-1">
                                 <Trash2 size={16} />
                             </button>
                         )}
                     </div>
-
-                    {content && <p className="mt-2 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{content}</p>}
-                    
-                    {imageURL && (
-                        <div className="mt-4">
-                            <img src={imageURL} alt="Contenido de la publicación" className="rounded-lg max-h-96 w-auto border dark:border-gray-700" />
-                        </div>
-                    )}
-
-                    {/* --- NUEVA SECCIÓN PARA MOSTRAR ETIQUETAS --- */}
-                    {tags && tags.length > 0 && (
-                        <div className="mt-4 flex flex-wrap gap-2">
-                            {tags.map(tag => (
-                                <Link key={tag} to={`/search?tag=${tag}`} className="text-blue-500 hover:underline text-sm font-semibold">
-                                    #{tag}
-                                </Link>
-                            ))}
-                        </div>
-                    )}
-
-                    <div className="flex items-center justify-between mt-4">
-                        <div className="flex items-center gap-4">
-                            <button onClick={handleLike} className={`flex items-center gap-1.5 transition-colors ${isLiked ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}>
-                                <Heart size={18} fill={isLiked ? 'currentColor' : 'none'} />
-                                <span className="text-sm font-semibold">{likes.length}</span>
-                            </button>
-                            <button onClick={() => setShowComments(!showComments)} className="flex items-center gap-1.5 text-gray-500 hover:text-blue-500 transition-colors">
-                                <MessageCircle size={18} />
-                                <span className="text-sm font-semibold">{commentCount}</span>
-                            </button>
-                        </div>
-                        <button onClick={handleSave} className={`flex items-center gap-1.5 transition-colors ${isSaved ? 'text-yellow-500' : 'text-gray-500 hover:text-yellow-500'}`}>
-                            <Bookmark size={18} fill={isSaved ? 'currentColor' : 'none'}/>
-                        </button>
-                    </div>
                 </div>
             </div>
+
+            {/* -- CUERPO DEL POST -- */}
+            <div className="pl-16 flex flex-col gap-4">
+                {content && <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{content}</p>}
+                
+                {imageURL && (
+                    <img src={imageURL} alt="Contenido de la publicación" className="rounded-lg max-h-[500px] w-full object-cover border dark:border-gray-700/50" />
+                )}
+
+                {tags && tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        {tags.map(tag => (
+                            <Link key={tag} to={`/search?tag=${tag}`} className="block bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 text-xs font-bold px-3 py-1 rounded-full hover:bg-emerald-200 dark:hover:bg-emerald-900 transition-colors">
+                                #{tag}
+                            </Link>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* -- ACCIONES DEL POST -- */}
+            <div className="pl-16 flex items-center justify-between mt-2 pt-4 border-t border-gray-200 dark:border-gray-700/50">
+                <div className="flex items-center gap-2">
+                    <button onClick={handleLike} className={`flex items-center gap-1.5 p-2 rounded-lg transition-colors ${isLiked ? 'text-red-500 bg-red-100 dark:bg-red-900/30' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+                        <Heart size={20} fill={isLiked ? 'currentColor' : 'none'} />
+                        <span className="text-sm font-semibold">{likes.length}</span>
+                    </button>
+                    <button onClick={() => setShowComments(!showComments)} className="flex items-center gap-1.5 p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                        <MessageCircle size={20} />
+                        <span className="text-sm font-semibold">{commentCount}</span>
+                    </button>
+                </div>
+                <button onClick={handleSave} className={`flex items-center gap-1.5 p-2 rounded-lg transition-colors ${isSaved ? 'text-yellow-500 bg-yellow-100 dark:bg-yellow-900/30' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+                    <Bookmark size={20} fill={isSaved ? 'currentColor' : 'none'}/>
+                </button>
+            </div>
+            
             {showComments && <CommentSection postId={id} />}
         </div>
     );

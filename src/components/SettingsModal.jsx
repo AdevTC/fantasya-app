@@ -1,55 +1,87 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, writeBatch, collection, getDocs, deleteDoc, setDoc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../config/firebase';
+import { doc, updateDoc, writeBatch, collection, getDocs, deleteDoc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth, storage } from '../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Copy, Star, Edit, X, Check } from 'lucide-react';
+import { Plus, Trash2, Copy, Star, Edit, X, Check, Upload, Save } from 'lucide-react';
 
 export default function SettingsModal({ isOpen, onClose, league, seasons }) {
     const navigate = useNavigate();
     const [leagueName, setLeagueName] = useState('');
+    const [rules, setRules] = useState('');
     const [loading, setLoading] = useState(false);
     const [newSeasonName, setNewSeasonName] = useState('');
-    const [seasonDates, setSeasonDates] = useState({});
     const [editingSeason, setEditingSeason] = useState({ id: null, name: '' });
     const [newSeasonTeamName, setNewSeasonTeamName] = useState('');
-
+    const [seasonDetails, setSeasonDetails] = useState({});
 
     useEffect(() => {
         if (isOpen) {
             setLeagueName(league.name);
+            setRules(league.rules || '');
             setNewSeasonName(`Temporada ${seasons.length + 1}`);
-            
-            const initialDates = {};
-            seasons.forEach(s => {
-                initialDates[s.id] = {
-                    startDate: s.startDate?.toDate ? s.startDate.toDate().toISOString().split('T')[0] : '',
-                    endDate: s.endDate?.toDate ? s.endDate.toDate().toISOString().split('T')[0] : ''
-                };
-            });
-            setSeasonDates(initialDates);
             setEditingSeason({ id: null, name: '' });
             setNewSeasonTeamName('');
+
+            const details = {};
+            seasons.forEach(s => {
+                details[s.id] = {
+                    description: s.description || '',
+                    prizes: s.prizes || ''
+                };
+            });
+            setSeasonDetails(details);
         }
     }, [isOpen, league, seasons]);
 
-    const handleSaveSettings = async (e) => {
+    const handleSaveLeagueSettings = async (e) => {
         e.preventDefault();
         if (!leagueName.trim()) {
             toast.error("El nombre de la liga no puede estar vacío.");
             return;
         }
         setLoading(true);
-        const loadingToast = toast.loading('Guardando cambios...');
+        const loadingToast = toast.loading('Guardando cambios de la liga...');
         try {
             const leagueRef = doc(db, 'leagues', league.id);
-            await updateDoc(leagueRef, { name: leagueName.trim() });
-            toast.success('Nombre de la liga actualizado', { id: loadingToast });
+            await updateDoc(leagueRef, { 
+                name: leagueName.trim(),
+                rules: rules.trim(),
+            });
+            toast.success('Ajustes de la liga actualizados', { id: loadingToast });
         } catch (error) {
             toast.error('No se pudieron guardar los cambios.', { id: loadingToast });
         } finally {
             setLoading(false);
         }
+    };
+    
+    const handleSaveSeasonDetails = async (seasonId) => {
+        setLoading(true);
+        const loadingToast = toast.loading('Guardando detalles de la temporada...');
+        try {
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
+            await updateDoc(seasonRef, {
+                description: seasonDetails[seasonId].description.trim(),
+                prizes: seasonDetails[seasonId].prizes.trim(),
+            });
+            toast.success('Detalles de la temporada actualizados.', {id: loadingToast});
+        } catch (error) {
+             toast.error('No se pudieron guardar los detalles.', {id: loadingToast});
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    const handleSeasonDetailChange = (seasonId, field, value) => {
+        setSeasonDetails(prev => ({
+            ...prev,
+            [seasonId]: {
+                ...prev[seasonId],
+                [field]: value
+            }
+        }));
     };
 
     const handleCreateNewSeason = async () => {
@@ -79,7 +111,8 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
             await setDoc(seasonRef, {
                 name: newSeasonName.trim(),
                 seasonNumber: newSeasonNumber,
-                createdAt: new Date(),
+                createdAt: serverTimestamp(),
+                status: 'Activa',
                 members: {
                     [user.uid]: {
                         username: username,
@@ -141,19 +174,15 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
             setLoading(false);
         }
     };
-    
-    const handleSaveDates = async (seasonId) => {
+
+    const handleSetSeasonStatus = async (seasonId, status) => {
         setLoading(true);
-        const dates = seasonDates[seasonId];
         const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
         try {
-            await updateDoc(seasonRef, {
-                startDate: dates.startDate ? new Date(dates.startDate) : null,
-                endDate: dates.endDate ? new Date(dates.endDate) : null
-            });
-            toast.success("Fechas guardadas.");
+            await updateDoc(seasonRef, { status: status });
+            toast.success("Estado de la temporada actualizado.");
         } catch (error) {
-            toast.error("No se pudieron guardar las fechas.");
+            toast.error("No se pudo cambiar el estado.");
         } finally {
             setLoading(false);
         }
@@ -199,7 +228,6 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
         }
     };
 
-    // --- CORRECCIÓN: Lógica de borrado de liga implementada ---
     const handleDeleteLeague = async () => {
         const confirmationText = prompt(`Esta acción es IRREVERSIBLE y borrará la liga "${league.name}" y TODAS sus temporadas. Para confirmar, escribe el nombre de la liga: "${league.name}"`);
         if (confirmationText !== league.name) {
@@ -212,7 +240,6 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
         try {
             const batch = writeBatch(db);
 
-            // Borra todas las temporadas y sus subcolecciones
             for (const season of seasons) {
                 const seasonSubcollections = ['rounds', 'lineups', 'transfers'];
                  for (const sub of seasonSubcollections) {
@@ -224,7 +251,6 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
                 batch.delete(seasonRef);
             }
 
-            // Finalmente, borra el documento principal de la liga
             const leagueRef = doc(db, 'leagues', league.id);
             batch.delete(leagueRef);
             
@@ -239,21 +265,48 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
         }
     };
 
+    const handleSeasonImageUpload = async (e, seasonId) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const loadingToast = toast.loading('Subiendo imagen...');
+        setLoading(true);
+        try {
+            const imageRef = ref(storage, `season-pictures/${league.id}/${seasonId}`);
+            await uploadBytes(imageRef, file);
+            const photoURL = await getDownloadURL(imageRef);
+
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
+            await updateDoc(seasonRef, { seasonPhotoURL: photoURL });
+            
+            toast.success('Imagen de la temporada actualizada', { id: loadingToast });
+        } catch (error) {
+            console.error("Error subiendo imagen:", error);
+            toast.error('No se pudo subir la imagen.', { id: loadingToast });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 w-full max-w-2xl shadow-lg overflow-y-auto max-h-[90vh]">
-                <h3 className="text-2xl font-bold text-gray-800 mb-6">Ajustes de la Liga</h3>
-                <form onSubmit={handleSaveSettings}>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-3xl shadow-lg overflow-y-auto max-h-[90vh]">
+                <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Ajustes de la Liga</h3>
+                <form onSubmit={handleSaveLeagueSettings} className="space-y-4">
                     <div>
-                        <label className="block text-gray-700 text-sm font-bold mb-2">Nombre General de la Liga</label>
+                        <label className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2">Nombre General de la Liga</label>
                         <input type="text" value={leagueName} onChange={(e) => setLeagueName(e.target.value)} className="input" />
                     </div>
-                     <div className="flex justify-end gap-4 pt-4 mt-4 border-t">
-                        <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+                     <div>
+                        <label className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2">Reglamento de la Liga (Común para todas las temporadas)</label>
+                        <textarea value={rules} onChange={(e) => setRules(e.target.value)} className="input h-40" placeholder="Detalla aquí las reglas de puntuación, fichajes, premios, etc."/>
+                    </div>
+                     <div className="flex justify-end gap-4 pt-4 mt-4 border-t dark:border-gray-700">
                         <button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">
-                            {loading ? 'Guardando...' : 'Guardar Cambios'}
+                            {loading ? 'Guardando...' : 'Guardar Ajustes de Liga'}
                         </button>
                     </div>
                 </form>
@@ -262,17 +315,21 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
                      <h4 className="text-lg font-bold text-emerald-600 mb-4">Gestión de Temporadas</h4>
                      <div className="space-y-4">
                         {seasons.map(season => (
-                            <div key={season.id} className="p-4 bg-gray-50 rounded-lg border">
-                                <div className="flex justify-between items-center mb-4">
-                                    <div className="flex items-center gap-2 flex-grow mr-2">
+                            <div key={season.id} className="p-4 bg-gray-50 dark:bg-gray-800/60 rounded-lg border dark:border-gray-700 space-y-4">
+                                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                                    <div className="flex items-center gap-3 flex-grow mr-2">
+                                        <input type="file" id={`file-${season.id}`} className="hidden" accept="image/*" onChange={(e) => handleSeasonImageUpload(e, season.id)} />
+                                        <label htmlFor={`file-${season.id}`} className="cursor-pointer p-2 text-gray-500 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">
+                                            <Upload size={18}/>
+                                        </label>
                                         {editingSeason.id === season.id ? (
                                             <input type="text" value={editingSeason.name} onChange={(e) => setEditingSeason({...editingSeason, name: e.target.value})} className="input text-lg font-semibold !py-1"/>
                                         ) : (
-                                            <span className="font-semibold text-lg">{season.name}</span>
+                                            <span className="font-semibold text-lg text-gray-800 dark:text-gray-200">{season.name}</span>
                                         )}
                                         {league.activeSeason === season.id && <span className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded-full"><Star size={12}/> Activa</span>}
                                     </div>
-                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                    <div className="flex items-center gap-1 flex-shrink-0 self-end sm:self-center">
                                         {editingSeason.id === season.id ? (
                                             <>
                                                 <button onClick={() => setEditingSeason({id: null, name: ''})} className="p-2 text-gray-500 hover:text-red-600"><X size={18}/></button>
@@ -283,29 +340,42 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
                                         )}
                                         <button onClick={() => handleCopyCode(season.inviteCode)} disabled={loading} title="Copiar código de invitación" className="p-2 text-gray-500 hover:text-deep-blue"><Copy size={16}/></button>
                                         {league.activeSeason !== season.id && (
-                                            <>
-                                                <button onClick={() => handleSetActiveSeason(season.id)} disabled={loading} title="Hacer activa" className="p-2 text-gray-500 hover:text-emerald-500"><Star size={16}/></button>
-                                                <button onClick={() => handleDeleteSeason(season.id, season.name)} disabled={loading} title="Eliminar temporada" className="p-2 text-gray-500 hover:text-red-600"><Trash2 size={16}/></button>
-                                            </>
+                                            <button onClick={() => handleSetActiveSeason(season.id)} disabled={loading} title="Hacer activa" className="p-2 text-gray-500 hover:text-emerald-500"><Star size={16}/></button>
                                         )}
+                                        <button onClick={() => handleDeleteSeason(season.id, season.name)} disabled={loading} title="Eliminar temporada" className="p-2 text-gray-500 hover:text-red-600"><Trash2 size={16}/></button>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                     <div>
-                                        <label className="text-xs font-bold text-gray-500">Fecha de Inicio</label>
-                                        <input type="date" value={seasonDates[season.id]?.startDate || ''} onChange={(e) => setSeasonDates(p => ({...p, [season.id]: {...p[season.id], startDate: e.target.value}}))} className="input text-sm !py-1"/>
-                                     </div>
-                                      <div>
-                                        <label className="text-xs font-bold text-gray-500">Fecha de Fin</label>
-                                        <input type="date" value={seasonDates[season.id]?.endDate || ''} onChange={(e) => setSeasonDates(p => ({...p, [season.id]: {...p[season.id], endDate: e.target.value}}))} className="input text-sm !py-1"/>
-                                     </div>
-                                     <button onClick={() => handleSaveDates(season.id)} disabled={loading} className="btn-secondary self-end text-sm !py-1.5">Guardar Fechas</button>
+                                
+                                <div className="space-y-2">
+                                     <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Descripción de la Temporada</label>
+                                     <textarea value={seasonDetails[season.id]?.description || ''} onChange={(e) => handleSeasonDetailChange(season.id, 'description', e.target.value)} className="input h-20 text-sm" placeholder={`Breve descripción para la ${season.name}`}/>
+                                </div>
+                                <div className="space-y-2">
+                                     <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Premios de la Temporada</label>
+                                     <textarea value={seasonDetails[season.id]?.prizes || ''} onChange={(e) => handleSeasonDetailChange(season.id, 'prizes', e.target.value)} className="input h-24 text-sm" placeholder={`Premios para el 1er, 2º, 3er puesto, pichichi, etc. de la ${season.name}`}/>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Estado de la Temporada</label>
+                                        <select 
+                                            value={season.status || 'Activa'} 
+                                            onChange={(e) => handleSetSeasonStatus(season.id, e.target.value)} 
+                                            className="input text-sm !py-1 mt-1 !w-auto"
+                                            disabled={loading}
+                                        >
+                                            <option value="Activa">Activa</option>
+                                            <option value="Finalizada">Finalizada</option>
+                                        </select>
+                                    </div>
+                                    <button onClick={() => handleSaveSeasonDetails(season.id)} className="btn-secondary !py-1.5 text-sm flex items-center gap-2">
+                                        <Save size={14}/> Guardar Detalles
+                                    </button>
                                 </div>
                             </div>
                         ))}
                      </div>
-                      <div className="mt-6 pt-4 border-t">
-                        <label className="font-semibold text-gray-700">Crear nueva temporada:</label>
+                      <div className="mt-6 pt-4 border-t dark:border-gray-600">
+                        <label className="font-semibold text-gray-700 dark:text-gray-300">Crear nueva temporada:</label>
                         <div className="mt-2 space-y-3">
                             <input type="text" value={newSeasonName} onChange={e => setNewSeasonName(e.target.value)} className="input" placeholder="Nombre de la nueva temporada"/>
                             <input type="text" value={newSeasonTeamName} onChange={e => setNewSeasonTeamName(e.target.value)} className="input" placeholder="Tu nombre de equipo para esta temporada"/>
@@ -322,6 +392,9 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
                             {loading ? 'Eliminando...' : 'Eliminar Liga (y todas sus temporadas)'}
                         </button>
                     </div>
+                </div>
+                 <div className="flex justify-end mt-8 pt-4 border-t dark:border-gray-700">
+                    <button onClick={onClose} className="btn-secondary">Cerrar</button>
                 </div>
             </div>
         </div>

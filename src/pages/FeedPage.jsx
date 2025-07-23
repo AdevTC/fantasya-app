@@ -64,7 +64,7 @@ export default function FeedPage() {
 
 
     return (
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="flex justify-between items-center mb-8">
                 <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-200">Feed de la Comunidad</h1>
                 <Link to="/dashboard" className="text-deep-blue dark:text-blue-400 hover:underline font-semibold flex items-center gap-2">
@@ -102,7 +102,7 @@ export default function FeedPage() {
                 )}
                 
                 {!loading && posts.length === 0 && (
-                     <div className="text-center bg-white dark:bg-gray-800/50 p-12 rounded-xl border border-dashed dark:border-gray-700">
+                     <div className="bento-card text-center p-12">
                         <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">¡El feed está muy tranquilo!</h3>
                         <p className="text-gray-500 dark:text-gray-400 mt-2">Sé el primero en compartir algo con la comunidad.</p>
                     </div>

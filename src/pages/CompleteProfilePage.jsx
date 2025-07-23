@@ -42,7 +42,13 @@ export default function CompleteProfilePage() {
 
             const batch = writeBatch(db);
             const userDocRef = doc(db, 'users', user.uid);
-            batch.set(userDocRef, { username, email: user.email, createdAt: new Date() });
+            batch.set(userDocRef, { 
+                username, 
+                email: user.email, 
+                createdAt: new Date(),
+                followers: [],
+                following: [] 
+            });
             batch.set(usernameRef, { uid: user.uid });
             await batch.commit();
 

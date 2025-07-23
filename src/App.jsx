@@ -1,9 +1,10 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { Toaster } from 'react-hot-toast';
 import { ThemeProvider } from './context/ThemeContext';
 
+import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import LeaguePage from './pages/LeaguePage';
@@ -18,10 +19,10 @@ import SearchPage from './pages/SearchPage';
 import EditProfilePage from './pages/EditProfilePage';
 import SavedPostsPage from './pages/SavedPostsPage';
 import AchievementsPage from './pages/AchievementsPage';
-import BottomNavBar from './components/BottomNavBar';
-import LandingPage from './pages/LandingPage'; // <-- IMPORTAR
+import LandingPage from './pages/LandingPage';
+import ChatPage from './pages/ChatPage';
+import ChatListPage from './pages/ChatListPage';
 
-// --- LÓGICA DE RUTA INICIAL ACTUALIZADA ---
 function InitialRoute() {
     const { user, loading } = useAuth();
 
@@ -33,20 +34,15 @@ function InitialRoute() {
         );
     }
     
-    // Si hay usuario, va al dashboard. Si no, a la Landing Page.
     return user ? <Navigate to="/dashboard" /> : <LandingPage />;
 }
 
-// Componente Layout para envolver las rutas protegidas
-const AppLayout = ({ children }) => {
-    const { user } = useAuth();
-    return (
-        <div className="pb-16 md:pb-0">
-            {children}
-            {user && <BottomNavBar />}
-        </div>
-    );
-};
+const AppWithLayout = () => (
+    <Layout>
+        <Outlet />
+    </Layout>
+);
+
 
 function App() {
   return (
@@ -68,32 +64,38 @@ function App() {
         }}
       />
       <Router>
-        <AppLayout>
-            <Routes>
-                {/* --- RUTA PRINCIPAL ACTUALIZADA --- */}
-                <Route path="/" element={<InitialRoute />} />
-                <Route path="/login" element={<LoginPage />} />
+        <Routes>
+            <Route path="/" element={<InitialRoute />} />
+            <Route path="/login" element={<LoginPage />} />
 
-                {/* Rutas protegidas para usuarios normales */}
-                <Route element={<ProtectedRoute />}>
+            <Route element={<ProtectedRoute />}>
+                {/* Rutas con el Layout principal (SideNav y BottomNav) */}
+                <Route element={<AppWithLayout />}>
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/league/:leagueId" element={<LeaguePage />} />
-                    <Route path="/complete-profile" element={<CompleteProfilePage />} />
                     <Route path="/profile/:username" element={<UserProfilePage />} />
                     <Route path="/feed" element={<FeedPage />} />
+                    <Route path="/chats" element={<ChatListPage />} />
                     <Route path="/search" element={<SearchPage />} />
                     <Route path="/edit-profile" element={<EditProfilePage />} />
                     <Route path="/saved-posts" element={<SavedPostsPage />} />
                     <Route path="/achievements" element={<AchievementsPage />} />
                 </Route>
+                
+                {/* Rutas sin el Layout principal (ocupan toda la pantalla) */}
+                <Route path="/chat/:chatId" element={<ChatPage />} />
+                <Route path="/complete-profile" element={<CompleteProfilePage />} />
 
-                {/* Rutas protegidas solo para Super Admins */}
+                {/* --- CORRECCIÓN AQUÍ --- */}
+                {/* La ruta de SuperAdminRoute debe envolver a las rutas que protege */}
                 <Route element={<SuperAdminRoute />}>
-                    <Route path="/players-database" element={<PlayersDatabasePage />} />
-                    <Route path="/super-admin" element={<SuperAdminPage />} />
+                    <Route element={<AppWithLayout />}>
+                        <Route path="/players-database" element={<PlayersDatabasePage />} />
+                        <Route path="/super-admin" element={<SuperAdminPage />} />
+                    </Route>
                 </Route>
-            </Routes>
-        </AppLayout>
+            </Route>
+        </Routes>
       </Router>
     </ThemeProvider>
   );

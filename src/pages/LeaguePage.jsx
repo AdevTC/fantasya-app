@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords } from 'lucide-react';
+import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye } from 'lucide-react';
 
 import AdminTab from '../components/AdminTab';
 import RoundsTab from '../components/RoundsTab';
@@ -13,6 +13,9 @@ import SettingsModal from '../components/SettingsModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ThemeToggleButton from '../components/ThemeToggleButton';
 import HallOfFameTab from '../components/HallOfFameTab';
+import RulesModal from '../components/RulesModal';
+import LeagueSummaryModal from '../components/LeagueSummaryModal';
+import { useTheme } from '../context/ThemeContext';
 
 const StatCard = ({ icon, title, value, colorClass }) => (
     <div className="bg-white dark:bg-gray-800/50 rounded-xl p-4 shadow-sm border dark:border-gray-700">
@@ -42,8 +45,8 @@ const ClassificationRow = ({ player, isUser, profile, className = '' }) => {
             <td className="px-4 sm:px-6 py-4 whitespace-nowrap"><div className="flex items-center font-bold text-gray-700 dark:text-gray-300">{rank === 1 && <Crown className="text-yellow-500 mr-2" size={20} />}{rank === 2 && <Medal className="text-gray-400 mr-2" size={20} />}{rank === 3 && <Medal className="text-orange-400 mr-2" size={20} />}{rank || 'N/A'}º</div></td>
             <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
-                    <img 
-                        src={profile?.photoURL || `https://ui-avatars.com/api/?name=${teamName || '?'}&background=random`} 
+                    <img
+                        src={profile?.photoURL || `https://ui-avatars.com/api/?name=${teamName || '?'}&background=random`}
                         alt={`Foto de ${teamName}`}
                         className="w-8 h-8 rounded-full object-cover mr-3"
                     />
@@ -73,11 +76,11 @@ const ClassificationTab = ({ season, roundsData }) => {
             setSelectedRound(roundsData[roundsData.length - 1].roundNumber);
         }
     }, [roundsData]);
-    
+
     useEffect(() => {
         const fetchMemberProfiles = async () => {
             if (!season || !season.members) return;
-            const memberIds = Object.keys(season.members);
+            const memberIds = Object.keys(season.members).filter(uid => !season.members[uid].isPlaceholder);
             if (memberIds.length === 0) return;
             
             const usersRef = collection(db, "users");
@@ -209,6 +212,7 @@ export default function LeaguePage() {
     const { leagueId } = useParams();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
+    const { theme, toggleTheme } = useTheme();
 
     const [league, setLeague] = useState(null);
     const [seasons, setSeasons] = useState([]);
@@ -218,6 +222,20 @@ export default function LeaguePage() {
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState('clasificacion');
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+    const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+    const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) {
+                setIsMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [menuRef]);
 
     useEffect(() => {
         if (!leagueId) return;
@@ -323,12 +341,18 @@ export default function LeaguePage() {
     return (
         <>
             <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} league={league} seasons={seasons} />
-            <div className="bg-gray-50 dark:bg-gray-900 min-h-screen">
+            <RulesModal isOpen={isRulesModalOpen} onClose={() => setIsRulesModalOpen(false)} leagueName={league.name} rules={league.rules} />
+            <LeagueSummaryModal isOpen={isSummaryModalOpen} onClose={() => setIsSummaryModalOpen(false)} league={league} season={selectedSeason} />
+
+            <div className="min-h-screen">
                 <header className="bg-white dark:bg-gray-800/50 shadow-sm border-b dark:border-gray-700 sticky top-0 z-40">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
                             <div className="flex items-center space-x-3">
                                 <button onClick={() => navigate('/dashboard')} className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"><ArrowLeft size={22} /></button>
+                                {selectedSeason.seasonPhotoURL && (
+                                    <img src={selectedSeason.seasonPhotoURL} alt="Logo de la temporada" className="w-10 h-10 rounded-lg object-cover" />
+                                )}
                                 <div>
                                     <h1 className="text-lg font-bold text-gray-800 dark:text-gray-200">{league.name}</h1>
                                     {seasons.length > 0 && (
@@ -345,10 +369,44 @@ export default function LeaguePage() {
                                     )}
                                 </div>
                             </div>
-                            <div className="flex items-center space-x-2">
+                            
+                            <div className="hidden md:flex items-center space-x-2">
+                                {userRole === 'admin' && <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-semibold">Admin</span>}
+                                <button onClick={() => setIsSummaryModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="Ver Resumen">
+                                    <Eye size={20} />
+                                </button>
+                                <button onClick={() => setIsRulesModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="Ver Reglas">
+                                    <BookOpen size={20} />
+                                </button>
                                 <ThemeToggleButton />
-                                {userRole === 'admin' && <span className="hidden sm:inline-block bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-semibold">Admin</span>}
-                                {league.ownerId === user?.uid && (<button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><Settings size={20} /></button>)}
+                                {league.ownerId === user?.uid && (<button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="Ajustes de Liga"><Settings size={20} /></button>)}
+                            </div>
+
+                            <div ref={menuRef} className="md:hidden relative">
+                                <button onClick={() => setIsMenuOpen(prev => !prev)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+                                    <Menu size={24} />
+                                </button>
+                                {isMenuOpen && (
+                                    <div className="absolute top-full right-0 mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border dark:border-gray-700 z-50">
+                                        <div className="p-2 space-y-1">
+                                            <button onClick={() => { setIsSummaryModalOpen(true); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
+                                                <Eye size={16} /> Ver Resumen
+                                            </button>
+                                            <button onClick={() => { setIsRulesModalOpen(true); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
+                                                <BookOpen size={16} /> Ver Reglas
+                                            </button>
+                                            <button onClick={() => { toggleTheme(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
+                                                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                                                {theme === 'light' ? 'Modo Oscuro' : 'Modo Claro'}
+                                            </button>
+                                            {league.ownerId === user?.uid && (
+                                                 <button onClick={() => { setIsSettingsModalOpen(true); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
+                                                    <Settings size={16} /> Ajustes de la Liga
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
