@@ -13,7 +13,7 @@ const ChatListItem = ({ chat }) => {
 
     useEffect(() => {
         // --- CORRECCIÓN AQUÍ ---
-        // Se añade una guarda para asegurar que currentUser no sea nulo
+        // Se añade una guarda para asegurar que currentUser no sea nulo antes de buscar
         if (!currentUser) return; 
 
         const partnerId = chat.participants.find(p => p !== currentUser.uid);
@@ -67,6 +67,9 @@ export default function ChatListPage() {
             const chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             chatsData.sort((a, b) => (b.lastMessageTimestamp?.toDate() || 0) - (a.lastMessageTimestamp?.toDate() || 0));
             setChats(chatsData);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error al obtener los chats:", error);
             setLoading(false);
         });
 
