@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { doc, setDoc, collection } from 'firebase/firestore';
+import { doc, setDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { X, Send, User, Users } from 'lucide-react';
@@ -36,8 +36,10 @@ export default function ChallengeModal({ isOpen, onClose, league, season }) {
                 description,
                 target,
                 targetUser: target === 'single' ? selectedUser : null,
+                targetUserName: target === 'single' ? season.members[selectedUser].teamName : 'Todos',
                 status: 'active',
-                winner: null,
+                winners: [],
+                createdAt: serverTimestamp(),
             });
 
             toast.success('¡Reto asignado correctamente!', { id: loadingToast });

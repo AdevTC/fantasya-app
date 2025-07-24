@@ -1,0 +1,74 @@
+import React, { useState } from 'react';
+import toast from 'react-hot-toast';
+import { X, Trophy } from 'lucide-react';
+
+export default function MarkWinnerModal({ isOpen, onClose, challenge, season, onConfirm }) {
+    const [selectedWinners, setSelectedWinners] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    if (!isOpen || !challenge) return null;
+
+    const handleToggleWinner = (uid) => {
+        setSelectedWinners(prev => 
+            prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+        );
+    };
+
+    const handleConfirm = async () => {
+        if (selectedWinners.length === 0) {
+            toast.error('Debes seleccionar al menos un ganador.');
+            return;
+        }
+        setLoading(true);
+        const winnersData = selectedWinners.map(uid => ({
+            uid: uid,
+            teamName: season.members[uid].teamName
+        }));
+
+        try {
+            await onConfirm(challenge, winnersData);
+            toast.success('Ganador(es) marcado(s) correctamente.');
+            onClose();
+        } catch (error) {
+            console.error("Error al marcar ganador:", error);
+            toast.error('No se pudo marcar el ganador.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-lg">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Marcar Ganador</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X size={24} />
+                    </button>
+                </div>
+                <p className="text-gray-600 dark:text-gray-400 mb-4">Selecciona el/los participante(s) que han completado el reto: <span className="font-bold">{challenge.title}</span></p>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto border rounded-lg p-2">
+                    {Object.entries(season.members).map(([uid, member]) => (
+                        <label key={uid} className={`flex items-center gap-3 p-2 rounded-md cursor-pointer ${selectedWinners.includes(uid) ? 'bg-emerald-100 dark:bg-emerald-900/50' : 'hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}>
+                            <input 
+                                type="checkbox"
+                                checked={selectedWinners.includes(uid)}
+                                onChange={() => handleToggleWinner(uid)}
+                                className="w-5 h-5"
+                            />
+                            <span>{member.teamName}</span>
+                        </label>
+                    ))}
+                </div>
+
+                <div className="flex justify-end gap-4 pt-6 mt-4 border-t dark:border-gray-700">
+                    <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+                    <button onClick={handleConfirm} disabled={loading} className="btn-primary flex items-center gap-2">
+                        <Trophy size={16} /> {loading ? 'Confirmando...' : 'Confirmar Ganador(es)'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}

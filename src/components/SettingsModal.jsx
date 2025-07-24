@@ -5,6 +5,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Copy, Star, Edit, X, Check, Upload, Save } from 'lucide-react';
+import { calculateAndAwardTrophies, revokeTrophiesForSeason } from '../utils/trophyUtils';
 
 export default function SettingsModal({ isOpen, onClose, league, seasons }) {
     const navigate = useNavigate();
@@ -175,18 +176,40 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
         }
     };
 
-    const handleSetSeasonStatus = async (seasonId, status) => {
+    const handleSetSeasonStatus = async (seasonId, newStatus) => {
+        const seasonToUpdate = seasons.find(s => s.id === seasonId);
+        const oldStatus = seasonToUpdate.status;
+
+        if(oldStatus === newStatus) return;
+
         setLoading(true);
-        const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
+        let loadingToast;
+
         try {
-            await updateDoc(seasonRef, { status: status });
-            toast.success("Estado de la temporada actualizado.");
+            if (newStatus === 'Finalizada') {
+                loadingToast = toast.loading('Finalizando temporada y calculando trofeos...');
+                await calculateAndAwardTrophies(league, seasonToUpdate); // <-- CORRECCIÓN AQUÍ
+                toast.success('¡Trofeos calculados y asignados!', { id: loadingToast });
+            } else if (newStatus === 'Activa' && oldStatus === 'Finalizada') {
+                loadingToast = toast.loading('Reactivando temporada y eliminando trofeos...');
+                await revokeTrophiesForSeason(league.id, seasonToUpdate);
+                toast.success('Trofeos de la temporada revocados.', { id: loadingToast });
+            } else {
+                 loadingToast = toast.loading('Actualizando estado...');
+            }
+
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
+            await updateDoc(seasonRef, { status: newStatus });
+            toast.success("Estado de la temporada actualizado.", { id: loadingToast });
+
         } catch (error) {
-            toast.error("No se pudo cambiar el estado.");
+            console.error("Error al cambiar el estado o gestionar trofeos:", error);
+            toast.error("No se pudo completar la operación.", { id: loadingToast });
         } finally {
             setLoading(false);
         }
     };
+
 
     const handleDeleteSeason = async (seasonId, seasonName) => {
         if (seasons.length <= 1) {
@@ -209,7 +232,7 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
         try {
             const batch = writeBatch(db);
             const seasonRef = doc(db, 'leagues', league.id, 'seasons', seasonId);
-            const subcollections = ['rounds', 'lineups', 'transfers'];
+            const subcollections = ['rounds', 'lineups', 'transfers', 'achievements'];
 
             for (const sub of subcollections) {
                 const subcollectionRef = collection(db, 'leagues', league.id, 'seasons', seasonId, sub);
@@ -241,7 +264,7 @@ export default function SettingsModal({ isOpen, onClose, league, seasons }) {
             const batch = writeBatch(db);
 
             for (const season of seasons) {
-                const seasonSubcollections = ['rounds', 'lineups', 'transfers'];
+                const seasonSubcollections = ['rounds', 'lineups', 'transfers', 'achievements'];
                  for (const sub of seasonSubcollections) {
                     const subcollectionRef = collection(db, 'leagues', league.id, 'seasons', season.id, sub);
                     const snapshot = await getDocs(subcollectionRef);

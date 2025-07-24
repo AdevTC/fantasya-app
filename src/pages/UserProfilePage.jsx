@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle } from 'lucide-react';
+import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle, Flame } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 import TrophyComponent from '../components/Trophy';
+import FeatBadge from '../components/FeatBadge';
 import toast from 'react-hot-toast';
 import { useAuth } from '../hooks/useAuth';
 import TrophyDetailModal from '../components/TrophyDetailModal';
@@ -56,6 +57,7 @@ export default function UserProfilePage() {
     const [profile, setProfile] = useState(null);
     const [seasons, setSeasons] = useState([]);
     const [achievements, setAchievements] = useState([]);
+    const [feats, setFeats] = useState([]);
     const [careerStats, setCareerStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -139,24 +141,48 @@ export default function UserProfilePage() {
                 const achievementsRef = collection(db, 'users', userId, 'achievements');
                 const achievementsSnapshot = await getDocs(query(achievementsRef, orderBy('seasonName', 'desc')));
                 
-                const groupedAchievements = {};
+                const allEarnedTrophies = [];
                 achievementsSnapshot.docs.forEach(doc => {
                     const seasonData = doc.data();
                     seasonData.trophies.forEach(trophy => {
-                        if (!groupedAchievements[trophy.trophyId]) {
-                            groupedAchievements[trophy.trophyId] = {
-                                ...trophy,
-                                wins: [],
-                            };
-                        }
-                        groupedAchievements[trophy.trophyId].wins.push({
+                        allEarnedTrophies.push({
+                            ...trophy,
                             seasonName: seasonData.seasonName,
                             leagueName: seasonData.leagueName,
-                            ...trophy,
                         });
                     });
                 });
+
+                if (currentUser && userId === currentUser.uid && profileData.pinnedTrophies?.length > 0) {
+                    const validPinnedTrophies = profileData.pinnedTrophies.filter(pinned => 
+                        allEarnedTrophies.some(earned => 
+                            earned.trophyId === pinned.trophyId && earned.seasonName === pinned.seasonName
+                        )
+                    );
+
+                    if (validPinnedTrophies.length !== profileData.pinnedTrophies.length) {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        await updateDoc(userRef, { pinnedTrophies: validPinnedTrophies });
+                        setProfile(prev => ({...prev, pinnedTrophies: validPinnedTrophies}));
+                    }
+                }
+                
+                const groupedAchievements = {};
+                allEarnedTrophies.forEach(trophy => {
+                    if (!groupedAchievements[trophy.trophyId]) {
+                        groupedAchievements[trophy.trophyId] = {
+                            ...trophy,
+                            wins: [],
+                        };
+                    }
+                    groupedAchievements[trophy.trophyId].wins.push(trophy);
+                });
                 setAchievements(Object.values(groupedAchievements));
+
+                const featsRef = collection(db, 'users', userId, 'feats');
+                const featsSnapshot = await getDocs(featsRef);
+                const userFeats = featsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                setFeats(userFeats);
 
                 const leaguesRef = collection(db, 'leagues');
                 const leaguesSnapshot = await getDocs(leaguesRef);
@@ -394,10 +420,18 @@ export default function UserProfilePage() {
                     
                     <div className="bento-card p-8 mb-8">
                         <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Retos de Jornada Conseguidos</h2>
-                        <div className="text-center text-gray-500 dark:text-gray-400">
-                            <Shield size={48} className="mx-auto mb-4" />
-                            <p>Próximamente: ¡Aquí aparecerán los retos que completes en cada jornada!</p>
-                        </div>
+                        {feats.length > 0 ? (
+                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-6">
+                                {feats.map(feat => (
+                                    <FeatBadge key={feat.id} feat={feat} />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center text-gray-500 dark:text-gray-400">
+                                <Flame size={48} className="mx-auto mb-4" />
+                                <p>Este mánager todavía no ha completado ningún reto de jornada.</p>
+                            </div>
+                        )}
                     </div>
 
                     <div className="space-y-4">

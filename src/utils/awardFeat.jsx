@@ -1,17 +1,11 @@
+import React from 'react';
 import { doc, runTransaction, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { eventAchievementsConfig } from '../config/eventAchievements.jsx'; // Extensión actualizada
+import { Award } from 'lucide-react';
 
-/**
- * Otorga una hazaña a un usuario específico.
- * @param {string} userId - El ID del usuario que recibe la hazaña.
- * @param {string} featId - La clave de la hazaña (ej: 'RACHA_IMPARABLE').
- * @param {object} details - Información sobre dónde se ganó (leagueName, seasonName).
- */
 export const awardFeat = async (userId, featId, details) => {
     const featRef = doc(db, 'users', userId, 'feats', featId);
-    const config = eventAchievementsConfig[featId];
 
     try {
         await runTransaction(db, async (transaction) => {
@@ -37,15 +31,15 @@ export const awardFeat = async (userId, featId, details) => {
             >
               <div className="flex-1 w-0 p-4">
                 <div className="flex items-start">
-                  <div className={`flex-shrink-0 pt-0.5 text-2xl ${config.color}`}>
-                    {config.icon({})}
+                  <div className={`flex-shrink-0 pt-0.5 text-2xl text-yellow-500`}>
+                    <Award />
                   </div>
                   <div className="ml-3 flex-1">
                     <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      ¡Hazaña Desbloqueada!
+                      ¡Reto Conseguido!
                     </p>
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                      {config.name}
+                      Has completado: {details.challengeTitle}
                     </p>
                   </div>
                 </div>

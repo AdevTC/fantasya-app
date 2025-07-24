@@ -15,6 +15,7 @@ import ThemeToggleButton from '../components/ThemeToggleButton';
 import HallOfFameTab from '../components/HallOfFameTab';
 import RulesModal from '../components/RulesModal';
 import LeagueSummaryModal from '../components/LeagueSummaryModal';
+import ChallengesTab from '../components/ChallengesTab';
 import { useTheme } from '../context/ThemeContext';
 
 const StatCard = ({ icon, title, value, colorClass }) => (
@@ -321,7 +322,7 @@ export default function LeaguePage() {
 
     const renderTabContent = () => {
         if (!selectedSeason) return <LoadingSpinner />;
-        if (!isMemberOfSelectedSeason && !['clasificacion', 'estadisticas', 'jornadas', 'salon-de-la-fama'].includes(activeTab)) {
+        if (!isMemberOfSelectedSeason && !['clasificacion', 'estadisticas', 'jornadas', 'salon-de-la-fama', 'retos'].includes(activeTab)) {
             return <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700"><p className="text-gray-600 dark:text-gray-400">No eres miembro de esta temporada. Solo puedes ver la información pública.</p></div>;
         }
 
@@ -333,6 +334,7 @@ export default function LeaguePage() {
             case 'fichajes':      return <TransfersTab {...props} />;
             case 'estadisticas':  return <StatsTab {...props} />;
             case 'salon-de-la-fama': return <HallOfFameTab {...props} />;
+            case 'retos':         return <ChallengesTab {...props} />;
             case 'admin':         return userRole === 'admin' ? <AdminTab {...props} /> : null;
             default: return null;
         }
@@ -417,6 +419,7 @@ export default function LeaguePage() {
                             <TabButton icon={<Trophy size={18} />} text="Clasificación" tabName="clasificacion" />
                             <TabButton icon={<CalendarDays size={18} />} text="Jornadas" tabName="jornadas" />
                             <TabButton icon={<BarChart2 size={18} />} text="Estadísticas" tabName="estadisticas" />
+                            <TabButton icon={<Flame size={18} />} text="Retos" tabName="retos" />
                             <TabButton icon={<Swords size={18} />} text="Salón de la Fama" tabName="salon-de-la-fama" />
                             {isMemberOfSelectedSeason && (
                                 <>

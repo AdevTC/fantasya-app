@@ -304,7 +304,7 @@ export default function AdminTab({ league, season, roundsData }) {
                 </p>
                 <div className="p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-blue-800 dark:text-blue-300">
                     <p className="font-semibold">Nota:</p>
-                    <p className="text-sm">Este proceso es automático para asegurar que todos los datos de la temporada están completos antes de la asignación. Esto reemplaza al antiguo botón manual.</p>
+                    <p className="text-sm">Si cambias una temporada de "Finalizada" a "Activa", los trofeos se revocarán automáticamente.</p>
                 </div>
             </div>
         </div>
