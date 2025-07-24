@@ -1,16 +1,18 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc, orderBy, limit } from 'firebase/firestore';
+import React, { useState } from 'react';
+import { collection, query, where, getDocs, doc, updateDoc, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
-import { UserCog, Search, ShieldCheck, ShieldOff } from 'lucide-react';
+import { UserCog, Search, ShieldCheck, ShieldOff, RefreshCw } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { calculateXpForAllUsers } from '../utils/xp';
 
 export default function SuperAdminPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searched, setSearched] = useState(false);
+    const [recalculating, setRecalculating] = useState(false);
 
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -25,10 +27,6 @@ export default function SuperAdminPage() {
 
         try {
             const usersRef = collection(db, 'users');
-            const isEmailSearch = cleanedSearchTerm.includes('@');
-
-            // --- LÓGICA DE BÚSQUEDA MEJORADA ---
-            // Creamos dos queries: una para el nombre de usuario y otra para el email.
             const usernameQuery = query(usersRef, 
                 where("username", ">=", cleanedSearchTerm),
                 where("username", "<=", cleanedSearchTerm + '\uf8ff'),
@@ -41,13 +39,11 @@ export default function SuperAdminPage() {
                 limit(10)
             );
 
-            // Ejecutamos ambas búsquedas en paralelo
             const [usernameSnapshot, emailSnapshot] = await Promise.all([
                 getDocs(usernameQuery),
                 getDocs(emailQuery)
             ]);
 
-            // Unimos los resultados y eliminamos duplicados
             const usersMap = new Map();
             usernameSnapshot.docs.forEach(doc => usersMap.set(doc.id, { id: doc.id, ...doc.data() }));
             emailSnapshot.docs.forEach(doc => usersMap.set(doc.id, { id: doc.id, ...doc.data() }));
@@ -74,11 +70,7 @@ export default function SuperAdminPage() {
         const loadingToast = toast.loading('Actualizando rol...');
         try {
             const userRef = doc(db, 'users', userId);
-            if (newRole === 'superadmin') {
-                await updateDoc(userRef, { appRole: 'superadmin' });
-            } else {
-                await updateDoc(userRef, { appRole: 'user' });
-            }
+            await updateDoc(userRef, { appRole: newRole });
             setSearchResults(prev => prev.map(user => 
                 user.id === userId ? { ...user, appRole: newRole } : user
             ));
@@ -86,6 +78,21 @@ export default function SuperAdminPage() {
         } catch (error) {
             console.error("Error al cambiar el rol:", error);
             toast.error('No se pudo actualizar el rol.', { id: loadingToast });
+        }
+    };
+
+    const handleRecalculateXP = async () => {
+        if (!window.confirm("Esta acción recalculará los puntos de experiencia para TODOS los usuarios. Puede tardar y consumir lecturas. ¿Continuar?")) return;
+        setRecalculating(true);
+        const loadingToast = toast.loading('Recalculando XP para todos los usuarios...');
+        try {
+            await calculateXpForAllUsers();
+            toast.success('¡XP de todos los usuarios recalculada!', { id: loadingToast });
+        } catch (error) {
+            console.error("Error recalculando XP:", error);
+            toast.error('Hubo un error al recalcular la experiencia.', { id: loadingToast });
+        } finally {
+            setRecalculating(false);
         }
     };
 
@@ -97,6 +104,15 @@ export default function SuperAdminPage() {
                     Panel de Super Administración
                 </h1>
                 <Link to="/dashboard" className="text-deep-blue dark:text-blue-400 hover:underline font-semibold">Volver al Dashboard</Link>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6 mb-8">
+                <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">Recalcular Experiencia (XP)</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Usa esta herramienta para asignar puntos de experiencia retroactivamente a todos los usuarios en función de sus acciones pasadas (fichajes, puntos, publicaciones, etc.).</p>
+                <button onClick={handleRecalculateXP} disabled={recalculating} className="btn-secondary flex items-center gap-2">
+                    <RefreshCw size={16} className={recalculating ? 'animate-spin' : ''} />
+                    {recalculating ? 'Calculando...' : 'Iniciar Recálculo de XP'}
+                </button>
             </div>
 
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6 mb-8">

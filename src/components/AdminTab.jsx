@@ -4,7 +4,7 @@ import { db, auth } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
-import { Calendar, List, Award, ThumbsDown, UserCheck, Sofa, ShoppingCart } from 'lucide-react';
+import { Calendar, List, Award } from 'lucide-react';
 import { calculateStandardDeviation } from '../utils/helpers';
 import { useAuth } from '../hooks/useAuth';
 
@@ -22,7 +22,11 @@ export const TROPHY_DEFINITIONS = {
     STONE_HAND: { name: 'Mano de Piedra', description: 'Equipo con la peor puntuación en una sola jornada.' },
     CAPTAIN_FANTASTIC: { name: 'Capitán Fantástico', description: 'El que más puntos extra ha conseguido gracias a sus capitanes.' },
     GOLDEN_BENCH: { name: 'Banquillo de Oro', description: 'El que más puntos ha desperdiciado en el banquillo.' },
-    SPECULATOR: { name: 'El Especulador', description: 'El que ha realizado más fichajes durante la temporada.' }
+    SPECULATOR: { name: 'El Especulador', description: 'El que ha realizado más fichajes durante la temporada.' },
+    // --- NUEVOS TROFEOS ---
+    GALACTIC_SIGNING: { name: 'Fichaje Galáctico', description: 'Por fichar a uno de los 5 jugadores más caros del mercado.' },
+    COMEBACK_KING: { name: 'Rey de la Remontada', description: 'Por ganar una jornada tras estar fuera del podio en la anterior.' },
+    STREAK_MASTER: { name: 'Racha Imparable', description: 'Por ganar 3 jornadas seguidas.' },
 };
 
 export default function AdminTab({ league, season, roundsData }) {
@@ -34,7 +38,6 @@ export default function AdminTab({ league, season, roundsData }) {
     const [loading, setLoading] = useState(false);
     const [members, setMembers] = useState(season?.members || {});
     const [newTeamName, setNewTeamName] = useState('');
-    const [allLineups, setAllLineups] = useState(null);
 
     useEffect(() => {
         if (!season) return;
@@ -130,6 +133,8 @@ export default function AdminTab({ league, season, roundsData }) {
             batch.update(seasonRef, { members: updatedMembers });
 
             await batch.commit();
+            // Lógica de XP: Aquí se podría añadir XP a cada jugador por los puntos conseguidos.
+            // Ejemplo: `addXp(userId, points * 0.1)`
             toast.success('Datos guardados y totales recalculados.', { id: loadingToast });
         } catch (error) {
             console.error("Error al guardar los datos:", error);
@@ -192,180 +197,6 @@ export default function AdminTab({ league, season, roundsData }) {
             toast.success('Jugador expulsado.', { id: loadingToast });
         } catch (error) {
             toast.error('No se pudo expulsar al jugador.', { id: loadingToast });
-        }
-    };
-    
-    const handleAwardTrophies = async () => {
-        if (!window.confirm("¿Estás seguro de que quieres finalizar y (re)otorgar los trofeos? Esta acción borrará los trofeos anteriores de esta temporada y los recalculará.")) return;
-        setLoading(true);
-        const loadingToast = toast.loading('Calculando ganadores y otorgando trofeos...');
-
-        try {
-            const lineupsRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'lineups');
-            const lineupsSnapshot = await getDocs(query(lineupsRef));
-            const lineupsData = {};
-            lineupsSnapshot.forEach(doc => { lineupsData[doc.id] = doc.data(); });
-            
-            const batch = writeBatch(db);
-            const achievementsToAward = {};
-            const players = Object.entries(members).map(([uid, data]) => ({ uid, ...data }));
-
-            const seasonAchievementsRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'achievements');
-            const oldSeasonAchievementsSnap = await getDocs(seasonAchievementsRef);
-            oldSeasonAchievementsSnap.forEach(doc => batch.delete(doc.ref));
-
-            for (const player of players) {
-                if (!player.isPlaceholder) {
-                    const userAchievementRef = doc(db, 'users', player.uid, 'achievements', season.id);
-                    batch.delete(userAchievementRef);
-                }
-            }
-
-            players.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
-            if (players.length > 0) {
-                players.filter(p => p.totalPoints === players[0].totalPoints).forEach(winner => {
-                    if (!achievementsToAward[winner.uid]) achievementsToAward[winner.uid] = [];
-                    achievementsToAward[winner.uid].push({ trophyId: 'CHAMPION', ...TROPHY_DEFINITIONS.CHAMPION });
-                });
-            }
-            if (players.length > 1) {
-                const secondScore = players[1].totalPoints;
-                players.filter(p => p.totalPoints === secondScore).forEach(winner => {
-                    if (!achievementsToAward[winner.uid]) achievementsToAward[winner.uid] = [];
-                    achievementsToAward[winner.uid].push({ trophyId: 'RUNNER_UP', ...TROPHY_DEFINITIONS.RUNNER_UP });
-                });
-            }
-            if (players.length > 2) {
-                const thirdScore = players[2].totalPoints;
-                players.filter(p => p.totalPoints === thirdScore).forEach(winner => {
-                    if (!achievementsToAward[winner.uid]) achievementsToAward[winner.uid] = [];
-                    achievementsToAward[winner.uid].push({ trophyId: 'THIRD_PLACE', ...TROPHY_DEFINITIONS.THIRD_PLACE });
-                });
-            }
-
-            const statsByPlayer = {};
-            players.forEach(p => { statsByPlayer[p.uid] = { scores: [], roundFinishes: Array(players.length).fill(0), lastPlaces: 0, captainPoints: 0, wastedBenchPoints: 0 }; });
-            
-            roundsData.forEach(round => {
-                const roundId = round.id || round.roundNumber.toString();
-                const participatingUids = Object.keys(round.scores || {}).filter(uid => typeof round.scores[uid] === 'number' && statsByPlayer[uid]);
-                const rankedRound = participatingUids.map(uid => ({ uid, points: round.scores[uid] })).sort((a, b) => b.points - a.points);
-                if (rankedRound.length > 0) {
-                    const lowestScore = rankedRound[rankedRound.length - 1].points;
-                    rankedRound.forEach((p, index) => {
-                        let rank = index;
-                        while (rank > 0 && rankedRound[rank - 1].points === p.points) { rank--; }
-                        if (statsByPlayer[p.uid]) statsByPlayer[p.uid].roundFinishes[rank]++;
-                        if (p.points === lowestScore) statsByPlayer[p.uid].lastPlaces++;
-                    });
-                }
-                Object.entries(round.scores || {}).forEach(([uid, score]) => {
-                    if (statsByPlayer[uid] && typeof score === 'number') {
-                        statsByPlayer[uid].scores.push(score);
-                        const lineup = lineupsData[`${roundId}-${uid}`];
-                        if (lineup?.captainSlot) {
-                            const [slotType, ...slotRest] = lineup.captainSlot.split('-'); const slotKey = slotRest.join('-'); let captain = null; if (slotType === 'coach') captain = lineup.coach; else if (slotType === 'players') captain = lineup.players?.[lineup.captainSlot]; else if (slotType === 'bench') captain = lineup.bench?.[slotKey]; if (captain?.points > 0) { statsByPlayer[uid].captainPoints += captain.points; }
-                        }
-                        ['GK', 'DF', 'MF', 'FW'].forEach(pos => { const benchPlayer = lineup?.bench?.[pos]; if (benchPlayer?.points > 0 && benchPlayer.status === 'playing' && !benchPlayer.active) { statsByPlayer[uid].wastedBenchPoints += benchPlayer.points; } });
-                    }
-                });
-            });
-            
-            let topScorer = { uids: [], score: -Infinity };
-            let worstScore = { uids: [], score: Infinity };
-            roundsData.forEach(round => {
-                Object.entries(round.scores || {}).forEach(([uid, score]) => {
-                    if (typeof score === 'number') {
-                        if (score > topScorer.score) topScorer = { uids: [uid], score };
-                        else if (score === topScorer.score) topScorer.uids.push(uid);
-                        if (score < worstScore.score) worstScore = { uids: [uid], score };
-                        else if (score === worstScore.score) worstScore.uids.push(uid);
-                    }
-                });
-            });
-            if (topScorer.score > -Infinity) topScorer.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'TOP_SCORER', ...TROPHY_DEFINITIONS.TOP_SCORER }); });
-            if (worstScore.score < Infinity) worstScore.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'STONE_HAND', ...TROPHY_DEFINITIONS.STONE_HAND }); });
-
-            let mostWins = { uids: [], count: 0 }, mostPodiums = { uids: [], count: 0 }, mostLasts = { uids: [], count: 0 };
-            let bestCaptain = { uids: [], points: 0 }, goldenBench = { uids: [], points: 0 };
-            Object.entries(statsByPlayer).forEach(([uid, data]) => {
-                const wins = data.roundFinishes[0] || 0;
-                const podiums = (data.roundFinishes[0] || 0) + (data.roundFinishes[1] || 0) + (data.roundFinishes[2] || 0);
-                const lasts = data.lastPlaces || 0;
-                if(wins > mostWins.count) mostWins = { uids: [uid], count: wins }; else if (wins === mostWins.count) mostWins.uids.push(uid);
-                if(podiums > mostPodiums.count) mostPodiums = { uids: [uid], count: podiums }; else if (podiums === mostPodiums.count) mostPodiums.uids.push(uid);
-                if(lasts > mostLasts.count) mostLasts = { uids: [uid], count: lasts }; else if (lasts === mostLasts.count) mostLasts.uids.push(uid);
-                if (data.captainPoints > bestCaptain.points) bestCaptain = { uids: [uid], points: data.captainPoints }; else if (data.captainPoints === bestCaptain.points) bestCaptain.uids.push(uid);
-                if (data.wastedBenchPoints > goldenBench.points) goldenBench = { uids: [uid], points: data.wastedBenchPoints }; else if (data.wastedBenchPoints === goldenBench.points) goldenBench.uids.push(uid);
-            });
-            if (mostWins.count > 0) mostWins.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'MOST_WINS', ...TROPHY_DEFINITIONS.MOST_WINS }); });
-            if (mostPodiums.count > 0) mostPodiums.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'MOST_PODIUMS', ...TROPHY_DEFINITIONS.MOST_PODIUMS }); });
-            if (mostLasts.count > 0) mostLasts.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'LANTERN_ROUGE', ...TROPHY_DEFINITIONS.LANTERN_ROUGE }); });
-            if (bestCaptain.points > 0) bestCaptain.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'CAPTAIN_FANTASTIC', ...TROPHY_DEFINITIONS.CAPTAIN_FANTASTIC }); });
-            if (goldenBench.points > 0) goldenBench.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'GOLDEN_BENCH', ...TROPHY_DEFINITIONS.GOLDEN_BENCH }); });
-            
-            let mostRegular = { uids: [], value: Infinity };
-            Object.entries(statsByPlayer).forEach(([uid, data]) => {
-                const regularity = calculateStandardDeviation(data.scores);
-                if(data.scores.length > 1 && regularity < mostRegular.value) mostRegular = { uids: [uid], value: regularity };
-                else if (data.scores.length > 1 && regularity === mostRegular.value) mostRegular.uids.push(uid);
-            });
-            if (mostRegular.value !== Infinity) mostRegular.uids.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'MOST_REGULAR', ...TROPHY_DEFINITIONS.MOST_REGULAR }); });
-
-            const transfersRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'transfers');
-            const transfersSnapshot = await getDocs(transfersRef);
-            const transfers = transfersSnapshot.docs.map(doc => doc.data());
-            const spending = {}, netBalance = {}, transferCount = {};
-            transfers.forEach(t => {
-                if (t.buyerId !== 'market' && members[t.buyerId]) { spending[t.buyerId] = (spending[t.buyerId] || 0) + t.price; netBalance[t.buyerId] = (netBalance[t.buyerId] || 0) - t.price; transferCount[t.buyerId] = (transferCount[t.buyerId] || 0) + 1; }
-                if (t.sellerId !== 'market' && members[t.sellerId]) { netBalance[t.sellerId] = (netBalance[t.sellerId] || 0) + t.price; }
-            });
-            let maxSpent = 0; for(const uid in spending) { if(spending[uid] > maxSpent) maxSpent = spending[uid]; }
-            const marketKings = Object.keys(spending).filter(uid => spending[uid] === maxSpent);
-            let maxNet = -Infinity; for(const uid in netBalance) { if(netBalance[uid] > maxNet) maxNet = netBalance[uid]; }
-            const leagueSharks = Object.keys(netBalance).filter(uid => netBalance[uid] === maxNet);
-            let maxTransfers = 0; for(const uid in transferCount) { if(transferCount[uid] > maxTransfers) maxTransfers = transferCount[uid]; }
-            const speculators = Object.keys(transferCount).filter(uid => transferCount[uid] === maxTransfers);
-            if (maxSpent > 0) marketKings.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'MARKET_KING', ...TROPHY_DEFINITIONS.MARKET_KING }); });
-            if (maxNet > -Infinity) leagueSharks.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'LEAGUE_SHARK', ...TROPHY_DEFINITIONS.LEAGUE_SHARK }); });
-            if (maxTransfers > 0) speculators.forEach(uid => { if (!achievementsToAward[uid]) achievementsToAward[uid] = []; achievementsToAward[uid].push({ trophyId: 'SPECULATOR', ...TROPHY_DEFINITIONS.SPECULATOR }); });
-            
-            for(const userId in achievementsToAward) {
-                const achievementRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'achievements', userId);
-                const isPlaceholder = members[userId]?.isPlaceholder || false;
-                const teamName = members[userId]?.teamName || '';
-                batch.set(achievementRef, { trophies: achievementsToAward[userId], isPlaceholder, teamName });
-                if (!isPlaceholder) {
-                    const userAchievementRef = doc(db, 'users', userId, 'achievements', season.id);
-                    batch.set(userAchievementRef, { seasonName: season.name, leagueName: league.name, trophies: achievementsToAward[userId] });
-                }
-            }
-
-            if (players.length > 0) {
-                const champion = players[0];
-                const championName = members[champion.uid]?.teamName || 'Un valiente competidor';
-                const postContent = `🏆 ¡La ${season.name} de la liga "${league.name}" ha llegado a su fin! 🏆\n\n¡Enhorabuena a ${championName} por proclamarse campeón de la liga! 👑\n\nPronto se podrán consultar todos los ganadores de trofeos en el Salón de la Fama.`;
-                
-                const postsRef = collection(db, 'posts');
-                batch.set(doc(postsRef), {
-                    content: postContent,
-                    tags: ['finaldetemporada', 'campeon', league.name.toLowerCase().replace(/\s/g, '')],
-                    authorId: auth.currentUser.uid,
-                    authorUsername: adminProfile.username,
-                    authorPhotoURL: adminProfile.photoURL || null,
-                    createdAt: serverTimestamp(),
-                    likes: [],
-                });
-            }
-
-            await batch.commit();
-            toast.success('¡Trofeos otorgados y publicación creada con éxito!', { id: loadingToast });
-
-        } catch (error) {
-            console.error("Error al otorgar trofeos:", error);
-            toast.error("No se pudieron otorgar los trofeos.", { id: loadingToast });
-        } finally {
-            setLoading(false);
         }
     };
     
@@ -469,15 +300,12 @@ export default function AdminTab({ league, season, roundsData }) {
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2 flex items-center gap-2"><Award /> Fin de Temporada</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                    Una vez que la temporada haya concluido, usa esta herramienta para (re)calcular y asignar los trofeos a los perfiles de los ganadores.
+                    Para otorgar los trofeos, ve a los <span className="font-bold">Ajustes de la Liga</span> y cambia el estado de la temporada a <span className="font-bold">"Finalizada"</span>. Los trofeos se calcularán y asignarán automáticamente.
                 </p>
-                <button 
-                    onClick={handleAwardTrophies} 
-                    disabled={loading} 
-                    className="btn-primary w-full sm:w-auto disabled:opacity-50"
-                >
-                    {loading ? 'Calculando...' : 'Calcular y Otorgar Trofeos'}
-                </button>
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-blue-800 dark:text-blue-300">
+                    <p className="font-semibold">Nota:</p>
+                    <p className="text-sm">Este proceso es automático para asegurar que todos los datos de la temporada están completos antes de la asignación. Esto reemplaza al antiguo botón manual.</p>
+                </div>
             </div>
         </div>
     );

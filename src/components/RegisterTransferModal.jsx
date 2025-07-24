@@ -3,8 +3,11 @@ import { db } from '../config/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
+import { grantXp } from '../utils/xp';
+import { useAuth } from '../hooks/useAuth';
 
 export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
+    const { user } = useAuth();
     const [player, setPlayer] = useState(null);
     const [price, setPrice] = useState('');
     const [buyerId, setBuyerId] = useState('');
@@ -31,7 +34,6 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 const now = new Date();
                 setPlayer(null);
                 setPrice('');
-                // CORRECCIÓN: Usar season.members para el valor inicial
                 setBuyerId(season?.members ? Object.keys(season.members)[0] || '' : '');
                 setSellerId('market');
                 setTransferType('puja');
@@ -49,7 +51,6 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             setTransferType('acuerdo');
         }
     }, [transferType, buyerId]);
-
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -77,7 +78,6 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
         };
 
         try {
-            // CORRECCIÓN: La ruta ahora incluye el ID de la temporada
             const basePath = collection(db, 'leagues', league.id, 'seasons', season.id, 'transfers');
             if (existingTransfer) {
                 const transferRef = doc(basePath, existingTransfer.id);
@@ -85,6 +85,9 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 toast.success('Fichaje actualizado correctamente', { id: loadingToast });
             } else {
                 await addDoc(basePath, transferData);
+                if(buyerId !== 'market' && !season.members[buyerId]?.isPlaceholder){
+                    await grantXp(buyerId, 'TRANSFER');
+                }
                 toast.success('Fichaje registrado correctamente', { id: loadingToast });
             }
             onTransferRegistered();
@@ -103,7 +106,6 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-lg border dark:border-gray-700">
                 <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">{existingTransfer ? 'Editar Fichaje' : 'Registrar Nuevo Fichaje'}</h3>
-                {/* CORRECCIÓN: Añadir comprobación de que `season` existe antes de renderizar el formulario */}
                 {season ? (
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div><label className="label dark:text-gray-300">Jugador</label><PlayerAutocomplete onPlayerSelect={setPlayer} initialValue={player?.name}/></div>

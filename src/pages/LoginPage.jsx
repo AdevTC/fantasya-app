@@ -109,7 +109,8 @@ export default function LoginPage() {
                     email, 
                     createdAt: new Date(),
                     followers: [],
-                    following: [] 
+                    following: [],
+                    xp: 0, // Inicia el XP en 0
                 });
                 batch.set(usernameRef, { uid: user.uid });
                 

@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare } from 'lucide-react';
+import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 import TrophyComponent from '../components/Trophy';
 import toast from 'react-hot-toast';
 import { useAuth } from '../hooks/useAuth';
+import TrophyDetailModal from '../components/TrophyDetailModal';
+import XPGuideModal from '../components/XPGuideModal';
 
 const CareerStatCard = ({ icon, value, label }) => (
     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
@@ -60,6 +62,9 @@ export default function UserProfilePage() {
     const [isFollowing, setIsFollowing] = useState(false);
     const [followersCount, setFollowersCount] = useState(0);
     const [followingCount, setFollowingCount] = useState(0);
+    const [isTrophyModalOpen, setIsTrophyModalOpen] = useState(false);
+    const [selectedTrophy, setSelectedTrophy] = useState(null);
+    const [isXPModalOpen, setIsXPModalOpen] = useState(false);
 
     const getRankInSeason = useCallback((seasonData, userId) => {
         const members = Object.entries(seasonData.members).map(([uid, data]) => ({ uid, ...data }));
@@ -80,17 +85,33 @@ export default function UserProfilePage() {
     const handlePinTrophy = async (achievement) => {
         if (!currentUser || currentUser.uid !== profile.id) return;
         const userRef = doc(db, 'users', currentUser.uid);
+        let currentPinned = profile.pinnedTrophies || [];
+        const achievementIdentifier = `${achievement.trophyId}_${achievement.seasonName}`;
+        const isAlreadyPinned = currentPinned.some(p => `${p.trophyId}_${p.seasonName}` === achievementIdentifier);
+        let newPinnedTrophies;
+        if (isAlreadyPinned) {
+            newPinnedTrophies = currentPinned.filter(p => `${p.trophyId}_${p.seasonName}` !== achievementIdentifier);
+            toast.success('Logro desfijado.');
+        } else {
+            if (currentPinned.length < 3) {
+                newPinnedTrophies = [...currentPinned, achievement];
+                toast.success('¡Logro fijado en tu perfil!');
+            } else {
+                toast.error('Puedes fijar un máximo de 3 logros.');
+                return;
+            }
+        }
         try {
-            const newPinnedTrophy = profile.pinnedTrophy?.trophyId === achievement.trophyId && profile.pinnedTrophy?.seasonName === achievement.seasonName ? null : achievement;
-            await updateDoc(userRef, {
-                pinnedTrophy: newPinnedTrophy
-            });
-            toast.success(newPinnedTrophy ? '¡Logro fijado en tu perfil!' : 'Logro desfijado.');
+            await updateDoc(userRef, { pinnedTrophies: newPinnedTrophies });
+            setProfile(prevProfile => ({
+                ...prevProfile,
+                pinnedTrophies: newPinnedTrophies
+            }));
         } catch (error) {
             toast.error('No se pudo actualizar el logro.');
         }
     };
-
+    
     useEffect(() => {
         if (!username) return;
 
@@ -117,8 +138,25 @@ export default function UserProfilePage() {
 
                 const achievementsRef = collection(db, 'users', userId, 'achievements');
                 const achievementsSnapshot = await getDocs(query(achievementsRef, orderBy('seasonName', 'desc')));
-                const allAchievements = achievementsSnapshot.docs.flatMap(doc => doc.data().trophies.map(t => ({...t, seasonName: doc.data().seasonName, leagueName: doc.data().leagueName })));
-                setAchievements(allAchievements);
+                
+                const groupedAchievements = {};
+                achievementsSnapshot.docs.forEach(doc => {
+                    const seasonData = doc.data();
+                    seasonData.trophies.forEach(trophy => {
+                        if (!groupedAchievements[trophy.trophyId]) {
+                            groupedAchievements[trophy.trophyId] = {
+                                ...trophy,
+                                wins: [],
+                            };
+                        }
+                        groupedAchievements[trophy.trophyId].wins.push({
+                            seasonName: seasonData.seasonName,
+                            leagueName: seasonData.leagueName,
+                            ...trophy,
+                        });
+                    });
+                });
+                setAchievements(Object.values(groupedAchievements));
 
                 const leaguesRef = collection(db, 'leagues');
                 const leaguesSnapshot = await getDocs(leaguesRef);
@@ -237,116 +275,143 @@ export default function UserProfilePage() {
         }
     };
 
+    const handleInfoClick = (achievement) => {
+        setSelectedTrophy(achievement);
+        setIsTrophyModalOpen(true);
+    };
+
     if (loading) return <LoadingSpinner fullScreen text="Cargando perfil..." />;
     if (error) return <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center text-red-500">{error}</div>;
     if (!profile) return null;
 
+    const currentLevel = Math.floor((profile.xp || 0) / 1000);
+    const xpForNextLevel = (profile.xp || 0) % 1000;
+    const xpPercentage = (xpForNextLevel / 1000) * 100;
+
     return (
-        <div className="min-h-screen p-4 md:p-8">
-            <div className="max-w-4xl mx-auto">
-                <div className="bento-card p-8 mb-8">
-                    <div className="flex flex-col sm:flex-row items-center gap-6">
-                        <img 
-                            src={profile.photoURL || `https://ui-avatars.com/api/?name=${profile.username}&background=random`}
-                            alt="Foto de perfil"
-                            className="w-24 h-24 rounded-full object-cover border-4 border-emerald-400"
-                        />
-                        <div className="flex-1 text-center sm:text-left">
-                            <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{profile.username}</h1>
-                            <div className="flex items-center justify-center sm:justify-start gap-2 mt-2 text-gray-500 dark:text-gray-400">
-                                <Mail size={16} />
-                                <span>{profile.email}</span>
-                            </div>
-                            {profile.bio && <p className="mt-4 text-gray-600 dark:text-gray-300">{profile.bio}</p>}
-                             <div className="flex items-center justify-center sm:justify-start gap-6 mt-4">
-                                <div className="text-center">
-                                    <p className="text-xl font-bold text-gray-800 dark:text-gray-200">{followersCount}</p>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">Seguidores</p>
-                                </div>
-                                <div className="text-center">
-                                    <p className="text-xl font-bold text-gray-800 dark:text-gray-200">{followingCount}</p>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">Siguiendo</p>
+        <>
+            <TrophyDetailModal isOpen={isTrophyModalOpen} onClose={() => setIsTrophyModalOpen(false)} achievement={selectedTrophy} />
+            <XPGuideModal isOpen={isXPModalOpen} onClose={() => setIsXPModalOpen(false)} />
+            <div className="min-h-screen p-4 md:p-8">
+                <div className="max-w-4xl mx-auto">
+                    <div className="bento-card p-8 mb-8">
+                        <div className="flex flex-col sm:flex-row items-center gap-6">
+                            <div className="relative">
+                                <img 
+                                    src={profile.photoURL || `https://ui-avatars.com/api/?name=${profile.username}&background=random`}
+                                    alt="Foto de perfil"
+                                    className="w-24 h-24 rounded-full object-cover border-4 border-emerald-400"
+                                />
+                                <div className="absolute -bottom-2 -right-2 bg-gray-800 text-white text-xs font-bold rounded-full h-8 w-8 flex items-center justify-center border-2 border-white dark:border-gray-800" title={`Nivel ${currentLevel}`}>
+                                    {currentLevel}
                                 </div>
                             </div>
-                        </div>
-                        <div className="flex flex-col items-center sm:items-end gap-2 w-full sm:w-auto">
-                             {currentUser?.uid === profile.id ? (
-                                <Link to="/edit-profile" className="btn-secondary w-full flex items-center justify-center gap-2">
-                                    <Edit size={16}/> Editar Perfil
-                                </Link>
-                            ) : (
-                                <>
-                                    <button onClick={handleFollowToggle} className={`w-full flex items-center justify-center gap-2 ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}>
-                                        {isFollowing ? <UserCheck size={16}/> : <UserPlus size={16}/>}
-                                        {isFollowing ? 'Siguiendo' : 'Seguir'}
-                                    </button>
-                                     <button onClick={handleStartChat} className="btn-secondary w-full flex items-center justify-center gap-2">
-                                        <MessageSquare size={16}/> Enviar Mensaje
-                                    </button>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
-                
-                {careerStats && (
-                    <div className="bento-card p-8 mb-8">
-                        <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Estadísticas de Carrera</h2>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                           <CareerStatCard icon={<Trophy size={24}/>} value={careerStats.seasonsPlayed} label="Temporadas Jugadas"/>
-                           <CareerStatCard icon={<Calendar size={24}/>} value={careerStats.roundsPlayed} label="Jornadas Jugadas"/>
-                           <CareerStatCard icon={<Star size={24}/>} value={careerStats.totalWins} label="Victorias en Jornadas"/>
-                           <CareerStatCard icon={<PodiumIcon size={24}/>} value={careerStats.totalPodiums} label="Podios en Jornadas"/>
-                           <CareerStatCard icon={<BarChart2 size={24}/>} value={careerStats.averagePoints} label="Media de Puntos"/>
-                        </div>
-                    </div>
-                )}
-
-
-                {profile.pinnedTrophy && (
-                    <div className="bento-card border-2 border-yellow-400 dark:border-yellow-500 p-8 mb-8">
-                        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-4 text-center">Logro Destacado</h2>
-                        <div className="flex flex-col items-center gap-2">
-                            <TrophyComponent achievement={profile.pinnedTrophy} />
-                            <p className="text-center text-sm text-gray-600 dark:text-gray-400 mt-2">{profile.pinnedTrophy.description}</p>
-                            <p className="text-center text-xs italic text-gray-500">{profile.pinnedTrophy.leagueName} - {profile.pinnedTrophy.seasonName}</p>
-                        </div>
-                    </div>
-                )}
-
-                {achievements.length > 0 && (
-                    <div className="bento-card p-8 mb-8">
-                         <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Palmarés</h2>
-                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-6">
-                            {achievements.map((ach, index) => (
-                                <div key={index} className="relative">
-                                    <TrophyComponent achievement={ach} />
-                                    {currentUser?.uid === profile.id && (
-                                        <button 
-                                            onClick={() => handlePinTrophy(ach)} 
-                                            title="Fijar logro"
-                                            className={`absolute -top-2 -right-2 p-1.5 rounded-full transition-colors ${profile.pinnedTrophy?.trophyId === ach.trophyId && profile.pinnedTrophy?.seasonName === ach.seasonName ? 'bg-yellow-400 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-yellow-400 dark:hover:bg-yellow-600'}`}
-                                        >
-                                            <Pin size={12} />
+                            <div className="flex-1 text-center sm:text-left">
+                                <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{profile.username}</h1>
+                                {profile.bio && <p className="mt-2 text-gray-600 dark:text-gray-300">{profile.bio}</p>}
+                                <div className="mt-4">
+                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 relative">
+                                        <div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${xpPercentage}%` }}></div>
+                                        <button onClick={() => setIsXPModalOpen(true)} className="absolute -top-1 -right-1" title="¿Cómo gano XP?">
+                                            <HelpCircle size={16} className="text-gray-400 hover:text-emerald-500" />
                                         </button>
-                                    )}
+                                    </div>
+                                    <p className="text-xs text-right text-gray-500 mt-1">{xpForNextLevel} / 1000 XP para el siguiente nivel</p>
                                 </div>
-                            ))}
-                         </div>
+                            </div>
+                            <div className="flex flex-col items-center sm:items-end gap-2 w-full sm:w-auto">
+                                {currentUser?.uid === profile.id ? (
+                                    <Link to="/edit-profile" className="btn-secondary w-full flex items-center justify-center gap-2">
+                                        <Edit size={16}/> Editar Perfil
+                                    </Link>
+                                ) : (
+                                    <>
+                                        <button onClick={handleFollowToggle} className={`w-full flex items-center justify-center gap-2 ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}>
+                                            {isFollowing ? <UserCheck size={16}/> : <UserPlus size={16}/>}
+                                            {isFollowing ? 'Siguiendo' : 'Seguir'}
+                                        </button>
+                                        <button onClick={handleStartChat} className="btn-secondary w-full flex items-center justify-center gap-2">
+                                            <MessageSquare size={16}/> Enviar Mensaje
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
                     </div>
-                )}
-
-                 <div className="space-y-4">
-                    <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Temporadas en las que participa</h2>
-                    {seasons.length > 0 ? (
-                        seasons.map(season => <SeasonSummaryCard key={season.seasonId} season={season} />)
-                    ) : (
-                        <div className="bento-card p-8 text-center">
-                            <p className="text-gray-600 dark:text-gray-400">Este usuario no participa en ninguna temporada todavía.</p>
+                    
+                    {careerStats && (
+                        <div className="bento-card p-8 mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Estadísticas de Carrera</h2>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                <CareerStatCard icon={<Trophy size={24}/>} value={careerStats.seasonsPlayed} label="Temporadas Jugadas"/>
+                                <CareerStatCard icon={<Calendar size={24}/>} value={careerStats.roundsPlayed} label="Jornadas Jugadas"/>
+                                <CareerStatCard icon={<Star size={24}/>} value={careerStats.totalWins} label="Victorias en Jornadas"/>
+                                <CareerStatCard icon={<PodiumIcon size={24}/>} value={careerStats.totalPodiums} label="Podios en Jornadas"/>
+                                <CareerStatCard icon={<BarChart2 size={24}/>} value={careerStats.averagePoints} label="Media de Puntos"/>
+                            </div>
                         </div>
                     )}
-                 </div>
+
+                    {profile.pinnedTrophies && profile.pinnedTrophies.length > 0 && (
+                        <div className="bento-card border-2 border-yellow-400 dark:border-yellow-500 p-8 mb-8">
+                            <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-4 text-center">Logros Destacados</h2>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                {profile.pinnedTrophies.map((trophy, index) => (
+                                    <div key={index} className="flex flex-col items-center gap-2">
+                                        <TrophyComponent achievement={trophy} count={1} onInfoClick={() => handleInfoClick({ ...trophy, wins: [trophy] })} />
+                                        <p className="text-center text-xs italic text-gray-500">{trophy.leagueName} - {trophy.seasonName}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {achievements.length > 0 && (
+                        <div className="bento-card p-8 mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Palmarés</h2>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-6">
+                                {achievements.map((ach, index) => (
+                                    <div key={index} className="relative">
+                                        <TrophyComponent 
+                                            achievement={ach} 
+                                            count={ach.wins.length}
+                                            onInfoClick={() => handleInfoClick(ach)} 
+                                        />
+                                        {currentUser?.uid === profile.id && (
+                                            <button 
+                                                onClick={() => handlePinTrophy(ach.wins[0])}
+                                                title="Fijar logro"
+                                                className={`absolute -top-2 -left-2 p-1.5 rounded-full transition-colors ${(profile.pinnedTrophies || []).some(p => `${p.trophyId}_${p.seasonName}` === `${ach.wins[0].trophyId}_${ach.wins[0].seasonName}`) ? 'bg-yellow-400 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-yellow-400 dark:hover:bg-yellow-600'}`}
+                                            >
+                                                <Pin size={12} />
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="bento-card p-8 mb-8">
+                        <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Retos de Jornada Conseguidos</h2>
+                        <div className="text-center text-gray-500 dark:text-gray-400">
+                            <Shield size={48} className="mx-auto mb-4" />
+                            <p>Próximamente: ¡Aquí aparecerán los retos que completes en cada jornada!</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Temporadas en las que participa</h2>
+                        {seasons.length > 0 ? (
+                            seasons.map(season => <SeasonSummaryCard key={season.seasonId} season={season} />)
+                        ) : (
+                            <div className="bento-card p-8 text-center">
+                                <p className="text-gray-600 dark:text-gray-400">Este usuario no participa en ninguna temporada todavía.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
-        </div>
+        </>
     );
 }

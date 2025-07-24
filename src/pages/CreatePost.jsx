@@ -5,6 +5,7 @@ import { db, storage } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, X, Tag } from 'lucide-react';
+import { grantXp } from '../utils/xp';
 
 export default function CreatePost() {
     const { user, profile } = useAuth();
@@ -56,6 +57,9 @@ export default function CreatePost() {
                 const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}_${image.name}`);
                 await uploadBytes(imageRef, image);
                 imageURL = await getDownloadURL(imageRef);
+                await grantXp(user.uid, 'POST_WITH_IMAGE');
+            } else {
+                await grantXp(user.uid, 'POST');
             }
 
             await addDoc(collection(db, 'posts'), {

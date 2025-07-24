@@ -1,0 +1,42 @@
+import React from 'react';
+import { eventAchievementsConfig } from '../config/eventAchievements.jsx'; // Extensión actualizada
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
+
+export default function FeatBadge({ featId, instances }) {
+    const config = eventAchievementsConfig[featId];
+
+    if (!config) return null;
+
+    const count = instances.length;
+    const Icon = config.icon;
+
+    return (
+        <div className="relative group flex flex-col items-center text-center gap-2">
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 group-hover:border-emerald-500 transition-colors ${config.color}`}>
+                <Icon className="w-8 h-8" />
+            </div>
+            <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{config.name}</p>
+            {count > 1 && (
+                <span className="absolute -top-1 -right-1 bg-emerald-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center border-2 border-white dark:border-gray-900">
+                    x{count}
+                </span>
+            )}
+            
+            <div className="absolute bottom-full mb-2 w-72 p-3 bg-gray-900 dark:bg-gray-700 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                <h4 className="font-bold border-b border-gray-600 pb-1 mb-2">{config.name} ({count})</h4>
+                <p className="text-xs text-gray-300 mb-2">{config.description}</p>
+                <ul className="space-y-1 max-h-40 overflow-y-auto text-xs pr-2">
+                    {instances.sort((a, b) => b.date.toDate() - a.date.toDate()).map((inst, index) => (
+                        <li key={index} className="bg-gray-800 dark:bg-gray-600 p-1.5 rounded">
+                            <span className="font-semibold">{inst.leagueName}</span> - {inst.seasonName}
+                            <br/>
+                            <span className="text-gray-400">{format(inst.date.toDate(), 'dd MMM yyyy', { locale: es })}</span>
+                        </li>
+                    ))}
+                </ul>
+                 <div className="absolute left-1/2 -translate-x-1/2 bottom-[-8px] w-0 h-0 border-l-8 border-l-transparent border-r-8 border-r-transparent border-t-8 border-t-gray-900 dark:border-t-gray-700"></div>
+            </div>
+        </div>
+    );
+}
