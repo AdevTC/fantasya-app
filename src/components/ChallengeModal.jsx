@@ -1,52 +1,111 @@
-import React, { useState } from 'react';
-import { doc, setDoc, collection, serverTimestamp } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { doc, setDoc, collection, serverTimestamp, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { X, Send, User, Users } from 'lucide-react';
+import { X, Send, User, Users, UserCheck } from 'lucide-react';
 
-export default function ChallengeModal({ isOpen, onClose, league, season }) {
+export default function ChallengeModal({ isOpen, onClose, league, season, existingChallenge }) {
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    const [target, setTarget] = useState('all');
-    const [selectedUser, setSelectedUser] = useState('');
+    const [targetType, setTargetType] = useState('all'); // all, selection, single
+    const [targetUsers, setTargetUsers] = useState([]);
     const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) {
+            if (existingChallenge) {
+                setTitle(existingChallenge.title);
+                setDescription(existingChallenge.description);
+                setTargetType(existingChallenge.targetType || 'all');
+                setTargetUsers(existingChallenge.targetUsers || []);
+            } else {
+                setTitle('');
+                setDescription('');
+                setTargetType('all');
+                setTargetUsers([]);
+            }
+        }
+    }, [isOpen, existingChallenge]);
 
     if (!isOpen) return null;
 
-    const handleAssignChallenge = async (e) => {
+    const handleToggleUser = (uid) => {
+        setTargetUsers(prev =>
+            prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+        );
+    };
+
+    const handleSaveChallenge = async (e) => {
         e.preventDefault();
         if (!title.trim() || !description.trim()) {
-            toast.error('El título y la descripción son obligatorios.');
-            return;
+            return toast.error('El título y la descripción son obligatorios.');
         }
-        if (target === 'single' && !selectedUser) {
-            toast.error('Debes seleccionar un usuario para el reto individual.');
-            return;
+        if (targetType === 'single' && targetUsers.length !== 1) {
+            return toast.error('Debes seleccionar un único usuario para un reto individual.');
+        }
+        if (targetType === 'selection' && targetUsers.length < 2) {
+            return toast.error('Debes seleccionar al menos dos usuarios para un reto de selección.');
         }
 
         setLoading(true);
-        const loadingToast = toast.loading('Asignando reto...');
+        const loadingToast = toast.loading(existingChallenge ? 'Guardando cambios...' : 'Creando reto...');
         
         try {
-            const challengesRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'challenges');
-            const newChallengeRef = doc(challengesRef);
-
-            await setDoc(newChallengeRef, {
+            const challengeData = {
                 title,
                 description,
-                target,
-                targetUser: target === 'single' ? selectedUser : null,
-                targetUserName: target === 'single' ? season.members[selectedUser].teamName : 'Todos',
-                status: 'active',
-                winners: [],
-                createdAt: serverTimestamp(),
-            });
+                targetType,
+                targetUsers,
+            };
 
-            toast.success('¡Reto asignado correctamente!', { id: loadingToast });
+            const batch = writeBatch(db);
+
+            if (existingChallenge) {
+                // Actualizar el documento principal del reto
+                const challengeRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'challenges', existingChallenge.id);
+                batch.update(challengeRef, challengeData);
+
+                // Si el reto tiene ganadores, actualizar sus documentos de hazañas
+                if (existingChallenge.winners && existingChallenge.winners.length > 0) {
+                    for (const winner of existingChallenge.winners) {
+                        const featRef = doc(db, 'users', winner.uid, 'feats', existingChallenge.id);
+                        const featSnap = await getDoc(featRef); // Necesitamos leer el documento primero
+
+                        if (featSnap.exists()) {
+                            const featData = featSnap.data();
+                            const updatedInstances = featData.instances.map(instance => {
+                                // Actualizamos solo la instancia de esta temporada/liga específica
+                                if (instance.seasonName === season.name && instance.leagueName === league.name) {
+                                    return {
+                                        ...instance,
+                                        challengeTitle: title,
+                                        description: description
+                                    };
+                                }
+                                return instance;
+                            });
+                            batch.update(featRef, { instances: updatedInstances });
+                        }
+                    }
+                }
+                await batch.commit();
+                toast.success('¡Reto actualizado!', { id: loadingToast });
+
+            } else {
+                const challengesRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'challenges');
+                const newChallengeRef = doc(challengesRef);
+                await setDoc(newChallengeRef, {
+                    ...challengeData,
+                    status: 'active',
+                    winners: [],
+                    createdAt: serverTimestamp(),
+                });
+                toast.success('¡Reto creado correctamente!', { id: loadingToast });
+            }
             onClose();
         } catch (error) {
-            console.error("Error al asignar el reto:", error);
-            toast.error('No se pudo asignar el reto.', { id: loadingToast });
+            console.error("Error al guardar el reto:", error);
+            toast.error('No se pudo guardar el reto.', { id: loadingToast });
         } finally {
             setLoading(false);
         }
@@ -56,13 +115,11 @@ export default function ChallengeModal({ isOpen, onClose, league, season }) {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-lg">
                 <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Crear Reto de Jornada</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={24} />
-                    </button>
+                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200">{existingChallenge ? 'Editar Reto' : 'Crear Reto de Jornada'}</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"><X size={24} /></button>
                 </div>
 
-                <form onSubmit={handleAssignChallenge} className="space-y-4">
+                <form onSubmit={handleSaveChallenge} className="space-y-4">
                     <div>
                         <label className="label">Título del Reto</label>
                         <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="input" placeholder="Ej: El Muro Defensivo" />
@@ -73,33 +130,42 @@ export default function ChallengeModal({ isOpen, onClose, league, season }) {
                     </div>
                     <div>
                         <label className="label">Dirigido a:</label>
-                        <div className="flex gap-4 mt-2">
-                            <label className="flex items-center gap-2">
-                                <input type="radio" name="target" value="all" checked={target === 'all'} onChange={() => setTarget('all')} />
-                                <Users size={16} /> Todos
-                            </label>
-                            <label className="flex items-center gap-2">
-                                <input type="radio" name="target" value="single" checked={target === 'single'} onChange={() => setTarget('single')} />
-                                <User size={16} /> Individual
-                            </label>
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                            <button type="button" onClick={() => setTargetType('all')} className={`btn-secondary flex items-center justify-center gap-2 !py-3 ${targetType === 'all' && '!bg-emerald-100 !text-emerald-700'}`}><Users size={16} /> Todos</button>
+                            <button type="button" onClick={() => setTargetType('selection')} className={`btn-secondary flex items-center justify-center gap-2 !py-3 ${targetType === 'selection' && '!bg-emerald-100 !text-emerald-700'}`}><UserCheck size={16} /> Selección</button>
+                            <button type="button" onClick={() => setTargetType('single')} className={`btn-secondary flex items-center justify-center gap-2 !py-3 ${targetType === 'single' && '!bg-emerald-100 !text-emerald-700'}`}><User size={16} /> Individual</button>
                         </div>
                     </div>
-                    {target === 'single' && (
+                    
+                    {(targetType === 'selection' || targetType === 'single') && (
                         <div>
-                            <label className="label">Seleccionar Usuario</label>
-                            <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} className="input">
-                                <option value="" disabled>Elige un participante...</option>
+                            <label className="label">Seleccionar Participantes</label>
+                            <div className="space-y-2 max-h-40 overflow-y-auto border rounded-lg p-2">
                                 {Object.entries(season.members).map(([uid, member]) => (
-                                    <option key={uid} value={uid}>{member.teamName}</option>
+                                    <label key={uid} className={`flex items-center gap-3 p-2 rounded-md cursor-pointer ${targetUsers.includes(uid) ? 'bg-emerald-100' : 'hover:bg-gray-100'}`}>
+                                        <input 
+                                            type={targetType === 'single' ? 'radio' : 'checkbox'}
+                                            name="user-selection"
+                                            checked={targetUsers.includes(uid)}
+                                            onChange={() => {
+                                                if(targetType === 'single') {
+                                                    setTargetUsers([uid]);
+                                                } else {
+                                                    handleToggleUser(uid);
+                                                }
+                                            }}
+                                            className="w-5 h-5"
+                                        />
+                                        <span>{member.teamName}</span>
+                                    </label>
                                 ))}
-                            </select>
+                            </div>
                         </div>
                     )}
+
                     <div className="flex justify-end gap-4 pt-4">
                         <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
-                        <button type="submit" disabled={loading} className="btn-primary flex items-center gap-2">
-                            <Send size={16} /> {loading ? 'Asignando...' : 'Asignar Reto'}
-                        </button>
+                        <button type="submit" disabled={loading} className="btn-primary flex items-center gap-2"><Send size={16} /> {loading ? 'Guardando...' : 'Guardar Reto'}</button>
                     </div>
                 </form>
             </div>

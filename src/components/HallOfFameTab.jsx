@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import Trophy from './Trophy';
 import LoadingSpinner from './LoadingSpinner';
-import { TROPHY_DEFINITIONS } from './AdminTab'; // Importamos la lista maestra de trofeos
+import { TROPHY_DEFINITIONS } from './AdminTab';
 
 export default function HallOfFameTab({ league, seasons }) {
     const [selectedSeason, setSelectedSeason] = useState(seasons.length > 0 ? seasons[seasons.length - 1] : null);
@@ -21,15 +21,13 @@ export default function HallOfFameTab({ league, seasons }) {
         const q = query(achievementsRef);
 
         const unsubscribe = onSnapshot(q, async (snapshot) => {
-            // Inicializamos el cuadro de honor con todos los trofeos posibles
             const allPossibleTrophies = { ...TROPHY_DEFINITIONS };
             const finalAchievements = Object.keys(allPossibleTrophies).map(trophyId => ({
                 trophyId,
                 ...allPossibleTrophies[trophyId],
-                winners: [] // Inicialmente sin ganadores
+                winners: [] 
             }));
 
-            // Recorremos los logros que SÍ se han otorgado en la base de datos
             for (const achievementDoc of snapshot.docs) {
                 const data = achievementDoc.data();
                 const userId = achievementDoc.id;
@@ -45,7 +43,6 @@ export default function HallOfFameTab({ league, seasons }) {
                     }
                 }
 
-                // Añadimos el ganador al trofeo correspondiente en nuestra lista final
                 data.trophies.forEach(trophy => {
                     const trophyIndex = finalAchievements.findIndex(t => t.trophyId === trophy.trophyId);
                     if (trophyIndex !== -1) {

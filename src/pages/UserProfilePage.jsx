@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, setDoc, getDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle, Flame } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -9,7 +9,9 @@ import FeatBadge from '../components/FeatBadge';
 import toast from 'react-hot-toast';
 import { useAuth } from '../hooks/useAuth';
 import TrophyDetailModal from '../components/TrophyDetailModal';
+import FeatDetailModal from '../components/FeatDetailModal';
 import XPGuideModal from '../components/XPGuideModal';
+import FollowListModal from '../components/FollowListModal'; // Importamos el nuevo modal
 
 const CareerStatCard = ({ icon, value, label }) => (
     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
@@ -66,7 +68,10 @@ export default function UserProfilePage() {
     const [followingCount, setFollowingCount] = useState(0);
     const [isTrophyModalOpen, setIsTrophyModalOpen] = useState(false);
     const [selectedTrophy, setSelectedTrophy] = useState(null);
+    const [isFeatModalOpen, setIsFeatModalOpen] = useState(false);
+    const [selectedFeat, setSelectedFeat] = useState(null);
     const [isXPModalOpen, setIsXPModalOpen] = useState(false);
+    const [followModal, setFollowModal] = useState({ isOpen: false, title: '', userIds: [] });
 
     const getRankInSeason = useCallback((seasonData, userId) => {
         const members = Object.entries(seasonData.members).map(([uid, data]) => ({ uid, ...data }));
@@ -105,10 +110,6 @@ export default function UserProfilePage() {
         }
         try {
             await updateDoc(userRef, { pinnedTrophies: newPinnedTrophies });
-            setProfile(prevProfile => ({
-                ...prevProfile,
-                pinnedTrophies: newPinnedTrophies
-            }));
         } catch (error) {
             toast.error('No se pudo actualizar el logro.');
         }
@@ -116,6 +117,9 @@ export default function UserProfilePage() {
     
     useEffect(() => {
         if (!username) return;
+
+        let unsubscribeProfile = () => {};
+        let unsubscribeFeats = () => {};
 
         const fetchProfileData = async () => {
             setLoading(true);
@@ -129,14 +133,18 @@ export default function UserProfilePage() {
                 
                 const userDoc = userSnapshot.docs[0];
                 const userId = userDoc.id;
-                const profileData = {id: userId, ...userDoc.data()};
-                setProfile(profileData);
-
-                setFollowersCount(profileData.followers?.length || 0);
-                setFollowingCount(profileData.following?.length || 0);
-                if (currentUser) {
-                    setIsFollowing(profileData.followers?.includes(currentUser.uid) || false);
-                }
+                
+                unsubscribeProfile = onSnapshot(doc(db, 'users', userId), (doc) => {
+                    if (doc.exists()) {
+                        const profileData = {id: doc.id, ...doc.data()};
+                        setProfile(profileData);
+                        setFollowersCount(profileData.followers?.length || 0);
+                        setFollowingCount(profileData.following?.length || 0);
+                        if (currentUser) {
+                            setIsFollowing(profileData.followers?.includes(currentUser.uid) || false);
+                        }
+                    }
+                });
 
                 const achievementsRef = collection(db, 'users', userId, 'achievements');
                 const achievementsSnapshot = await getDocs(query(achievementsRef, orderBy('seasonName', 'desc')));
@@ -145,44 +153,24 @@ export default function UserProfilePage() {
                 achievementsSnapshot.docs.forEach(doc => {
                     const seasonData = doc.data();
                     seasonData.trophies.forEach(trophy => {
-                        allEarnedTrophies.push({
-                            ...trophy,
-                            seasonName: seasonData.seasonName,
-                            leagueName: seasonData.leagueName,
-                        });
+                        allEarnedTrophies.push({ ...trophy, seasonName: seasonData.seasonName, leagueName: seasonData.leagueName, });
                     });
                 });
-
-                if (currentUser && userId === currentUser.uid && profileData.pinnedTrophies?.length > 0) {
-                    const validPinnedTrophies = profileData.pinnedTrophies.filter(pinned => 
-                        allEarnedTrophies.some(earned => 
-                            earned.trophyId === pinned.trophyId && earned.seasonName === pinned.seasonName
-                        )
-                    );
-
-                    if (validPinnedTrophies.length !== profileData.pinnedTrophies.length) {
-                        const userRef = doc(db, 'users', currentUser.uid);
-                        await updateDoc(userRef, { pinnedTrophies: validPinnedTrophies });
-                        setProfile(prev => ({...prev, pinnedTrophies: validPinnedTrophies}));
-                    }
-                }
                 
                 const groupedAchievements = {};
                 allEarnedTrophies.forEach(trophy => {
                     if (!groupedAchievements[trophy.trophyId]) {
-                        groupedAchievements[trophy.trophyId] = {
-                            ...trophy,
-                            wins: [],
-                        };
+                        groupedAchievements[trophy.trophyId] = { ...trophy, wins: [] };
                     }
                     groupedAchievements[trophy.trophyId].wins.push(trophy);
                 });
                 setAchievements(Object.values(groupedAchievements));
 
                 const featsRef = collection(db, 'users', userId, 'feats');
-                const featsSnapshot = await getDocs(featsRef);
-                const userFeats = featsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-                setFeats(userFeats);
+                unsubscribeFeats = onSnapshot(featsRef, (featsSnapshot) => {
+                    const userFeats = featsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                    setFeats(userFeats);
+                });
 
                 const leaguesRef = collection(db, 'leagues');
                 const leaguesSnapshot = await getDocs(leaguesRef);
@@ -217,16 +205,10 @@ export default function UserProfilePage() {
                                 const playersWithRanks = [];
                                 for (let i = 0; i < rankedRound.length; i++) {
                                     let rank;
-                                    if (i > 0 && rankedRound[i].points === rankedRound[i-1].points) {
-                                        rank = playersWithRanks[i-1].rank;
-                                    } else {
-                                        rank = i + 1;
-                                    }
+                                    if (i > 0 && rankedRound[i].points === rankedRound[i-1].points) { rank = playersWithRanks[i-1].rank; } else { rank = i + 1; }
                                     playersWithRanks.push({ ...rankedRound[i], rank });
                                 }
-
                                 const userEntryInRound = playersWithRanks.find(p => p.uid === userId);
-
                                 if (userEntryInRound) {
                                     const userRankInRound = userEntryInRound.rank;
                                     if (userRankInRound === 1) totalWins++;
@@ -252,6 +234,10 @@ export default function UserProfilePage() {
         };
 
         fetchProfileData();
+        return () => {
+            unsubscribeProfile();
+            unsubscribeFeats();
+        };
     }, [username, getRankInSeason, currentUser]);
     
     const handleFollowToggle = async () => {
@@ -270,9 +256,6 @@ export default function UserProfilePage() {
                     transaction.update(targetUserRef, { followers: arrayUnion(currentUser.uid) });
                 }
             });
-
-            setFollowersCount(prev => isFollowing ? prev - 1 : prev + 1);
-            setIsFollowing(!isFollowing);
         } catch (error) {
             console.error("Error al actualizar seguimiento:", error);
             toast.error("No se pudo completar la acción.");
@@ -281,18 +264,12 @@ export default function UserProfilePage() {
 
     const handleStartChat = async () => {
         if (!currentUser || !profile || currentUser.uid === profile.id) return;
-
         const chatId = [currentUser.uid, profile.id].sort().join('_');
         const chatRef = doc(db, 'chats', chatId);
-        
         try {
             const chatSnap = await getDoc(chatRef);
             if (!chatSnap.exists()) {
-                await setDoc(chatRef, {
-                    participants: [currentUser.uid, profile.id],
-                    createdAt: serverTimestamp(),
-                    lastMessage: ''
-                });
+                await setDoc(chatRef, { participants: [currentUser.uid, profile.id], createdAt: serverTimestamp(), lastMessage: '' });
             }
             navigate(`/chat/${chatId}`);
         } catch (error) {
@@ -301,14 +278,27 @@ export default function UserProfilePage() {
         }
     };
 
-    const handleInfoClick = (achievement) => {
+    const handleTrophyInfoClick = (achievement) => {
         setSelectedTrophy(achievement);
         setIsTrophyModalOpen(true);
     };
 
-    if (loading) return <LoadingSpinner fullScreen text="Cargando perfil..." />;
+    const handleFeatInfoClick = (feat) => {
+        setSelectedFeat(feat);
+        setIsFeatModalOpen(true);
+    };
+    
+    const openFollowersModal = () => {
+        setFollowModal({ isOpen: true, title: 'Seguidores', userIds: profile.followers || [] });
+    };
+
+    const openFollowingModal = () => {
+        setFollowModal({ isOpen: true, title: 'Siguiendo', userIds: profile.following || [] });
+    };
+
+
+    if (loading || !profile) return <LoadingSpinner fullScreen text="Cargando perfil..." />;
     if (error) return <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center text-red-500">{error}</div>;
-    if (!profile) return null;
 
     const currentLevel = Math.floor((profile.xp || 0) / 1000);
     const xpForNextLevel = (profile.xp || 0) % 1000;
@@ -317,7 +307,15 @@ export default function UserProfilePage() {
     return (
         <>
             <TrophyDetailModal isOpen={isTrophyModalOpen} onClose={() => setIsTrophyModalOpen(false)} achievement={selectedTrophy} />
+            <FeatDetailModal isOpen={isFeatModalOpen} onClose={() => setIsFeatModalOpen(false)} feat={selectedFeat} />
             <XPGuideModal isOpen={isXPModalOpen} onClose={() => setIsXPModalOpen(false)} />
+            <FollowListModal 
+                isOpen={followModal.isOpen} 
+                onClose={() => setFollowModal({ isOpen: false, title: '', userIds: [] })}
+                title={followModal.title}
+                userIds={followModal.userIds}
+            />
+
             <div className="min-h-screen p-4 md:p-8">
                 <div className="max-w-4xl mx-auto">
                     <div className="bento-card p-8 mb-8">
@@ -335,6 +333,16 @@ export default function UserProfilePage() {
                             <div className="flex-1 text-center sm:text-left">
                                 <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{profile.username}</h1>
                                 {profile.bio && <p className="mt-2 text-gray-600 dark:text-gray-300">{profile.bio}</p>}
+                                <div className="flex items-center gap-6 mt-4 justify-center sm:justify-start">
+                                    <button onClick={openFollowersModal} className="text-center hover:bg-gray-100 dark:hover:bg-gray-700/50 p-2 rounded-lg">
+                                        <p className="font-bold text-lg">{followersCount}</p>
+                                        <p className="text-sm text-gray-500">Seguidores</p>
+                                    </button>
+                                    <button onClick={openFollowingModal} className="text-center hover:bg-gray-100 dark:hover:bg-gray-700/50 p-2 rounded-lg">
+                                        <p className="font-bold text-lg">{followingCount}</p>
+                                        <p className="text-sm text-gray-500">Siguiendo</p>
+                                    </button>
+                                </div>
                                 <div className="mt-4">
                                     <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 relative">
                                         <div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${xpPercentage}%` }}></div>
@@ -384,7 +392,7 @@ export default function UserProfilePage() {
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                                 {profile.pinnedTrophies.map((trophy, index) => (
                                     <div key={index} className="flex flex-col items-center gap-2">
-                                        <TrophyComponent achievement={trophy} count={1} onInfoClick={() => handleInfoClick({ ...trophy, wins: [trophy] })} />
+                                        <TrophyComponent achievement={trophy} count={1} onInfoClick={() => handleTrophyInfoClick({ ...trophy, wins: [trophy] })} />
                                         <p className="text-center text-xs italic text-gray-500">{trophy.leagueName} - {trophy.seasonName}</p>
                                     </div>
                                 ))}
@@ -401,7 +409,7 @@ export default function UserProfilePage() {
                                         <TrophyComponent 
                                             achievement={ach} 
                                             count={ach.wins.length}
-                                            onInfoClick={() => handleInfoClick(ach)} 
+                                            onInfoClick={() => handleTrophyInfoClick(ach)} 
                                         />
                                         {currentUser?.uid === profile.id && (
                                             <button 
@@ -423,7 +431,7 @@ export default function UserProfilePage() {
                         {feats.length > 0 ? (
                             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-6">
                                 {feats.map(feat => (
-                                    <FeatBadge key={feat.id} feat={feat} />
+                                    <FeatBadge key={feat.id} feat={feat} onInfoClick={() => handleFeatInfoClick(feat)} />
                                 ))}
                             </div>
                         ) : (

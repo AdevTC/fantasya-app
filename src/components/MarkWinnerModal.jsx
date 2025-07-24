@@ -1,10 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { X, Trophy } from 'lucide-react';
 
 export default function MarkWinnerModal({ isOpen, onClose, challenge, season, onConfirm }) {
     const [selectedWinners, setSelectedWinners] = useState([]);
     const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (isOpen && challenge) {
+            const currentWinnerUids = challenge.winners?.map(w => w.uid) || [];
+            setSelectedWinners(currentWinnerUids);
+        }
+    }, [isOpen, challenge]);
 
     if (!isOpen || !challenge) return null;
 
@@ -15,9 +22,8 @@ export default function MarkWinnerModal({ isOpen, onClose, challenge, season, on
     };
 
     const handleConfirm = async () => {
-        if (selectedWinners.length === 0) {
-            toast.error('Debes seleccionar al menos un ganador.');
-            return;
+        if (challenge.targetType === 'single' && selectedWinners.length > 1) {
+            return toast.error('Este reto solo puede tener un ganador.');
         }
         setLoading(true);
         const winnersData = selectedWinners.map(uid => ({
@@ -27,21 +33,33 @@ export default function MarkWinnerModal({ isOpen, onClose, challenge, season, on
 
         try {
             await onConfirm(challenge, winnersData);
-            toast.success('Ganador(es) marcado(s) correctamente.');
             onClose();
         } catch (error) {
-            console.error("Error al marcar ganador:", error);
-            toast.error('No se pudo marcar el ganador.');
+            // El toast de error se gestiona en el componente padre
         } finally {
             setLoading(false);
         }
     };
 
+    const getTargetMembers = () => {
+        if (!challenge.targetType || !season.members) return [];
+        switch (challenge.targetType) {
+            case 'single':
+            case 'selection':
+                return Object.entries(season.members).filter(([uid]) => challenge.targetUsers.includes(uid));
+            case 'all':
+            default:
+                return Object.entries(season.members);
+        }
+    };
+    
+    const targetMembers = getTargetMembers();
+
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-lg">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Marcar Ganador</h3>
+                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Asignar Ganadores</h3>
                     <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
                         <X size={24} />
                     </button>
@@ -49,12 +67,19 @@ export default function MarkWinnerModal({ isOpen, onClose, challenge, season, on
                 <p className="text-gray-600 dark:text-gray-400 mb-4">Selecciona el/los participante(s) que han completado el reto: <span className="font-bold">{challenge.title}</span></p>
 
                 <div className="space-y-2 max-h-60 overflow-y-auto border rounded-lg p-2">
-                    {Object.entries(season.members).map(([uid, member]) => (
-                        <label key={uid} className={`flex items-center gap-3 p-2 rounded-md cursor-pointer ${selectedWinners.includes(uid) ? 'bg-emerald-100 dark:bg-emerald-900/50' : 'hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}>
+                    {targetMembers.map(([uid, member]) => (
+                        <label key={uid} className={`flex items-center gap-3 p-2 rounded-md cursor-pointer ${selectedWinners.includes(uid) ? 'bg-emerald-100' : 'hover:bg-gray-100'}`}>
                             <input 
-                                type="checkbox"
+                                type={challenge.targetType === 'single' ? 'radio' : 'checkbox'}
+                                name="winner-selection"
                                 checked={selectedWinners.includes(uid)}
-                                onChange={() => handleToggleWinner(uid)}
+                                onChange={() => {
+                                    if (challenge.targetType === 'single') {
+                                        setSelectedWinners(prev => prev.includes(uid) ? [] : [uid]); // Permite deseleccionar
+                                    } else {
+                                        handleToggleWinner(uid);
+                                    }
+                                }}
                                 className="w-5 h-5"
                             />
                             <span>{member.teamName}</span>

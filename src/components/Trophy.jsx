@@ -27,29 +27,28 @@ const Trophy = ({ achievement, count, onInfoClick }) => {
 
     return (
         <div className="relative group flex flex-col items-center text-center">
-            {count > 1 && (
-                <div className="absolute -top-2 -right-2 bg-emerald-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center z-10">
-                    {count}
-                </div>
+            {onInfoClick && (
+                 <button 
+                    onClick={(e) => { e.stopPropagation(); onInfoClick(); }}
+                    className="absolute -top-2 -right-2 p-1 bg-gray-200 dark:bg-gray-700 rounded-full hover:bg-blue-400 dark:hover:bg-blue-600 text-white transition-colors z-10"
+                    title="Ver detalles"
+                >
+                    <Info size={12} />
+                </button>
             )}
-            <button 
-                onClick={(e) => { e.stopPropagation(); onInfoClick(); }}
-                className="absolute -top-2 -right-2 p-1 bg-gray-200 dark:bg-gray-700 rounded-full hover:bg-blue-400 dark:hover:bg-blue-600 text-white transition-colors z-10"
-                title="Ver detalles"
-            >
-                <Info size={12} />
-            </button>
             <div className="text-4xl">{icon}</div>
             <p className="text-xs font-semibold mt-1 text-gray-700 dark:text-gray-300">{name}</p>
             
             <div className="absolute bottom-full mb-2 w-56 p-2 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-20">
                 <p className="font-bold">{name}</p>
                 <p className="text-gray-300">{description}</p>
-                <div className="mt-2 border-t border-gray-600 pt-1">
-                    {wins && wins.map((win, index) => (
-                        <p key={index} className="text-xs italic text-gray-400">{win.leagueName} - {win.seasonName}</p>
-                    ))}
-                </div>
+                {wins && wins.length > 0 && (
+                    <div className="mt-2 border-t border-gray-600 pt-1">
+                        {wins.map((win, index) => (
+                            <p key={index} className="text-xs italic text-gray-400">{win.leagueName} - {win.seasonName}</p>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
