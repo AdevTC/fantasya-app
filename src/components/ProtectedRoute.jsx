@@ -16,7 +16,8 @@ export default function ProtectedRoute() {
   }
 
   if (!user) {
-    return <Navigate to="/login" />;
+    // <-- CAMBIO CLAVE AQUÍ: Redirigir a "/" en lugar de "/login"
+    return <Navigate to="/" />;
   }
   
   // Las cuentas antiguas creadas antes de esta fecha no requieren verificación de email.
@@ -25,6 +26,7 @@ export default function ProtectedRoute() {
 
   // Si el email del usuario no está verificado Y su cuenta fue creada después de la fecha de corte, se le bloquea.
   if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
+    // Lo redirigimos a la página de login con un mensaje.
     return <Navigate to="/login" />;
   }
 

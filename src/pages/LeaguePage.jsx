@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
+// La importación de 'Link' se ha añadido aquí, que es donde se necesita ahora.
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { onSnapshot, collection, query, orderBy, getDocs, where, doc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye } from 'lucide-react';
+
+// Importamos nuestro custom hook
+import { useLeagueData } from '../hooks/useLeagueData';
 
 import AdminTab from '../components/AdminTab';
 import RoundsTab from '../components/RoundsTab';
@@ -215,12 +219,11 @@ export default function LeaguePage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const { theme, toggleTheme } = useTheme();
 
-    const [league, setLeague] = useState(null);
-    const [seasons, setSeasons] = useState([]);
+    // Usamos nuestro nuevo hook para obtener los datos
+    const { league, seasons, loading, error } = useLeagueData(leagueId);
+    
     const [selectedSeason, setSelectedSeason] = useState(null);
     const [roundsData, setRoundsData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState('clasificacion');
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
@@ -237,42 +240,10 @@ export default function LeaguePage() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [menuRef]);
-
+    
+    // Este useEffect ahora solo se encarga de seleccionar la temporada correcta
     useEffect(() => {
-        if (!leagueId) return;
-    
-        const leagueRef = doc(db, 'leagues', leagueId);
-        const unsubscribeLeague = onSnapshot(leagueRef, (leagueSnap) => {
-            if (leagueSnap.exists()) {
-                setLeague({ id: leagueSnap.id, ...leagueSnap.data() });
-            } else {
-                setError('No se encontró la liga.');
-                setLoading(false);
-            }
-        }, (err) => {
-            console.error("Error al obtener la liga:", err);
-            setError('Error al cargar los datos de la liga.');
-            setLoading(false);
-        });
-    
-        const seasonsRef = collection(db, 'leagues', leagueId, 'seasons');
-        const seasonsQuery = query(seasonsRef, orderBy('seasonNumber', 'asc'));
-        const unsubscribeSeasons = onSnapshot(seasonsQuery, (seasonsSnap) => {
-            const allSeasons = seasonsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setSeasons(allSeasons);
-        });
-    
-        return () => {
-            unsubscribeLeague();
-            unsubscribeSeasons();
-        };
-    }, [leagueId]);
-    
-    useEffect(() => {
-        if (!league || seasons.length === 0) {
-            setLoading(true);
-            return;
-        }
+        if (!league || seasons.length === 0) return;
     
         const seasonIdFromUrl = searchParams.get('season');
         const seasonToSelect = seasons.find(s => s.id === seasonIdFromUrl) || seasons.find(s => s.id === league.activeSeason) || seasons[0];
@@ -280,9 +251,9 @@ export default function LeaguePage() {
         if (seasonToSelect) {
             setSelectedSeason(seasonToSelect);
         }
-        setLoading(false);
     }, [league, seasons, searchParams]);
 
+    // Este useEffect se encarga de cargar los datos de las jornadas para la temporada seleccionada
     useEffect(() => {
         if (!selectedSeason || !leagueId) return;
 

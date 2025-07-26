@@ -30,7 +30,7 @@ export default function SideNavBar() {
 
     const handleLogout = async () => {
         await signOut(auth);
-        navigate('/login');
+        navigate('/'); // <-- CAMBIO AQUÍ: Redirige a la landing page en lugar de /login
     };
 
     if (!profile) {

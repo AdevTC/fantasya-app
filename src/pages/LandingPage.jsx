@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FaFutbol, FaTrophy, FaUsers, FaChartLine } from 'react-icons/fa';
-import { Info } from 'lucide-react';
+import { Info, MessageSquare, Star, Flame, User } from 'lucide-react';
 import InfoModal from '../components/InfoModal';
 
 const FeatureCard = ({ icon, title, description }) => (
-    <div className="bg-white dark:bg-gray-800/50 p-6 rounded-xl shadow-md border dark:border-gray-700 text-center">
+    <div className="bg-white dark:bg-gray-800/50 p-6 rounded-xl shadow-md border dark:border-gray-700 text-center h-full flex flex-col items-center">
         <div className="text-emerald-500 text-4xl mx-auto mb-4">{icon}</div>
         <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-2">{title}</h3>
         <p className="text-gray-600 dark:text-gray-400">{description}</p>
@@ -41,13 +41,13 @@ export default function LandingPage() {
                 </header>
 
                 {/* Hero Section */}
-                <main className="pt-32 pb-20">
+                <main className="pt-32 pb-20 animate-fade-in"> {/* <-- ANIMACIÓN AÑADIDA AQUÍ */}
                     <div className="max-w-4xl mx-auto text-center px-4">
                         <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight">
                             La Liga Fantasy Definitiva para Jugar con Amigos
                         </h2>
                         <p className="mt-6 text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-                            Crea tu liga, gestiona tu equipo, ficha a las estrellas y compite jornada a jornada. Con estadísticas avanzadas y una comunidad activa, Fantasya es el lugar donde demuestras quién sabe más de fútbol.
+                            Crea tu liga, gestiona tu equipo, ficha a las estrellas y compite jornada a jornada. Con estadísticas avanzadas, retos, perfiles de mánager y una comunidad activa, Fantasya es el lugar donde demuestras quién sabe más de fútbol.
                         </p>
                         <div className="mt-8">
                             <Link to="/login" className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 px-8 rounded-lg text-lg transition-transform transform hover:scale-105 shadow-lg">
@@ -58,32 +58,52 @@ export default function LandingPage() {
                 </main>
 
                 {/* Features Section */}
-                <section className="py-20 bg-white dark:bg-gray-800/50">
+                <section className="py-20 bg-white dark:bg-gray-800/50 animate-fade-in"> {/* <-- ANIMACIÓN AÑADIDA AQUÍ */}
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="text-center mb-12">
                             <h3 className="text-3xl font-bold">Todo lo que necesitas para tu Liga Fantasy</h3>
-                            <p className="mt-4 text-gray-600 dark:text-gray-400">Desde la gestión de equipos hasta un feed social integrado.</p>
+                            <p className="mt-4 text-gray-600 dark:text-gray-400">Desde la gestión de equipos hasta un feed social y chat integrados.</p>
                         </div>
                         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
                             <FeatureCard 
                                 icon={<FaUsers />}
-                                title="Ligas Privadas"
-                                description="Crea tu propia liga e invita a tus amigos con un código único. ¡La competición es vuestra!"
+                                title="Ligas y Temporadas"
+                                description="Crea ligas privadas con múltiples temporadas. Invita a tus amigos y guarda un historial completo de campeones."
                             />
                             <FeatureCard 
                                 icon={<FaTrophy />}
                                 title="Salón de la Fama"
-                                description="Gana trofeos al final de cada temporada y construye tu legado. ¿Serás el próximo campeón?"
+                                description="Gana trofeos al final de cada temporada (Campeón, Pichichi, Rey del Mercado) y construye tu legado."
                             />
                              <FeatureCard 
                                 icon={<FaChartLine />}
                                 title="Estadísticas Avanzadas"
-                                description="Analiza cada detalle con gráficos de rendimiento, comparativas y análisis de rivalidad."
+                                description="Analiza cada detalle con gráficos de rendimiento, comparativas y análisis de rivalidad para demostrar tu dominio."
                             />
-                            <FeatureCard 
+                             <FeatureCard 
+                                icon={<Flame />}
+                                title="Retos de Jornada"
+                                description="Completa retos semanales creados por el administrador para ganar logros únicos y presumir ante tus rivales."
+                            />
+                             <FeatureCard 
+                                icon={<Star />}
+                                title="Sistema de XP y Niveles"
+                                description="Gana experiencia con cada acción en el juego. Sube de nivel para desbloquear insignias y mostrar tu estatus."
+                            />
+                             <FeatureCard 
                                 icon={<FaFutbol />}
                                 title="Comunidad Social"
-                                description="Comparte tus alegrías y penas en el feed, comenta las jugadas y sigue a otros mánagers."
+                                description="Comparte tus victorias y derrotas en el feed, usa #hashtags y comenta las jugadas de otros mánagers."
+                            />
+                             <FeatureCard 
+                                icon={<MessageSquare />}
+                                title="Chat Privado"
+                                description="Habla directamente con otros participantes de tus ligas para negociar fichajes o simplemente para comentar la jornada."
+                            />
+                             <FeatureCard 
+                                icon={<User />}
+                                title="Perfiles de Mánager"
+                                description="Personaliza tu perfil, sigue a otros usuarios y muestra tus trofeos y logros más importantes."
                             />
                         </div>
                     </div>
