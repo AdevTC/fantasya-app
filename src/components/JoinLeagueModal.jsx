@@ -124,8 +124,7 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
                 leagueName: leagueToJoin.name,
                 trophies: achievementData.trophies
             });
-            // La referencia original de logros del equipo fantasma ya no necesita ser actualizada
-            // porque no se usará. Se puede eliminar si se desea, pero no es crítico.
+            transaction.update(achievementRef, { isPlaceholder: false });
           }
 
         } else {
