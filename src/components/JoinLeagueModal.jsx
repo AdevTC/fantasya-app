@@ -86,9 +86,20 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
       const seasonRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id);
 
       await runTransaction(db, async (transaction) => {
+        // --- ¡CORRECCIÓN CLAVE! ---
+        // Se realizan TODAS las lecturas (get) ANTES de cualquier escritura (update, set, delete).
+
         const freshSeasonDoc = await transaction.get(seasonRef);
         if (!freshSeasonDoc.exists()) throw new Error("La temporada ya no existe.");
 
+        let achievementSnap = null;
+        if (joinOption === 'claim' && selectedClaim) {
+            const achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
+            achievementSnap = await transaction.get(achievementRef);
+        }
+
+        // --- AHORA EMPIEZAN LAS ESCRITURAS ---
+        
         const currentMembers = freshSeasonDoc.data().members;
         
         if (joinOption === 'claim') {
@@ -104,11 +115,8 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
             [`members.${selectedClaim}`]: deleteField()
           });
 
-          // Migrar trofeos
-          const achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
-          const achievementSnap = await transaction.get(achievementRef);
-
-          if (achievementSnap.exists()) {
+          // Migrar trofeos (usando el 'achievementSnap' que ya leímos)
+          if (achievementSnap && achievementSnap.exists()) {
             const userAchievementRef = doc(db, 'users', user.uid, 'achievements', seasonToJoin.id);
             const achievementData = achievementSnap.data();
             transaction.set(userAchievementRef, {
@@ -116,7 +124,8 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
                 leagueName: leagueToJoin.name,
                 trophies: achievementData.trophies
             });
-            transaction.update(achievementRef, { isPlaceholder: false });
+            // La referencia original de logros del equipo fantasma ya no necesita ser actualizada
+            // porque no se usará. Se puede eliminar si se desea, pero no es crítico.
           }
 
         } else {
