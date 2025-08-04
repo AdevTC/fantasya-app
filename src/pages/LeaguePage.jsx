@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-// La importación de 'Link' se ha añadido aquí, que es donde se necesita ahora.
-import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { onSnapshot, collection, query, orderBy, getDocs, where, doc } from 'firebase/firestore';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye } from 'lucide-react';
 
-// Importamos nuestro custom hook
 import { useLeagueData } from '../hooks/useLeagueData';
-
 import AdminTab from '../components/AdminTab';
 import RoundsTab from '../components/RoundsTab';
 import StatsTab from '../components/StatsTab';
@@ -219,7 +216,6 @@ export default function LeaguePage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const { theme, toggleTheme } = useTheme();
 
-    // Usamos nuestro nuevo hook para obtener los datos
     const { league, seasons, loading, error } = useLeagueData(leagueId);
     
     const [selectedSeason, setSelectedSeason] = useState(null);
@@ -241,7 +237,6 @@ export default function LeaguePage() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [menuRef]);
     
-    // Este useEffect ahora solo se encarga de seleccionar la temporada correcta
     useEffect(() => {
         if (!league || seasons.length === 0) return;
     
@@ -253,7 +248,6 @@ export default function LeaguePage() {
         }
     }, [league, seasons, searchParams]);
 
-    // Este useEffect se encarga de cargar los datos de las jornadas para la temporada seleccionada
     useEffect(() => {
         if (!selectedSeason || !leagueId) return;
 
@@ -317,8 +311,11 @@ export default function LeaguePage() {
             <RulesModal isOpen={isRulesModalOpen} onClose={() => setIsRulesModalOpen(false)} leagueName={league.name} rules={league.rules} />
             <LeagueSummaryModal isOpen={isSummaryModalOpen} onClose={() => setIsSummaryModalOpen(false)} league={league} season={selectedSeason} />
 
-            <div className="min-h-screen">
-                <header className="bg-white dark:bg-gray-800/50 shadow-sm border-b dark:border-gray-700 sticky top-0 z-40">
+            {/* --- CONTENEDOR PRINCIPAL DE LA PÁGINA --- */}
+            <div>
+                {/* --- CABECERA DE LA LIGA (STICKY) --- */}
+                {/* Se pega en la parte de arriba del scroll. z-30 para que esté por encima del contenido */}
+                <header className="bg-white dark:bg-gray-800/50 shadow-sm border-b dark:border-gray-700 sticky top-0 z-30">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
                             <div className="flex items-center space-x-3">
@@ -384,7 +381,10 @@ export default function LeaguePage() {
                         </div>
                     </div>
                 </header>
-                <div className="bg-white dark:bg-gray-800/50 border-b dark:border-gray-700">
+                
+                {/* --- BARRA DE PESTAÑAS (STICKY) --- */}
+                {/* Se pega debajo de la cabecera (top-16) porque la cabecera mide h-16 (4rem) */}
+                <div className="bg-white dark:bg-gray-800/50 border-b dark:border-gray-700 sticky top-16 z-20">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex space-x-4 sm:space-x-8 -mb-px overflow-x-auto">
                             <TabButton icon={<Trophy size={18} />} text="Clasificación" tabName="clasificacion" />
@@ -402,6 +402,9 @@ export default function LeaguePage() {
                         </div>
                     </div>
                 </div>
+
+                {/* --- CONTENIDO DE LA PESTAÑA --- */}
+                {/* Este es el contenido que hará scroll por detrás de las barras fijas */}
                 <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                     {renderTabContent()}
                 </main>

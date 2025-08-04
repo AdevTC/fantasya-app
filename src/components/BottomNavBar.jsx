@@ -27,7 +27,8 @@ export default function BottomNavBar() {
     }
 
     return (
-        <div className="md:hidden h-16 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 z-50 flex-shrink-0">
+        // --- CAMBIO CLAVE: "fixed" para anclarla y colores sólidos para que sea opaca ---
+        <div className="md:hidden fixed bottom-0 w-full h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-10">
             <div className="grid grid-cols-7 items-center h-full">
                 <NavItem to="/dashboard" icon={Home} label="Ligas" />
                 <NavItem to="/feed" icon={Rss} label="Feed" />

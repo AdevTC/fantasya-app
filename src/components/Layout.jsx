@@ -3,7 +3,6 @@ import { Outlet, Link, useNavigate } from 'react-router-dom';
 import SideNavBar from './SideNavBar';
 import BottomNavBar from './BottomNavBar';
 import { useAuth } from '../hooks/useAuth';
-import { FaFutbol } from 'react-icons/fa';
 import { signOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useTheme } from '../context/ThemeContext';
@@ -26,17 +25,17 @@ export default function Layout() {
     return (
         <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
             <SideNavBar />
-            <div className="flex-1 flex flex-col overflow-hidden">
-                <header className="md:hidden bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b dark:border-gray-700 h-16 flex justify-between items-center px-4 flex-shrink-0 z-10">
-                    {/* --- Logo y Título (sin cambios) --- */}
+            
+            <div className="flex-1 flex flex-col overflow-hidden relative">
+                
+                {/* --- BARRA SUPERIOR MÓVIL (SIEMPRE FIJA) --- */}
+                <header 
+                    className="md:hidden fixed top-0 w-full bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b dark:border-gray-700 h-16 flex justify-between items-center px-4 z-20"
+                >
                     <Link to="/dashboard" className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-vibrant-purple rounded-lg flex items-center justify-center">
-                            <FaFutbol className="text-white text-lg" />
-                        </div>
+                        <img src="/logoFantasya_v0.png" alt="Fantasya Logo" className="w-8 h-8" />
                         <h1 className="text-xl font-bold text-gray-800 dark:text-gray-200">Fantasya</h1>
                     </Link>
-
-                    {/* --- NUEVOS BOTONES AÑADIDOS --- */}
                     <div className="flex items-center gap-2">
                         <button 
                             onClick={toggleTheme} 
@@ -55,7 +54,12 @@ export default function Layout() {
                     </div>
                 </header>
                 
-                <main className="main-background flex-1 overflow-x-hidden overflow-y-auto">
+                {/* --- ÁREA DE CONTENIDO PRINCIPAL CON SCROLL Y PADDING --- */}
+                {/* - overflow-y-auto: Permite el scroll solo en esta área.
+                  - pt-16: Deja espacio para la barra superior fija.
+                  - pb-16: DEJA ESPACIO PARA LA BARRA INFERIOR FIJA. Esta es la clave para que el contenido no se oculte.
+                */}
+                <main className="flex-1 overflow-y-auto pt-16 pb-16 md:pt-0 md:pb-0">
                     <Outlet />
                 </main>
                 

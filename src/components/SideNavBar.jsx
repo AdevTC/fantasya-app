@@ -5,7 +5,6 @@ import { signOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { Home, Search, Bookmark, User, Rss, Medal, LogOut, Shield, UserCog, ChevronsLeft, ChevronsRight, MessageSquare } from 'lucide-react';
 import ThemeToggleButton from './ThemeToggleButton';
-import { FaFutbol } from 'react-icons/fa';
 
 const NavItem = ({ to, icon: Icon, label, isCollapsed }) => (
     <NavLink
@@ -30,7 +29,7 @@ export default function SideNavBar() {
 
     const handleLogout = async () => {
         await signOut(auth);
-        navigate('/'); // <-- CAMBIO AQUÍ: Redirige a la landing page en lugar de /login
+        navigate('/');
     };
 
     if (!profile) {
@@ -38,13 +37,12 @@ export default function SideNavBar() {
     }
 
     return (
-        <aside className={`hidden md:flex flex-col h-screen bg-white dark:bg-gray-800/50 border-r dark:border-gray-200 dark:border-gray-700 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20' : 'w-64'}`}>
+        // --- ASEGURAMOS QUE SEA "sticky" PARA LA VISTA DE ESCRITORIO ---
+        <aside className={`hidden md:flex flex-col h-screen sticky top-0 bg-white dark:bg-gray-800/50 border-r dark:border-gray-200 dark:border-gray-700 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20' : 'w-64'}`}>
             <div className="flex items-center h-16 p-4 border-b dark:border-gray-700 gap-2">
                 {!isCollapsed && (
                      <Link to="/dashboard" className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-vibrant-purple rounded-lg flex items-center justify-center">
-                            <FaFutbol className="text-white text-lg" />
-                        </div>
+                        <img src="/logoFantasya_v0.png" alt="Fantasya Logo" className="w-8 h-8" />
                         <h1 className="text-xl font-bold text-gray-800 dark:text-gray-200">Fantasya</h1>
                     </Link>
                 )}

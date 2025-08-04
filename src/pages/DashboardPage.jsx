@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { auth, db } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import CreateLeagueModal from '../components/CreateLeagueModal';
 import JoinLeagueModal from '../components/JoinLeagueModal';
@@ -10,6 +10,7 @@ import InfoModal from '../components/InfoModal';
 import RulesModal from '../components/RulesModal';
 import RequestJoinModal from '../components/RequestJoinModal';
 import LeagueSummaryModal from '../components/LeagueSummaryModal';
+import AdBanner from '../components/AdBanner'; 
 import { Plus, Users, ShieldCheck, Info, BookOpen, Copy, CheckCircle, Flag, Send, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -241,6 +242,8 @@ export default function DashboardPage() {
                         )}
                     </div>
                 )}
+                
+                <AdBanner slot={import.meta.env.VITE_ADSENSE_DASHBOARD_FOOTER_SLOT} />
             </div>
         </>
     );

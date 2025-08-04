@@ -24,9 +24,8 @@ export default function LandingPage() {
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
                             <div className="flex items-center space-x-3">
-                                <div className="w-10 h-10 bg-gradient-to-r from-emerald-500 to-vibrant-purple rounded-lg flex items-center justify-center">
-                                    <FaFutbol className="text-white text-xl" />
-                                </div>
+                                {/* --- LOGO ACTUALIZADO AQUÍ --- */}
+                                <img src="../logoFantasya_v0.png" alt="Fantasya Logo" className="w-10 h-10" />
                                 <h1 className="text-2xl font-bold">Fantasya</h1>
                             </div>
                             <div className="flex items-center gap-4">
@@ -41,7 +40,7 @@ export default function LandingPage() {
                 </header>
 
                 {/* Hero Section */}
-                <main className="pt-32 pb-20 animate-fade-in"> {/* <-- ANIMACIÓN AÑADIDA AQUÍ */}
+                <main className="pt-32 pb-20 animate-fade-in">
                     <div className="max-w-4xl mx-auto text-center px-4">
                         <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight">
                             La Liga Fantasy Definitiva para Jugar con Amigos
@@ -58,7 +57,7 @@ export default function LandingPage() {
                 </main>
 
                 {/* Features Section */}
-                <section className="py-20 bg-white dark:bg-gray-800/50 animate-fade-in"> {/* <-- ANIMACIÓN AÑADIDA AQUÍ */}
+                <section className="py-20 bg-white dark:bg-gray-800/50 animate-fade-in">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="text-center mb-12">
                             <h3 className="text-3xl font-bold">Todo lo que necesitas para tu Liga Fantasy</h3>
