@@ -100,7 +100,6 @@ export default function TransferStats({ transfers, members }) {
             }
         });
         
-        // --- LÓGICA DE EMPATES CORREGIDA ---
         const financialSummary = Object.entries(memberStats).map(([uid, data]) => ({
             name: members[uid].teamName, username: members[uid].username, ...data, net: { total: data.earned.total - data.spent.total, clausulazo: data.earned.clausulazo - data.spent.clausulazo, puja: data.earned.puja - data.spent.puja, acuerdo: data.earned.acuerdo - data.spent.acuerdo, }, totalMoves: data.buys.total + data.sells.total
         }));
@@ -117,7 +116,7 @@ export default function TransferStats({ transfers, members }) {
         const maxPrice = Math.max(...transfers.map(t => t.price));
         const mostExpensiveTransfers = transfers.filter(t => t.price === maxPrice).map(t => `${t.playerName} por ${t.buyerName}`);
         
-        const maxTrades = Math.max(...Object.values(playerTradeCount));
+        const maxTrades = Math.max(0, ...Object.values(playerTradeCount));
         const mostTradedPlayers = Object.entries(playerTradeCount).filter(([, count]) => count === maxTrades).map(([name]) => name);
 
         const pieChartData = Object.entries(transferTypeCount).map(([name, value]) => ({ name, value })).filter(d => d.value > 0);
@@ -126,7 +125,7 @@ export default function TransferStats({ transfers, members }) {
         
         const top5TradedPlayers = Object.entries(playerTradeCount).sort((a,b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({name, traspasos: count}));
 
-        return { financialSummary, mostExpensiveTransfers, mostTradedPlayers, mostActiveTraders, marketKings, leagueSharks, pieChartData, activityChartData, avgCostChartData, totalVolume, transfersByTeam, top5TradedPlayers };
+        return { financialSummary, mostExpensiveTransfers, mostTradedPlayers, maxTrades, mostActiveTraders, marketKings, leagueSharks, pieChartData, activityChartData, avgCostChartData, totalVolume, transfersByTeam, top5TradedPlayers };
     }, [transfers, members, playersDB]);
 
     const filteredTransfersByTeam = useMemo(() => {
@@ -151,7 +150,7 @@ export default function TransferStats({ transfers, members }) {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <StatCard title="Volumen Total del Mercado" value={formatCurrency(stats.totalVolume)} subValue={`${transfers.length} transacciones`} colorClass="text-deep-blue" icon={<BarChartHorizontal/>}/>
                 <StatCard title="Fichaje(s) Más Caro(s)" value={formatCurrency(Math.max(...transfers.map(t => t.price)))} subValue={formatHolderNames([...stats.mostExpensiveTransfers])} colorClass="text-energetic-orange" icon={<DollarSign/>}/>
-                <StatCard title="Jugador(es) Más Traspasado(s)" value={formatHolderNames([...stats.mostTradedPlayers])} subValue={`${Math.max(...Object.values(stats.mostTradedPlayers.reduce((acc, p) => ({...acc, [p]: (acc[p]||0)+1}), {})))} veces`} colorClass="text-vibrant-purple" icon={<Repeat/>}/>
+                <StatCard title="Jugador(es) Más Traspasado(s)" value={formatHolderNames([...stats.mostTradedPlayers])} subValue={`${stats.maxTrades} veces`} colorClass="text-vibrant-purple" icon={<Repeat/>}/>
             </div>
              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <StatCard title="Manager(s) Más Activo(s)" value={formatHolderNames([...stats.mostActiveTraders])} subValue={`${Math.max(...stats.financialSummary.map(m => m.totalMoves))} movs.`} colorClass="text-vibrant-purple" icon={<ShoppingCart/>}/>
