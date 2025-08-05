@@ -122,6 +122,7 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
                 leagueName: leagueToJoin.name,
                 trophies: achievementSnap.data().trophies
             });
+            // En lugar de actualizar, lo eliminamos.
             transaction.delete(achievementRef);
           }
 
