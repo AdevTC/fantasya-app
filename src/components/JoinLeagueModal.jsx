@@ -73,7 +73,8 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
   
   const handleJoinLeague = async (e) => {
     e.preventDefault();
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
 
     try {
       const user = auth.currentUser;
@@ -85,55 +86,40 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
       const username = userProfileSnap.data().username;
       const seasonRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id);
 
-      // --- CAMBIO CLAVE: LEEMOS LOS DATOS ANTES DE LA TRANSACCIÓN ---
-      const seasonDocBeforeTransaction = await getDoc(seasonRef);
-      if (!seasonDocBeforeTransaction.exists()) {
-          throw new Error("La temporada ya no existe.");
-      }
-      const membersBeforeTransaction = seasonDocBeforeTransaction.data().members;
-      
-      let achievementSnap = null;
-      let achievementRef = null;
-      if (joinOption === 'claim' && selectedClaim) {
-          achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
-          achievementSnap = await getDoc(achievementRef);
-      }
-
-      // --- AHORA LA TRANSACCIÓN SOLO CONTIENE ESCRITURAS ---
+      // --- TRANSACCIÓN SIMPLIFICADA ---
+      // Ahora la transacción solo hace una cosa: actualiza el mapa de miembros.
       await runTransaction(db, async (transaction) => {
+        const freshSeasonDoc = await transaction.get(seasonRef);
+        if (!freshSeasonDoc.exists()) throw new Error("La temporada ya no existe.");
+        
+        const currentMembers = freshSeasonDoc.data().members;
+
         if (joinOption === 'claim') {
           if (!selectedClaim) throw new Error("Debes seleccionar un equipo para reclamar.");
-          
-          const placeholderData = membersBeforeTransaction[selectedClaim];
-          if (!placeholderData || !placeholderData.isPlaceholder) throw new Error("Este equipo ya ha sido reclamado o no existe.");
+          const placeholderData = currentMembers[selectedClaim];
+          if (!placeholderData || !placeholderData.isPlaceholder) throw new Error("Este equipo ya ha sido reclamado.");
 
-          const newMemberData = { ...placeholderData, username: username, isPlaceholder: false, claimedBy: user.uid };
+          const newMemberData = { 
+            ...placeholderData, 
+            username: username, 
+            isPlaceholder: false, 
+            // CAMBIO CLAVE: Añadimos una "bandera" para la Cloud Function
+            claimedPlaceholderId: selectedClaim 
+          };
           
           transaction.update(seasonRef, {
             [`members.${user.uid}`]: newMemberData,
-            [`members.${selectedClaim}`]: deleteField()
+            // YA NO BORRAMOS EL FANTASMA AQUÍ, lo hará la Cloud Function
           });
 
-          // Migrar y borrar trofeos del equipo fantasma
-          if (achievementSnap && achievementSnap.exists()) {
-            const userAchievementRef = doc(db, 'users', user.uid, 'achievements', seasonToJoin.id);
-            transaction.set(userAchievementRef, {
-                seasonName: seasonToJoin.name,
-                leagueName: leagueToJoin.name,
-                trophies: achievementSnap.data().trophies
-            });
-            // En lugar de actualizar, lo eliminamos.
-            transaction.delete(achievementRef);
-          }
-
-        } else {
+        } else { // Crear un equipo nuevo (esta lógica no cambia)
           if (!teamName.trim() || teamName.length > 24) throw new Error('El nombre de equipo no es válido.');
           const newMember = { username: username, teamName: teamName.trim(), role: 'member', isPlaceholder: false, totalPoints: 0, finances: { budget: 200, teamValue: 0 } };
           transaction.update(seasonRef, { [`members.${user.uid}`]: newMember });
         }
       });
       
-      toast.success(`¡Te has unido a la temporada "${seasonToJoin.name}" de la liga "${leagueToJoin.name}"!`);
+      toast.success(`¡Te has unido a la temporada "${seasonToJoin.name}"! Procesando detalles...`);
       onLeagueJoined();
       onClose();
 
