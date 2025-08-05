@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, runTransaction, getDoc, deleteField, collectionGroup } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, runTransaction, getDoc, deleteField, collectionGroup, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import toast from 'react-hot-toast';
 
@@ -86,20 +86,18 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
       const seasonRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id);
 
       await runTransaction(db, async (transaction) => {
-        // --- ¡CORRECCIÓN CLAVE! ---
-        // Se realizan TODAS las lecturas (get) ANTES de cualquier escritura (update, set, delete).
-
+        // --- TODAS LAS LECTURAS PRIMERO ---
         const freshSeasonDoc = await transaction.get(seasonRef);
         if (!freshSeasonDoc.exists()) throw new Error("La temporada ya no existe.");
 
         let achievementSnap = null;
+        let achievementRef = null;
         if (joinOption === 'claim' && selectedClaim) {
-            const achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
+            achievementRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id, 'achievements', selectedClaim);
             achievementSnap = await transaction.get(achievementRef);
         }
 
-        // --- AHORA EMPIEZAN LAS ESCRITURAS ---
-        
+        // --- TODAS LAS ESCRITURAS DESPUÉS ---
         const currentMembers = freshSeasonDoc.data().members;
         
         if (joinOption === 'claim') {
@@ -115,7 +113,7 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
             [`members.${selectedClaim}`]: deleteField()
           });
 
-          // Migrar trofeos (usando el 'achievementSnap' que ya leímos)
+          // Migrar y borrar trofeos del equipo fantasma
           if (achievementSnap && achievementSnap.exists()) {
             const userAchievementRef = doc(db, 'users', user.uid, 'achievements', seasonToJoin.id);
             const achievementData = achievementSnap.data();
@@ -124,7 +122,8 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
                 leagueName: leagueToJoin.name,
                 trophies: achievementData.trophies
             });
-            transaction.update(achievementRef, { isPlaceholder: false });
+            // En lugar de actualizar, lo eliminamos.
+            transaction.delete(achievementRef);
           }
 
         } else {
