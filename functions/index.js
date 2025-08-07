@@ -25,9 +25,6 @@ exports.onSeasonJoin = functions.firestore
 
                 const batch = db.batch();
                 const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
-                
-                // Obtenemos el nombre del equipo del nuevo usuario para usarlo en los fichajes
-                const newUserTeamName = memberAfter.teamName;
 
                 // --- 1. Migrar Logros (Achievements) ---
                 const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
@@ -39,7 +36,7 @@ exports.onSeasonJoin = functions.firestore
                     batch.delete(placeholderAchievementRef);
                 }
 
-                // --- 2. Migrar Fichajes (Transfers) - CORREGIDO ---
+                // --- 2. Migrar Fichajes (Transfers) ---
                 const transfersRef = seasonRef.collection("transfers");
                 const buyerQuery = transfersRef.where('buyerId', '==', placeholderId);
                 const sellerQuery = transfersRef.where('sellerId', '==', placeholderId);
@@ -48,28 +45,23 @@ exports.onSeasonJoin = functions.firestore
 
                 buyerSnapshot.forEach(doc => {
                     logger.info(`Actualizando fichaje (compra) ${doc.id} de ${placeholderId} a ${userId}.`);
-                    // CAMBIO: Ahora también actualizamos el nombre del comprador.
-                    batch.update(doc.ref, { buyerId: userId, buyerName: newUserTeamName });
+                    batch.update(doc.ref, { buyerId: userId });
                 });
                 sellerSnapshot.forEach(doc => {
                     logger.info(`Actualizando fichaje (venta) ${doc.id} de ${placeholderId} a ${userId}.`);
-                    // CAMBIO: Ahora también actualizamos el nombre del vendedor.
-                    batch.update(doc.ref, { sellerId: userId, sellerName: newUserTeamName });
+                    batch.update(doc.ref, { sellerId: userId });
                 });
 
-                // --- 3. Migrar Puntuaciones de Jornadas (Rounds) - CORREGIDO ---
+                // --- 3. Migrar Puntuaciones de Jornadas (Rounds) ---
                 const roundsRef = seasonRef.collection("rounds");
                 const roundsSnapshot = await roundsRef.get();
                 roundsSnapshot.forEach(roundDoc => {
                     const roundData = roundDoc.data();
                     if (roundData.scores && roundData.scores[placeholderId] !== undefined) {
                         logger.info(`Migrando puntuación en jornada ${roundDoc.id} de ${placeholderId} a ${userId}.`);
-                        // CAMBIO: Usamos una actualización atómica con notación de puntos.
-                        // Esto es más seguro y eficiente que reescribir todo el objeto de puntuaciones.
-                        batch.update(roundDoc.ref, {
-                            [`scores.${userId}`]: roundData.scores[placeholderId],
-                            [`scores.${placeholderId}`]: admin.firestore.FieldValue.delete()
-                        });
+                        const newScores = { ...roundData.scores, [userId]: roundData.scores[placeholderId] };
+                        delete newScores[placeholderId];
+                        batch.update(roundDoc.ref, { scores: newScores });
                     }
                 });
                 
@@ -84,17 +76,20 @@ exports.onSeasonJoin = functions.firestore
                         
                         logger.info(`Migrando alineación ${lineupDoc.id} a ${newLineupId}.`);
                         
+                        // Copiamos el contenido al nuevo documento y borramos el antiguo
                         batch.set(newLineupRef, lineupDoc.data());
                         batch.delete(lineupDoc.ref);
                     }
                 }
 
                 // --- 5. Limpieza Final ---
+                // Borramos el equipo fantasma del mapa de miembros y la bandera temporal
                 batch.update(seasonRef, {
                     [`members.${placeholderId}`]: admin.firestore.FieldValue.delete(),
                     [`members.${userId}.claimedPlaceholderId`]: admin.firestore.FieldValue.delete(),
                 });
                 
+                // Ejecutamos todas las operaciones en un solo lote
                 await batch.commit();
                 logger.info(`Migración completada para el usuario ${userId}.`);
                 return;
