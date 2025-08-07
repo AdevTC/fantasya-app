@@ -98,7 +98,6 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
  * CORRECCIÓN FINAL: Se arregla el bug de fichajes y el error de CORS.
  */
 exports.unlinkUserFromTeam = onCall(
-    // Se especifica la región y la política de CORS para permitir llamadas desde tu app
     { region: "us-central1", cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"] },
     async (request) => {
         const adminUid = request.auth?.uid;
@@ -115,9 +114,7 @@ exports.unlinkUserFromTeam = onCall(
         
         try {
             const seasonDoc = await seasonRef.get();
-            if (!seasonDoc.exists) {
-                throw new HttpsError("not-found", "La temporada no existe.");
-            }
+            if (!seasonDoc.exists) throw new HttpsError("not-found", "La temporada no existe.");
 
             const seasonData = seasonDoc.data();
             const adminUser = seasonData.members[adminUid];
@@ -140,13 +137,24 @@ exports.unlinkUserFromTeam = onCall(
             
             const batch = db.batch();
             const placeholderId = `placeholder_${userIdToUnlink}`;
+            
+            // --- INICIO DE LA CORRECCIÓN CRÍTICA DE DESVINCULACIÓN ---
+            // Se preservan únicamente los datos del EQUIPO, no del USUARIO.
             const teamNameToPreserve = userToUnlink.teamName;
+            const pointsToPreserve = userToUnlink.totalPoints || 0;
+            const playersToPreserve = userToUnlink.players || [];
 
-            const placeholderData = { ...userToUnlink, isPlaceholder: true };
-            delete placeholderData.role;
-            delete placeholderData.isAdmin;
+            // Se crea un objeto placeholder LIMPIO y SANITIZADO.
+            // Este objeto NO contiene username, photoURL, ni ningún otro dato personal.
+            const placeholderData = {
+                teamName: teamNameToPreserve,
+                totalPoints: pointsToPreserve,
+                players: playersToPreserve,
+                isPlaceholder: true // Flag para identificarlo como equipo fantasma.
+            };
+            // --- FIN DE LA CORRECCIÓN CRÍTICA DE DESVINCULACIÓN ---
 
-            // 1. Migrar Logros
+            // 1. Migrar Logros (lógica existente)
             const userAchievementRef = db.doc(`users/${userIdToUnlink}/achievements/${seasonId}`);
             const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
             const userAchievementDoc = await userAchievementRef.get();
@@ -155,17 +163,16 @@ exports.unlinkUserFromTeam = onCall(
                 batch.delete(userAchievementRef);
             }
             
-            // 2. Migrar Fichajes (BUG CORREGIDO)
+            // 2. Migrar Fichajes (lógica ya corregida, sigue siendo válida)
             const transfersRef = seasonRef.collection("transfers");
             const buyerQuery = transfersRef.where('buyerId', '==', userIdToUnlink);
             const sellerQuery = transfersRef.where('sellerId', '==', userIdToUnlink);
             const [buyerSnapshot, sellerSnapshot] = await Promise.all([buyerQuery.get(), sellerQuery.get()]);
             
-            // AHORA SÍ: Se actualiza tanto el ID como el NOMBRE para mantener la consistencia
             buyerSnapshot.forEach(doc => batch.update(doc.ref, { buyerId: placeholderId, buyerName: teamNameToPreserve }));
             sellerSnapshot.forEach(doc => batch.update(doc.ref, { sellerId: placeholderId, sellerName: teamNameToPreserve }));
 
-            // 3. Migrar Puntuaciones
+            // 3. Migrar Puntuaciones (lógica existente)
             const roundsRef = seasonRef.collection("rounds");
             const roundsSnapshot = await roundsRef.get();
             roundsSnapshot.forEach(roundDoc => {
@@ -178,7 +185,7 @@ exports.unlinkUserFromTeam = onCall(
                 }
             });
 
-            // 4. Migrar Alineaciones
+            // 4. Migrar Alineaciones (lógica existente)
             const lineupsRef = seasonRef.collection("lineups");
             const allLineupsSnapshot = await lineupsRef.get();
             allLineupsSnapshot.forEach(lineupDoc => {
@@ -191,16 +198,16 @@ exports.unlinkUserFromTeam = onCall(
                 }
             });
 
-            // 5. Actualizar mapa de miembros
+            // 5. Actualizar mapa de miembros con el objeto placeholder sanitizado.
             batch.update(seasonRef, {
                 [`members.${placeholderId}`]: placeholderData,
                 [`members.${userIdToUnlink}`]: FieldValue.delete()
             });
 
             await batch.commit();
-            logger.info(`UNLINK SUCCESS: User ${userIdToUnlink} is now placeholder ${placeholderId}.`);
+            logger.info(`UNLINK SUCCESS: User ${userIdToUnlink} is now a clean placeholder: ${placeholderId}.`);
             
-            return { success: true, message: "Usuario desvinculado correctamente." };
+            return { success: true, message: "Usuario desvinculado y convertido en equipo fantasma correctamente." };
 
         } catch (error) {
             logger.error("Error in unlinkUserFromTeam:", error);
