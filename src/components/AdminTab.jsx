@@ -8,6 +8,27 @@ import LoadingSpinner from './LoadingSpinner';
 import { Calendar, List, Award } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
+export const TROPHY_DEFINITIONS = {
+    CHAMPION: { name: 'Campeón de Liga', description: 'Ganador de la temporada con más puntos.' },
+    RUNNER_UP: { name: 'Medalla de Plata', description: 'Segundo clasificado de la temporada.' },
+    THIRD_PLACE: { name: 'Medalla de Bronce', description: 'Tercer clasificado de la temporada.' },
+    TOP_SCORER: { name: 'Pichichi', description: 'Equipo con la mayor puntuación en una sola jornada.' },
+    MARKET_KING: { name: 'Rey del Mercado', description: 'El que más ha gastado en fichajes durante la temporada.' },
+    LEAGUE_SHARK: { name: 'Tiburón de la Liga', description: 'El que ha obtenido mayor beneficio neto en el mercado.' },
+    MOST_WINS: { name: 'El Victorioso', description: 'El que ha ganado más jornadas.' },
+    MOST_PODIUMS: { name: 'Experiencia en Podios', description: 'El que ha terminado más veces en el podio (Top 3).' },
+    MOST_REGULAR: { name: 'Míster Regularidad', description: 'El jugador con la desviación estándar más baja en sus puntuaciones.'},
+    LANTERN_ROUGE: { name: 'Farolillo Rojo', description: 'El que ha terminado más veces en última posición.' },
+    STONE_HAND: { name: 'Mano de Piedra', description: 'Equipo con la peor puntuación en una sola jornada.' },
+    CAPTAIN_FANTASTIC: { name: 'Capitán Fantástico', description: 'El que más puntos extra ha conseguido gracias a sus capitanes.' },
+    GOLDEN_BENCH: { name: 'Banquillo de Oro', description: 'El que más puntos ha desperdiciado en el banquillo.' },
+    SPECULATOR: { name: 'El Especulador', description: 'El que ha realizado más fichajes durante la temporada.' },
+    // --- NUEVOS TROFEOS ---
+    GALACTIC_SIGNING: { name: 'Fichaje Galáctico', description: 'Por fichar a uno de los 5 jugadores más caros del mercado.' },
+    COMEBACK_KING: { name: 'Rey de la Remontada', description: 'Por ganar una jornada tras estar fuera del podio en la anterior.' },
+    STREAK_MASTER: { name: 'Racha Imparable', description: 'Por ganar 3 jornadas seguidas.' },
+};
+
 
 export default function AdminTab({ league, season, roundsData }) {
     const { profile: adminProfile } = useAuth();
