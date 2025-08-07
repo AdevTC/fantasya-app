@@ -1,276 +1,241 @@
-import React, { useState } from 'react';
-import { GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification } from 'firebase/auth';
-import { auth, db } from '../config/firebase';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { Mail, Lock, Eye, EyeOff, UserPlus } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { FaFutbol } from 'react-icons/fa';
-import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
-    const navigate = useNavigate();
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [username, setUsername] = useState('');
-    const [loginIdentifier, setLoginIdentifier] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const navigate = useNavigate();
 
-    const validateUsername = (username) => {
-        if (username.length < 3 || username.length > 16) return "El nombre de usuario debe tener entre 3 y 16 caracteres.";
-        if (!/^[a-z0-9_.]+$/.test(username)) return "Solo se permiten letras minúsculas del alfabeto inglés, números, '_' y '.'";
-        if (username.startsWith('.') || username.endsWith('.')) return "No puede empezar o acabar con un punto.";
-        if (username.includes('..')) return "No puede contener dos puntos seguidos.";
-        if (/^\d/.test(username)) return "No puede empezar con un número.";
-        return null;
-    };
+    useEffect(() => {
+        setError('');
+    }, [isLogin]);
 
-    const validatePassword = (password) => {
-        if (password.length < 8 || password.length > 24) return "La contraseña debe tener entre 8 y 24 caracteres.";
-        if (!/[a-z]/.test(password)) return "Debe contener al menos una letra minúscula.";
-        if (!/[A-Z]/.test(password)) return "Debe contener al menos una letra mayúscula.";
-        if (!/\d/.test(password)) return "Debe contener al menos un número.";
-        if (!/[@$!%*?&]/.test(password)) return "Debe contener al menos un símbolo (@, $, !, %, *, ?, &).";
-        return null;
-    };
-
-    const handlePasswordReset = async () => {
-        if (!loginIdentifier) {
-            toast.error("Por favor, introduce tu email en el campo 'Email o Nombre de Usuario' para restablecer la contraseña.");
-            return;
-        }
-        if (!loginIdentifier.includes('@')) {
-            toast.error("El restablecimiento de contraseña solo funciona con el email, no con el nombre de usuario.");
-            return;
-        }
+    const handleGoogleSignIn = async () => {
         setLoading(true);
+        setError('');
+        const provider = new GoogleAuthProvider();
         try {
-            await sendPasswordResetEmail(auth, loginIdentifier);
-            toast.success("Se ha enviado un correo para restablecer tu contraseña.");
-        } catch (error) {
-            toast.error("No se pudo enviar el correo. Asegúrate de que el email es correcto y está registrado.");
-        }
-        setLoading(false);
-    };
+            const result = await signInWithPopup(auth, provider);
+            const user = result.user;
+            
+            const userDocRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userDocRef);
 
+            if (!userDoc.exists() || !userDoc.data().username) {
+                navigate('/complete-profile');
+            } else {
+                navigate('/dashboard');
+            }
+        } catch (error) {
+            toast.error(error.message || 'No se pudo iniciar sesión con Google.');
+        } finally {
+            setLoading(false);
+        }
+    };
+    
     const handleAuthSubmit = async (e) => {
         e.preventDefault();
-        setError('');
         setLoading(true);
+        setError('');
 
-        if (!isLogin) { // Lógica de Registro
-            const passwordError = validatePassword(password);
-            if (passwordError) {
-                setError(passwordError);
-                toast.error(passwordError);
-                setLoading(false);
-                return;
-            }
-
-            if (password !== confirmPassword) {
-                const err = "Las contraseñas no coinciden.";
-                setError(err);
-                toast.error(err);
-                setLoading(false);
-                return;
-            }
-
-            const validationError = validateUsername(username);
-            if (validationError) {
-                setError(validationError);
-                toast.error(validationError);
-                setLoading(false);
-                return;
-            }
-
-            const usernameRef = doc(db, 'usernames', username);
-            const usernameSnap = await getDoc(usernameRef);
-            if (usernameSnap.exists()) {
-                const err = "Este nombre de usuario ya está en uso.";
-                setError(err);
-                toast.error(err);
-                setLoading(false);
-                return;
-            }
-
+        if (isLogin) {
+            // Lógica de Inicio de Sesión
             try {
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const userCredential = await signInWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
-                
-                await sendEmailVerification(user);
 
-                const batch = writeBatch(db);
-                const userDocRef = doc(db, 'users', user.uid);
-                batch.set(userDocRef, { 
-                    username, 
-                    email, 
-                    createdAt: new Date(),
-                    followers: [],
-                    following: [],
-                    xp: 0, // Inicia el XP en 0
-                });
-                batch.set(usernameRef, { uid: user.uid });
-                
-                await batch.commit();
-                toast.success('¡Cuenta creada! Revisa tu correo para verificar tu cuenta.');
-                navigate('/login');
-
-            } catch (error) {
-                const friendlyError = error.code.includes('email-already-in-use') ? 'Este correo ya está registrado.' : 'Error al crear la cuenta.';
-                setError(friendlyError);
-                toast.error(friendlyError);
-            }
-        
-        } else { // Lógica de Login
-            try {
-                let userEmail = loginIdentifier.toLowerCase();
-                if (!loginIdentifier.includes('@')) {
-                    const q = query(collection(db, "users"), where("username", "==", loginIdentifier));
-                    const querySnapshot = await getDocs(q);
-                    if (!querySnapshot.empty) {
-                        userEmail = querySnapshot.docs[0].data().email;
-                    } else {
-                        throw new Error("User not found");
-                    }
-                }
-
-                const userCredential = await signInWithEmailAndPassword(auth, userEmail, password);
-                const user = userCredential.user;
-                
+                // --- LÓGICA DE FECHA DE CORTE RESTAURADA ---
                 const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
                 const userCreationDate = new Date(user.metadata.creationTime);
 
                 if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
-                    toast.error('Debes verificar tu correo electrónico para iniciar sesión.');
+                    toast.error('Debes verificar tu correo electrónico para poder iniciar sesión.');
                     await auth.signOut();
                     setLoading(false);
                     return;
                 }
                 
-                toast.success('¡Bienvenido de nuevo!');
+                toast.success('¡Bienvenido de vuelta!');
                 navigate('/dashboard');
 
-            } catch (error) {
-                const friendlyError = 'Usuario o contraseña incorrectos.';
-                setError(friendlyError);
-                toast.error(friendlyError);
+            } catch (err) {
+                toast.error('Correo o contraseña incorrectos.');
+            } finally {
+                setLoading(false);
+            }
+        } else {
+            // Lógica de Registro con el nuevo flujo híbrido
+            if (password !== confirmPassword) {
+                setError('Las contraseñas no coinciden.');
+                toast.error('Las contraseñas no coinciden.');
+                setLoading(false);
+                return;
+            }
+
+            try {
+                // 1. Crear usuario en Auth (desde el cliente)
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // 2. Llamar a la Cloud Function para crear los documentos en Firestore
+                const functions = getFunctions();
+                const createProfileDocuments = httpsCallable(functions, 'createProfileDocuments');
+                await createProfileDocuments({ username });
+                
+                // 3. Enviar correo de verificación (desde el cliente)
+                await sendEmailVerification(user);
+                
+                toast.success('¡Registro completado!');
+                toast(
+                    (t) => (
+                        <span className="text-center">
+                            Te hemos enviado un correo. Por favor, <b>revisa tu bandeja de entrada (y spam)</b> para verificar tu cuenta.
+                            <button className="w-full mt-2 btn-primary text-sm" onClick={() => toast.dismiss(t.id)}>
+                                Entendido
+                            </button>
+                        </span>
+                    ),
+                    { duration: 10000, icon: '📧' }
+                );
+
+                await auth.signOut();
+                setIsLogin(true);
+                
+            } catch (err) {
+                // Borrar el usuario de Auth si la creación del perfil en Firestore falla (ej. nombre de usuario duplicado)
+                if (auth.currentUser) {
+                    await auth.currentUser.delete();
+                }
+
+                if (err.code === 'auth/email-already-in-use') {
+                    toast.error('Este correo electrónico ya está en uso.');
+                } else if (err.code === 'functions/already-exists') { // Error personalizado de la Cloud Function
+                    toast.error('Este nombre de usuario ya está cogido.');
+                } else {
+                    toast.error(err.message || 'Ha ocurrido un error inesperado.');
+                }
+                console.error("Error de registro:", err);
+            } finally {
+                setLoading(false);
             }
         }
-        setLoading(false);
     };
-
-    const handleGoogleLogin = async () => {
-        setLoading(true);
-        const provider = new GoogleAuthProvider();
-        try {
-            const result = await signInWithPopup(auth, provider);
-            const user = result.user;
-
-            const userDocRef = doc(db, 'users', user.uid);
-            const docSnap = await getDoc(userDocRef);
-
-            if (docSnap.exists()) {
-                toast.success('¡Bienvenido de nuevo!');
-                navigate('/dashboard');
-            } else {
-                toast('¡Hola! Un último paso para completar tu registro.');
-                navigate('/complete-profile');
-            }
-        } catch (error) {
-            console.error(error);
-            toast.error("No se pudo iniciar sesión con Google.");
-        }
-        setLoading(false);
-    };
-
+    
     return (
-        <div className="min-h-screen bg-gradient-to-br from-deep-blue via-vibrant-purple to-emerald flex flex-col items-center justify-center p-4">
-            <div className="w-full max-w-md bg-white/20 backdrop-blur-md rounded-2xl p-8 border border-white/30">
-                <div className="flex justify-center items-center space-x-3 mb-6">
-                    <div className="w-12 h-12 bg-gradient-to-r from-emerald to-vibrant-purple rounded-xl flex items-center justify-center">
-                        <FaFutbol className="text-white text-2xl" />
+        <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 px-4">
+            <div className="max-w-md w-full bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8">
+                <div className="text-center mb-8">
+                    <div className="flex justify-center mb-4">
+                         <img src="/logoFantasya_v0.png" alt="Fantasya Logo" className="w-24 h-24" />
                     </div>
-                    <h1 className="text-3xl font-bold text-white">Fantasya</h1>
+                    <h2 className="text-3xl font-bold text-gray-900 dark:text-white">{isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta'}</h2>
+                    <p className="text-gray-500 dark:text-gray-400 mt-2">{isLogin ? 'Inicia sesión para continuar' : 'Únete a la comunidad de mánagers'}</p>
                 </div>
 
-                <h2 className="text-2xl font-bold text-white text-center mb-4">{isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}</h2>
-                
-                <form onSubmit={handleAuthSubmit}>
+                <form onSubmit={handleAuthSubmit} className="space-y-6">
                     {!isLogin && (
-                        <div className="mb-4">
-                            <label className="block text-white/80 text-sm font-bold mb-2">Nombre de usuario</label>
-                            <input 
-                                type="text" 
+                         <div className="relative">
+                            <UserPlus className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <input
+                                type="text"
+                                placeholder="Nombre de usuario"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                                className="input" 
-                                placeholder="ej: pepe_123"
+                                onChange={(e) => setUsername(e.target.value)}
+                                required
+                                className="input pl-10"
                             />
                         </div>
                     )}
-                    <div className="mb-4">
-                        <label className="block text-white/80 text-sm font-bold mb-2">{isLogin ? 'Email o Nombre de Usuario' : 'Email'}</label>
-                        <input 
-                            type="text"
-                            value={isLogin ? loginIdentifier : email} 
-                            onChange={(e) => isLogin ? setLoginIdentifier(e.target.value) : setEmail(e.target.value)} 
-                            className="input" 
-                            placeholder={isLogin ? "tu@email.com o tu_usuario" : "tu@email.com"}
-                            autoCapitalize="none"
+                    <div className="relative">
+                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                        <input
+                            type="email"
+                            placeholder="Correo electrónico"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            required
+                            className="input pl-10"
                         />
                     </div>
-                    <div className="mb-1 relative">
-                        <label className="block text-white/80 text-sm font-bold mb-2">Contraseña</label>
-                        <input 
-                            type={showPassword ? "text" : "password"} 
-                            value={password} 
-                            onChange={(e) => setPassword(e.target.value)} 
-                            className="input" 
-                            placeholder="••••••••"
+                    <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                        <input
+                            type={showPassword ? 'text' : 'password'}
+                            placeholder="Contraseña"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                            className="input pl-10"
                         />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 top-7 pr-3 flex items-center text-sm leading-5">
-                            {showPassword ? <EyeOff className="h-5 w-5 text-gray-500" /> : <Eye className="h-5 w-5 text-gray-500" />}
+                         <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                         </button>
                     </div>
-                    {isLogin && (
-                        <div className="text-right mb-4">
-                            <button type="button" onClick={handlePasswordReset} className="text-sm text-emerald-300 hover:text-emerald-200">
-                                ¿Olvidaste la contraseña?
-                            </button>
-                        </div>
-                    )}
                     {!isLogin && (
-                        <div className="mb-6 relative">
-                            <label className="block text-white/80 text-sm font-bold mb-2">Confirmar Contraseña</label>
-                            <input 
-                                type={showPassword ? "text" : "password"}
-                                value={confirmPassword} 
-                                onChange={(e) => setConfirmPassword(e.target.value)} 
-                                className="input" 
-                                placeholder="••••••••"
+                        <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                placeholder="Confirmar contraseña"
+                                value={confirmPassword}
+                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                required
+                                className="input pl-10"
                             />
                         </div>
                     )}
-                    
-                    {error && <p className="text-red-400 text-sm mb-4 text-center">{error}</p>}
-                    
-                    <button type="submit" disabled={loading} className="w-full btn-primary disabled:opacity-50">
-                        {loading ? 'Cargando...' : (isLogin ? 'Iniciar Sesión' : 'Crear Cuenta')}
-                    </button>
+
+                    {error && <p className="text-sm text-red-500 text-center">{error}</p>}
+
+                    <div>
+                        <button type="submit" disabled={loading} className="w-full btn-primary">
+                            {loading ? 'Cargando...' : (isLogin ? 'Iniciar Sesión' : 'Registrarse')}
+                        </button>
+                    </div>
                 </form>
 
-                <div className="text-center my-4"><span className="text-white/60">o</span></div>
-                <button onClick={handleGoogleLogin} disabled={loading} className="w-full bg-white/90 hover:bg-white text-deep-blue font-bold py-3 px-4 rounded-lg flex items-center justify-center disabled:opacity-50">Continuar con Google</button>
-                <div className="text-center mt-4">
-                    <span className="text-white/80">{isLogin ? '¿No tienes cuenta? ' : '¿Ya tienes cuenta? '}</span>
-                    <button onClick={() => { setIsLogin(!isLogin); setError(''); }} className="text-emerald-400 hover:text-emerald-300 font-semibold">
-                        {isLogin ? 'Regístrate' : 'Inicia sesión'}
-                    </button>
+                <div className="mt-6">
+                    <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-gray-300 dark:border-gray-600" />
+                        </div>
+                        <div className="relative flex justify-center text-sm">
+                            <span className="px-2 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400">O</span>
+                        </div>
+                    </div>
+                    <div className="mt-6">
+                        <button onClick={handleGoogleSignIn} disabled={loading} className="w-full btn-secondary flex items-center justify-center">
+                            <svg className="w-5 h-5 mr-2" viewBox="0 0 48 48">
+                                <path fill="#4285F4" d="M24 9.5c3.2 0 6.1 1.1 8.4 3.2l6.3-6.3C34.9 2.8 29.8 1 24 1 14.9 1 7.4 6.6 4.1 14.5l7.9 6.2C13.6 13.5 18.4 9.5 24 9.5z"></path>
+                                <path fill="#34A853" d="M46.2 25.4c0-1.7-.2-3.4-.5-5H24v9.3h12.5c-.5 3-2.1 5.6-4.5 7.3l7.4 5.7c4.3-4 6.8-9.8 6.8-16.3z"></path>
+                                <path fill="#FBBC05" d="M12 20.7C11.5 19.2 11.2 17.6 11.2 16S11.5 12.8 12 11.3l-7.9-6.2C1.5 10.5 0 15.1 0 20s1.5 9.5 4.1 14.9l7.9-6.2z"></path>
+                                <path fill="#EA4335" d="M24 47c5.8 0 10.9-1.9 14.5-5.2l-7.4-5.7c-1.9 1.3-4.3 2.1-7.1 2.1-5.6 0-10.4-4-12.2-9.5l-7.9 6.2C7.4 41.4 14.9 47 24 47z"></path>
+                                <path fill="none" d="M0 0h48v48H0z"></path>
+                            </svg>
+                            Continuar con Google
+                        </button>
+                    </div>
                 </div>
+
+                <p className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                    {isLogin ? '¿No tienes cuenta?' : '¿Ya tienes una cuenta?'}
+                    <button onClick={() => setIsLogin(!isLogin)} className="font-semibold text-emerald-600 hover:text-emerald-500 ml-1">
+                        {isLogin ? 'Regístrate' : 'Inicia Sesión'}
+                    </button>
+                </p>
             </div>
         </div>
-      );
+    );
 }
