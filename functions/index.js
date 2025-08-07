@@ -10,20 +10,15 @@ const db = getFirestore();
 
 /**
  * Se activa cuando un usuario reclama un equipo fantasma.
- * Migra todos los datos del fantasma (puntos, fichajes, etc.) al nuevo usuario.
  */
 exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}", async (event) => {
-    const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
+    const beforeData = event.data.before.data();
     const { leagueId, seasonId } = event.params;
 
-    logger.info(`Checking season ${seasonId} in league ${leagueId} for new claimed teams.`);
-
     for (const userId in afterData.members) {
-        const memberAfter = afterData.members[userId];
-        const memberBefore = beforeData.members[userId];
-
-        if (!memberBefore && memberAfter.claimedPlaceholderId) {
+        if (!beforeData.members[userId] && afterData.members[userId].claimedPlaceholderId) {
+            const memberAfter = afterData.members[userId];
             const placeholderId = memberAfter.claimedPlaceholderId;
             logger.info(`Starting migration for user ${userId} claiming placeholder ${placeholderId}.`);
 
@@ -31,7 +26,7 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
             const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
             const newUserTeamName = memberAfter.teamName;
 
-            // 1. Migrar Logros (de liga a usuario)
+            // 1. Migrar Logros
             const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
             const userAchievementRef = db.doc(`users/${userId}/achievements/${seasonId}`);
             const placeholderAchievementDoc = await placeholderAchievementRef.get();
@@ -40,14 +35,21 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
                 batch.delete(placeholderAchievementRef);
             }
 
-            // 2. Migrar Fichajes
+            // 2. Migrar Fichajes (CORREGIDO)
             const transfersRef = seasonRef.collection("transfers");
             const buyerQuery = transfersRef.where('buyerId', '==', placeholderId);
             const sellerQuery = transfersRef.where('sellerId', '==', placeholderId);
             const [buyerSnapshot, sellerSnapshot] = await Promise.all([buyerQuery.get(), sellerQuery.get()]);
 
-            buyerSnapshot.forEach(doc => batch.update(doc.ref, { buyerId: userId, buyerName: newUserTeamName }));
-            sellerSnapshot.forEach(doc => batch.update(doc.ref, { sellerId: userId, sellerName: newUserTeamName }));
+            // Se actualiza tanto el ID como el Nombre para asegurar consistencia
+            buyerSnapshot.forEach(doc => {
+                logger.info(`Updating BUYER in transfer ${doc.id} from ${placeholderId} to ${userId}`);
+                batch.update(doc.ref, { buyerId: userId, buyerName: newUserTeamName });
+            });
+            sellerSnapshot.forEach(doc => {
+                logger.info(`Updating SELLER in transfer ${doc.id} from ${placeholderId} to ${userId}`);
+                batch.update(doc.ref, { sellerId: userId, sellerName: newUserTeamName });
+            });
 
             // 3. Migrar Puntuaciones
             const roundsRef = seasonRef.collection("rounds");
@@ -89,10 +91,10 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
 });
 
 /**
- * NUEVA FUNCIÓN: Se llama desde el cliente para desvincular a un usuario.
- * Convierte un equipo de usuario en un equipo fantasma, preservando su historial.
+ * Desvincula a un usuario y lo convierte en fantasma.
+ * CORRECCIÓN: Añadida configuración de CORS.
  */
-exports.unlinkUserFromTeam = onCall(async (request) => {
+exports.unlinkUserFromTeam = onCall({ cors: true }, async (request) => {
     const adminUid = request.auth?.uid;
     if (!adminUid) {
         throw new HttpsError("unauthenticated", "La función debe ser llamada por un usuario autenticado.");
@@ -113,7 +115,7 @@ exports.unlinkUserFromTeam = onCall(async (request) => {
     const adminUser = seasonData.members[adminUid];
 
     if (!adminUser || (adminUser.role !== 'admin' && seasonData.ownerId !== adminUid)) {
-        throw new HttpsError("permission-denied", "Debes ser administrador o propietario de la liga para realizar esta acción.");
+        throw new HttpsError("permission-denied", "Debes ser administrador o propietario para realizar esta acción.");
     }
     
     const userToUnlink = seasonData.members[userIdToUnlink];
@@ -124,13 +126,14 @@ exports.unlinkUserFromTeam = onCall(async (request) => {
     logger.info(`Admin ${adminUid} is unlinking user ${userIdToUnlink} in league ${leagueId}.`);
     
     const batch = db.batch();
-    const placeholderId = `placeholder_${userIdToUnlink}`; // ID predecible para el nuevo fantasma
+    const placeholderId = `placeholder_${userIdToUnlink}`;
+    const teamName = userToUnlink.teamName; // Guardamos el nombre antes de modificar
 
     const placeholderData = { ...userToUnlink, isPlaceholder: true };
-    delete placeholderData.role; // Los fantasmas no tienen rol de admin/miembro, solo son fantasmas
-    delete placeholderData.isAdmin; // Por si acaso existiera este campo
+    delete placeholderData.role;
+    delete placeholderData.isAdmin;
 
-    // 1. Migrar Logros (de usuario a liga)
+    // 1. Migrar Logros
     const userAchievementRef = db.doc(`users/${userIdToUnlink}/achievements/${seasonId}`);
     const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
     const userAchievementDoc = await userAchievementRef.get();
@@ -139,14 +142,21 @@ exports.unlinkUserFromTeam = onCall(async (request) => {
         batch.delete(userAchievementRef);
     }
     
-    // 2. Migrar Fichajes
+    // 2. Migrar Fichajes (CORREGIDO)
     const transfersRef = seasonRef.collection("transfers");
     const buyerQuery = transfersRef.where('buyerId', '==', userIdToUnlink);
     const sellerQuery = transfersRef.where('sellerId', '==', userIdToUnlink);
     const [buyerSnapshot, sellerSnapshot] = await Promise.all([buyerQuery.get(), sellerQuery.get()]);
     
-    buyerSnapshot.forEach(doc => batch.update(doc.ref, { buyerId: placeholderId }));
-    sellerSnapshot.forEach(doc => batch.update(doc.ref, { sellerId: placeholderId }));
+    // Se actualiza tanto el ID como el Nombre para asegurar consistencia
+    buyerSnapshot.forEach(doc => {
+        logger.info(`Unlinking BUYER in transfer ${doc.id} from ${userIdToUnlink} to ${placeholderId}`);
+        batch.update(doc.ref, { buyerId: placeholderId, buyerName: teamName });
+    });
+    sellerSnapshot.forEach(doc => {
+        logger.info(`Unlinking SELLER in transfer ${doc.id} from ${userIdToUnlink} to ${placeholderId}`);
+        batch.update(doc.ref, { sellerId: placeholderId, sellerName: teamName });
+    });
 
     // 3. Migrar Puntuaciones
     const roundsRef = seasonRef.collection("rounds");
