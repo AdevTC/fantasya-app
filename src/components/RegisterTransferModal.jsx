@@ -18,31 +18,38 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
     const [time, setTime] = useState('');
 
     useEffect(() => {
-        if (isOpen) {
-            if (existingTransfer) {
-                setPlayer({ name: existingTransfer.playerName, id: existingTransfer.playerId });
-                setPrice(existingTransfer.price);
-                setBuyerId(existingTransfer.buyerId);
-                setSellerId(existingTransfer.sellerId);
-                setTransferType(existingTransfer.type);
-                if (existingTransfer.timestamp) {
-                    const existingDate = existingTransfer.timestamp.toDate();
-                    setDate(existingDate.toISOString().split('T')[0]);
-                    setTime(existingDate.toTimeString().slice(0, 5));
-                }
-            } else {
-                const now = new Date();
-                setPlayer(null);
-                setPrice('');
-                setBuyerId(season?.members ? Object.keys(season.members)[0] || '' : '');
-                setSellerId('market');
-                setTransferType('puja');
-                setDate(now.toISOString().split('T')[0]);
-                setTime(now.toTimeString().slice(0, 5));
-            }
+        // Solo ejecutar si el modal está abierto y tenemos datos de la temporada
+        if (!isOpen || !season?.members) {
+            return;
         }
-    }, [isOpen, existingTransfer, season]);
 
+        if (existingTransfer) {
+            // MODO EDICIÓN: Cargar datos del fichaje existente
+            setPlayer({ name: existingTransfer.playerName, id: existingTransfer.playerId });
+            setPrice(String(existingTransfer.price).replace('.', ',')); // Usar coma para la UI
+            setBuyerId(existingTransfer.buyerId);
+            setSellerId(existingTransfer.sellerId);
+            setTransferType(existingTransfer.type);
+            if (existingTransfer.timestamp) {
+                const existingDate = existingTransfer.timestamp.toDate();
+                setDate(existingDate.toISOString().split('T')[0]);
+                setTime(existingDate.toTimeString().slice(0, 5));
+            }
+        } else {
+            // MODO CREACIÓN: Resetear a valores por defecto
+            const now = new Date();
+            setPlayer(null);
+            setPrice('');
+            // **CORRECCIÓN CLAVE**: El comprador por defecto es el usuario actual, no el primero de la lista.
+            setBuyerId(user.uid); 
+            setSellerId('market');
+            setTransferType('puja');
+            setDate(now.toISOString().split('T')[0]);
+            setTime(now.toTimeString().slice(0, 5));
+        }
+    }, [isOpen, existingTransfer, season, user]); // Añadimos 'user' a las dependencias
+
+    // Esta lógica de negocio se mantiene como la tenías
     useEffect(() => {
         if (transferType === 'puja') {
             setSellerId('market');
@@ -58,11 +65,18 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             toast.error("Debes seleccionar un jugador de la lista y rellenar todos los campos.");
             return;
         }
+        if (buyerId === sellerId && buyerId !== 'market') {
+            toast.error("El comprador y el vendedor no pueden ser el mismo.");
+            return;
+        }
+
         setLoading(true);
         const loadingToast = toast.loading(existingTransfer ? 'Actualizando fichaje...' : 'Registrando fichaje...');
         const combinedDateTime = new Date(`${date}T${time}`);
         if (isNaN(combinedDateTime.getTime())) {
-            toast.error("La fecha o la hora no son válidas.", { id: loadingToast }); setLoading(false); return;
+            toast.error("La fecha o la hora no son válidas.", { id: loadingToast });
+            setLoading(false);
+            return;
         }
 
         const transferData = {
@@ -130,7 +144,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                             </div>
                         </div>
                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div><label className="label dark:text-gray-300">Precio (€)</label><input type="text" value={price} onChange={e => setPrice(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ej: 120000000,50" /></div>
+                            <div><label className="label dark:text-gray-300">Precio (€)</label><input type="text" value={price} onChange={e => setPrice(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ej: 12.500.000" /></div>
                             <div>
                                 <label className="label dark:text-gray-300">Tipo de Movimiento</label>
                                 <select value={transferType} onChange={e => setTransferType(e.target.value)} className="input capitalize dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={buyerId === 'market'}>

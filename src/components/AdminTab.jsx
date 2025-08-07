@@ -1,33 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../config/firebase';
+import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions'; // AÑADIDO
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
 import { Calendar, List, Award } from 'lucide-react';
-import { calculateStandardDeviation } from '../utils/helpers';
 import { useAuth } from '../hooks/useAuth';
 
-export const TROPHY_DEFINITIONS = {
-    CHAMPION: { name: 'Campeón de Liga', description: 'Ganador de la temporada con más puntos.' },
-    RUNNER_UP: { name: 'Medalla de Plata', description: 'Segundo clasificado de la temporada.' },
-    THIRD_PLACE: { name: 'Medalla de Bronce', description: 'Tercer clasificado de la temporada.' },
-    TOP_SCORER: { name: 'Pichichi', description: 'Equipo con la mayor puntuación en una sola jornada.' },
-    MARKET_KING: { name: 'Rey del Mercado', description: 'El que más ha gastado en fichajes durante la temporada.' },
-    LEAGUE_SHARK: { name: 'Tiburón de la Liga', description: 'El que ha obtenido mayor beneficio neto en el mercado.' },
-    MOST_WINS: { name: 'El Victorioso', description: 'El que ha ganado más jornadas.' },
-    MOST_PODIUMS: { name: 'Experiencia en Podios', description: 'El que ha terminado más veces en el podio (Top 3).' },
-    MOST_REGULAR: { name: 'Míster Regularidad', description: 'El jugador con la desviación estándar más baja en sus puntuaciones.'},
-    LANTERN_ROUGE: { name: 'Farolillo Rojo', description: 'El que ha terminado más veces en última posición.' },
-    STONE_HAND: { name: 'Mano de Piedra', description: 'Equipo con la peor puntuación en una sola jornada.' },
-    CAPTAIN_FANTASTIC: { name: 'Capitán Fantástico', description: 'El que más puntos extra ha conseguido gracias a sus capitanes.' },
-    GOLDEN_BENCH: { name: 'Banquillo de Oro', description: 'El que más puntos ha desperdiciado en el banquillo.' },
-    SPECULATOR: { name: 'El Especulador', description: 'El que ha realizado más fichajes durante la temporada.' },
-    // --- NUEVOS TROFEOS ---
-    GALACTIC_SIGNING: { name: 'Fichaje Galáctico', description: 'Por fichar a uno de los 5 jugadores más caros del mercado.' },
-    COMEBACK_KING: { name: 'Rey de la Remontada', description: 'Por ganar una jornada tras estar fuera del podio en la anterior.' },
-    STREAK_MASTER: { name: 'Racha Imparable', description: 'Por ganar 3 jornadas seguidas.' },
-};
 
 export default function AdminTab({ league, season, roundsData }) {
     const { profile: adminProfile } = useAuth();
@@ -133,8 +113,6 @@ export default function AdminTab({ league, season, roundsData }) {
             batch.update(seasonRef, { members: updatedMembers });
 
             await batch.commit();
-            // Lógica de XP: Aquí se podría añadir XP a cada jugador por los puntos conseguidos.
-            // Ejemplo: `addXp(userId, points * 0.1)`
             toast.success('Datos guardados y totales recalculados.', { id: loadingToast });
         } catch (error) {
             console.error("Error al guardar los datos:", error);
@@ -197,6 +175,27 @@ export default function AdminTab({ league, season, roundsData }) {
             toast.success('Jugador expulsado.', { id: loadingToast });
         } catch (error) {
             toast.error('No se pudo expulsar al jugador.', { id: loadingToast });
+        }
+    };
+
+    // --- NUEVA FUNCIÓN ---
+    const handleUnlinkPlayer = async (targetUid, teamName) => {
+        const confirmationMessage = `¿Estás seguro? ${teamName} perderá el acceso a este equipo, que se convertirá en un equipo fantasma. Todo su historial (puntos, fichajes) se conservará.`;
+        if (window.confirm(confirmationMessage)) {
+            const loadingToast = toast.loading(`Desvinculando a ${teamName}...`);
+            try {
+                const functions = getFunctions();
+                const unlinkUser = httpsCallable(functions, 'unlinkUserFromTeam');
+                await unlinkUser({
+                    leagueId: league.id,
+                    seasonId: season.id,
+                    userIdToUnlink: targetUid
+                });
+                toast.success(`${teamName} ha sido desvinculado y ahora es un equipo fantasma.`, { id: loadingToast });
+            } catch (error) {
+                console.error("Error al desvincular usuario:", error);
+                toast.error(`Error al desvincular: ${error.message}`, { id: loadingToast });
+            }
         }
     };
     
@@ -288,8 +287,16 @@ export default function AdminTab({ league, season, roundsData }) {
                 <div className="space-y-3">{Object.entries(members).map(([uid, member]) => (<div key={uid} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg gap-2"><div><p className="font-semibold text-gray-800 dark:text-gray-200">{member.teamName} {member.isPlaceholder && <span className="text-xs font-bold text-gray-500 dark:text-gray-400">(Sin reclamar)</span>}</p><p className={`text-sm font-bold ${member.role === 'admin' ? 'text-emerald-600' : 'text-gray-500 dark:text-gray-400'}`}>{uid === league.ownerId ? 'Propietario' : member.role === 'admin' ? 'Admin' : 'Miembro'}</p></div>
                     <div className="flex gap-2 self-end sm:self-center">
                         {uid !== league.ownerId && ( <>
-                            {member.isPlaceholder ? ( <button onClick={() => handleKickUser(uid, member.teamName)} className="btn-action bg-red-500 hover:bg-red-600">Expulsar</button> ) : ( <>
-                                {member.role === 'member' ? ( <button onClick={() => handleSetRole(uid, 'admin')} className="btn-action bg-blue-500 hover:bg-blue-600">Hacer Admin</button> ) : ( <button onClick={() => handleSetRole(uid, 'member')} className="btn-action bg-gray-500 hover:bg-gray-600">Quitar Admin</button> )}
+                            {member.isPlaceholder ? ( 
+                                <button onClick={() => handleKickUser(uid, member.teamName)} className="btn-action bg-red-500 hover:bg-red-600">Expulsar</button> 
+                            ) : ( <>
+                                {member.role === 'member' ? ( 
+                                    <button onClick={() => handleSetRole(uid, 'admin')} className="btn-action bg-blue-500 hover:bg-blue-600">Hacer Admin</button> 
+                                ) : ( 
+                                    <button onClick={() => handleSetRole(uid, 'member')} className="btn-action bg-gray-500 hover:bg-gray-600">Quitar Admin</button> 
+                                )}
+                                {/* --- BOTÓN AÑADIDO --- */}
+                                <button onClick={() => handleUnlinkPlayer(uid, member.teamName)} className="btn-action bg-orange-500 hover:bg-orange-600">Desvincular</button>
                                 <button onClick={() => handleKickUser(uid, member.teamName)} className="btn-action bg-red-500 hover:bg-red-600">Expulsar</button>
                             </> )}
                         </>)}
