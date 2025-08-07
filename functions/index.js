@@ -5,56 +5,97 @@ const logger = require("firebase-functions/logger");
 
 // Inicializa la app de administración de Firebase
 initializeApp();
+const db = getFirestore();
 
 // Esta es la nueva sintaxis para una función que se activa al actualizar un documento
 exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}", async (event) => {
-  // Obtenemos los datos de antes y después del cambio
-  const beforeData = event.data.before.data();
-  const afterData = event.data.after.data();
-  
-  // Obtenemos los IDs de los parámetros de la ruta
-  const {leagueId, seasonId} = event.params;
+    // Obtenemos los datos de antes y después del cambio
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
+    
+    // Obtenemos los IDs de los parámetros de la ruta
+    const {leagueId, seasonId} = event.params;
 
-  logger.info(`Checking season ${seasonId} in league ${leagueId} for new claimed teams.`);
+    logger.info(`Checking season ${seasonId} in league ${leagueId} for new claimed teams.`);
 
-  // Buscamos si se ha añadido un nuevo miembro que haya reclamado un equipo
-  for (const userId in afterData.members) {
-    const memberAfter = afterData.members[userId];
-    const memberBefore = beforeData.members[userId];
+    // Buscamos si se ha añadido un nuevo miembro que haya reclamado un equipo
+    for (const userId in afterData.members) {
+        const memberAfter = afterData.members[userId];
+        const memberBefore = beforeData.members[userId];
 
-    // La condición clave: es un miembro nuevo Y tiene la bandera "claimedPlaceholderId"
-    if (!memberBefore && memberAfter.claimedPlaceholderId) {
-      const placeholderId = memberAfter.claimedPlaceholderId;
-      logger.info(`Found new member ${userId} who claimed placeholder ${placeholderId}.`);
+        // La condición clave: es un miembro nuevo Y tiene la bandera "claimedPlaceholderId"
+        if (!memberBefore && memberAfter.claimedPlaceholderId) {
+            const placeholderId = memberAfter.claimedPlaceholderId;
+            logger.info(`Starting migration for user ${userId} claiming placeholder ${placeholderId}.`);
 
-      const db = getFirestore();
-      const batch = db.batch();
+            const batch = db.batch();
+            const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
+            
+            // Obtenemos el nombre del equipo del nuevo usuario para usarlo en los fichajes
+            const newUserTeamName = memberAfter.teamName;
 
-      // Definimos las rutas a los documentos
-      const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
-      const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
-      const userAchievementRef = db.doc(`users/${userId}/achievements/${seasonId}`);
+            // --- 1. Migrar Logros (Achievements) ---
+            const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
+            const userAchievementRef = db.doc(`users/${userId}/achievements/${seasonId}`);
+            const placeholderAchievementDoc = await placeholderAchievementRef.get();
+            if (placeholderAchievementDoc.exists) {
+                logger.info(`Migrating achievements from ${placeholderId} to ${userId}.`);
+                batch.set(userAchievementRef, placeholderAchievementDoc.data());
+                batch.delete(placeholderAchievementRef);
+            }
 
-      // 1. Leemos los logros del equipo fantasma
-      const placeholderAchievementDoc = await placeholderAchievementRef.get();
-      if (placeholderAchievementDoc.exists) {
-        logger.info(`Migrating achievements from ${placeholderId} to ${userId}.`);
-        // 2. Los copiamos al perfil del nuevo usuario
-        batch.set(userAchievementRef, placeholderAchievementDoc.data());
-        // 3. Borramos el documento de logros del fantasma
-        batch.delete(placeholderAchievementRef);
-      }
+            // --- 2. Migrar Fichajes (Transfers) - AÑADIDO ---
+            const transfersRef = seasonRef.collection("transfers");
+            const buyerQuery = transfersRef.where('buyerId', '==', placeholderId);
+            const sellerQuery = transfersRef.where('sellerId', '==', placeholderId);
+            
+            const [buyerSnapshot, sellerSnapshot] = await Promise.all([buyerQuery.get(), sellerQuery.get()]);
 
-      // 4. Borramos el equipo fantasma del mapa de miembros y la bandera temporal
-      batch.update(seasonRef, {
-        [`members.${placeholderId}`]: FieldValue.delete(),
-        [`members.${userId}.claimedPlaceholderId`]: FieldValue.delete(),
-      });
-      
-      // Ejecutamos todas las operaciones
-      await batch.commit();
-      logger.info(`User ${userId} successfully claimed placeholder ${placeholderId}. Transaction complete.`);
-      return; // Salimos de la función una vez procesado el usuario
+            buyerSnapshot.forEach(doc => {
+                logger.info(`Updating transfer (buy) ${doc.id} from ${placeholderId} to ${userId}.`);
+                batch.update(doc.ref, { buyerId: userId, buyerName: newUserTeamName });
+            });
+            sellerSnapshot.forEach(doc => {
+                logger.info(`Updating transfer (sell) ${doc.id} from ${placeholderId} to ${userId}.`);
+                batch.update(doc.ref, { sellerId: userId, sellerName: newUserTeamName });
+            });
+
+            // --- 3. Migrar Puntuaciones de Jornadas (Rounds) - AÑADIDO ---
+            const roundsRef = seasonRef.collection("rounds");
+            const roundsSnapshot = await roundsRef.get();
+            roundsSnapshot.forEach(roundDoc => {
+                const roundData = roundDoc.data();
+                // Comprobamos si el equipo fantasma tiene puntuación en esta jornada
+                if (roundData.scores && roundData.scores[placeholderId] !== undefined) {
+                    logger.info(`Migrating score in round ${roundDoc.id} from ${placeholderId} to ${userId}.`);
+                    // Actualización atómica: renombra la clave del ID fantasma al ID del nuevo usuario
+                    batch.update(roundDoc.ref, {
+                        [`scores.${userId}`]: roundData.scores[placeholderId],
+                        [`scores.${placeholderId}`]: FieldValue.delete()
+                    });
+                }
+            });
+            
+            // --- 4. Migrar Alineaciones (Lineups) - AÑADIDO ---
+            const lineupsRef = seasonRef.collection("lineups");
+            const lineupSnapshot = await lineupsRef.where('userId', '==', placeholderId).get();
+            lineupSnapshot.forEach(lineupDoc => {
+                logger.info(`Migrating lineup ${lineupDoc.id} for user ${userId}.`);
+                // Simplemente actualizamos el userId en el documento de la alineación
+                batch.update(lineupDoc.ref, { userId: userId });
+            });
+
+            // --- 5. Limpieza Final ---
+            // Borramos el equipo fantasma del mapa de miembros y la bandera temporal del nuevo usuario
+            batch.update(seasonRef, {
+                [`members.${placeholderId}`]: FieldValue.delete(),
+                [`members.${userId}.claimedPlaceholderId`]: FieldValue.delete(),
+            });
+            
+            // Ejecutamos todas las operaciones en un solo lote
+            await batch.commit();
+            logger.info(`Migration complete for user ${userId}. Transaction finished.`);
+            return; // Salimos de la función una vez procesado el usuario
+        }
     }
-  }
 });
