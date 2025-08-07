@@ -44,7 +44,7 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
                 batch.delete(placeholderAchievementRef);
             }
 
-            // --- 2. Migrar Fichajes (Transfers) - AÑADIDO ---
+            // --- 2. Migrar Fichajes (Transfers) - CORREGIDO ---
             const transfersRef = seasonRef.collection("transfers");
             const buyerQuery = transfersRef.where('buyerId', '==', placeholderId);
             const sellerQuery = transfersRef.where('sellerId', '==', placeholderId);
@@ -60,15 +60,13 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
                 batch.update(doc.ref, { sellerId: userId, sellerName: newUserTeamName });
             });
 
-            // --- 3. Migrar Puntuaciones de Jornadas (Rounds) - AÑADIDO ---
+            // --- 3. Migrar Puntuaciones de Jornadas (Rounds) ---
             const roundsRef = seasonRef.collection("rounds");
             const roundsSnapshot = await roundsRef.get();
             roundsSnapshot.forEach(roundDoc => {
                 const roundData = roundDoc.data();
-                // Comprobamos si el equipo fantasma tiene puntuación en esta jornada
                 if (roundData.scores && roundData.scores[placeholderId] !== undefined) {
                     logger.info(`Migrating score in round ${roundDoc.id} from ${placeholderId} to ${userId}.`);
-                    // Actualización atómica: renombra la clave del ID fantasma al ID del nuevo usuario
                     batch.update(roundDoc.ref, {
                         [`scores.${userId}`]: roundData.scores[placeholderId],
                         [`scores.${placeholderId}`]: FieldValue.delete()
@@ -76,26 +74,35 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
                 }
             });
             
-            // --- 4. Migrar Alineaciones (Lineups) - AÑADIDO ---
+            // --- 4. Migrar Alineaciones (Lineups) - CORREGIDO ---
             const lineupsRef = seasonRef.collection("lineups");
-            const lineupSnapshot = await lineupsRef.where('userId', '==', placeholderId).get();
-            lineupSnapshot.forEach(lineupDoc => {
-                logger.info(`Migrating lineup ${lineupDoc.id} for user ${userId}.`);
-                // Simplemente actualizamos el userId en el documento de la alineación
-                batch.update(lineupDoc.ref, { userId: userId });
+            // No podemos hacer una consulta por sufijo de ID, así que obtenemos todas y filtramos
+            const allLineupsSnapshot = await lineupsRef.get(); 
+            allLineupsSnapshot.forEach(lineupDoc => {
+                const docId = lineupDoc.id;
+                // El ID del documento de alineación es "roundId-userId"
+                if (docId.endsWith(`-${placeholderId}`)) {
+                    const roundId = docId.substring(0, docId.lastIndexOf('-'));
+                    const newLineupId = `${roundId}-${userId}`;
+                    const newLineupRef = lineupsRef.doc(newLineupId);
+                    
+                    logger.info(`Migrating lineup from ${docId} to ${newLineupId}.`);
+                    
+                    // Creamos el nuevo documento con los datos del antiguo y borramos el antiguo
+                    batch.set(newLineupRef, lineupDoc.data());
+                    batch.delete(lineupDoc.ref);
+                }
             });
 
             // --- 5. Limpieza Final ---
-            // Borramos el equipo fantasma del mapa de miembros y la bandera temporal del nuevo usuario
             batch.update(seasonRef, {
                 [`members.${placeholderId}`]: FieldValue.delete(),
                 [`members.${userId}.claimedPlaceholderId`]: FieldValue.delete(),
             });
             
-            // Ejecutamos todas las operaciones en un solo lote
             await batch.commit();
             logger.info(`Migration complete for user ${userId}. Transaction finished.`);
-            return; // Salimos de la función una vez procesado el usuario
+            return;
         }
     }
 });
