@@ -181,16 +181,16 @@ export default function StatsTab({ league, season, roundsData }) {
                 const lineupDoc = allLineups[`${roundNumber}-${uid}`];
                 if (scoresForRound[uid] && typeof scoresForRound[uid] !== 'number') { stats[uid].nonScoringRounds++; }
                 if (lineupDoc) {
-
+                    
                     // --- INICIO DE LA LÓGICA CORREGIDA ---
                     const lineupPlayers = Object.values(lineupDoc.players || {});
                     const benchPlayers = Object.values(lineupDoc.bench || {});
                     const coach = lineupDoc.coach ? [lineupDoc.coach] : [];
-                    const allTeamPlayers = [...lineupPlayers, ...benchPlayers, ...coach];
-                    
-                    const playersWithPoints = allTeamPlayers.filter(p => p && typeof p.points === 'number');
+                    const allTeamMembers = [...lineupPlayers, ...benchPlayers, ...coach].filter(p => p);
 
-                    if (playersWithPoints.length > 0) {
+                    const playersWhoPlayedAndScored = allTeamMembers.filter(p => p.status === 'playing' && typeof p.points === 'number');
+
+                    if (playersWhoPlayedAndScored.length > 0) {
                         const captainSlot = lineupDoc.captainSlot;
                         let captainPlayer = null;
 
@@ -206,9 +206,8 @@ export default function StatsTab({ league, season, roundsData }) {
                             }
                         }
                         
-                        const maxScore = Math.max(...playersWithPoints.map(p => p.points));
-
-                        if (captainPlayer && typeof captainPlayer.points === 'number') {
+                        if (captainPlayer && captainPlayer.status === 'playing' && typeof captainPlayer.points === 'number') {
+                            const maxScore = Math.max(...playersWhoPlayedAndScored.map(p => p.points));
                             const captainScore = captainPlayer.points;
                             const analysis = captainAnalysisData[uid];
                             
@@ -505,6 +504,8 @@ export default function StatsTab({ league, season, roundsData }) {
                 </div>
                  <p className="p-4 text-xs text-gray-500 dark:text-gray-400">*Los Puntos Perdidos se calculan como la diferencia entre la puntuación del mejor jugador de tu equipo y la de tu capitán. No se duplican en este cálculo para mostrar el error real de la elección.</p>
             </div>
+
+            
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Swords />Análisis de Rivalidad</h3>
                 <div className="flex flex-wrap items-center gap-4 mb-6">
