@@ -1,5 +1,6 @@
 import React from 'react';
 import { Plus, CheckCircle2, XCircle, MinusCircle, HelpCircle } from 'lucide-react';
+import { getPlayerScoreBackgroundColor } from '../utils/helpers';
 
 export default function PlayerSlot({ player, position, onClick, onSetCaptain, isCaptain, isEditable, onToggleActive, isInline = false, isCoach = false }) {
     const hasPlayer = player && player.name;
@@ -39,7 +40,7 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
 
     return (
         <div className={`w-14 h-14 md:w-16 md:h-16 ${!isInline ? 'absolute' : 'relative'}`} style={position} onClick={onClick}>
-            <div className={`relative w-full h-full rounded-full flex items-center justify-center text-center cursor-pointer transition-all duration-300 ease-in-out transform hover:scale-105 ${hasPlayer ? `bg-white/90 border-2 ${borderColor}` : 'bg-white/30 border-2 border-dashed border-white/60'}`}>
+            <div className={`relative w-full h-full rounded-full flex items-center justify-center text-center cursor-pointer transition-all duration-300 ease-in-out transform hover:scale-105 ${hasPlayer ? `${getPlayerScoreBackgroundColor(player.points)} border-2 ${borderColor}` : 'bg-white/30 border-2 border-dashed border-white/60'}`}>
                 {hasPlayer && onSetCaptain && (
                     <button type="button" onClick={(e) => handleActionClick(e, onSetCaptain)} title="Hacer Capitán" className={`absolute -bottom-2 -left-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${isCaptain ? 'bg-yellow-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-yellow-400' : 'cursor-default'}`}>
                         <span className="font-bold text-sm">C</span>
@@ -49,9 +50,9 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
                 {statusIcon}
                 
                 {hasPlayer && typeof onToggleActive === 'function' && !isCoach && (
-                     <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
-                        <span className="font-bold text-sm">T</span>
-                    </button>
+                        <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
+                            <span className="font-bold text-sm">T</span>
+                        </button>
                 )}
 
                 {hasPlayer ? (
