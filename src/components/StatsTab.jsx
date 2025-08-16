@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { db, auth } from '../config/firebase';
 import { Link } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ScatterChart, Scatter, Label } from 'recharts';
-import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, UserCog } from 'lucide-react';
+import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import { useTheme } from '../context/ThemeContext';
 import { collection, query, getDocs } from 'firebase/firestore';
@@ -23,7 +23,7 @@ const StatHighlightCard = ({ title, value, subValue, colorClass, icon }) => (
 const calculateStandardDeviation = (array) => {
     const n = array.length;
     if (n < 2) return 0;
-    const mean = array.reduce((a, b) => a + b, 0) / n;
+    const mean = array.reduce((a, b) => a + b) / n;
     return Math.sqrt(array.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / (n - 1));
 };
 
@@ -55,8 +55,6 @@ export default function StatsTab({ league, season, roundsData }) {
     const [streakSortConfig, setStreakSortConfig] = useState({ key: 'positiveStreakCount', direction: 'desc' });
     const [topScoresSortConfig, setTopScoresSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [playerPerfSortConfig, setPlayerPerfSortConfig] = useState({ key: 'total', direction: 'desc' });
-    const [captainStatsSortConfig, setCaptainStatsSortConfig] = useState({ key: 'successRate', direction: 'desc' });
-
     const [startRound, setStartRound] = useState(1);
     const [endRound, setEndRound] = useState(roundsData.length > 0 ? roundsData.length : 1);
     const memberIds = season?.members ? Object.keys(season.members) : [];
@@ -101,8 +99,7 @@ export default function StatsTab({ league, season, roundsData }) {
                 scoreDistribution: [], playerConsistencyData: [], podiumDistributionForPie: [], 
                 lastPlaceFinishes: [], nonScoringRoundsData: [], captainPointsData: [], 
                 benchPointsData: [], pointsByPositionData: {}, teamValueVsPointsData: [], 
-                streakData: [], topWorstScoresData: [], playerPerformanceByUser: {},
-                captainAnalysis: []
+                streakData: [], topWorstScoresData: [], playerPerformanceByUser: {}
             };
         }
         
@@ -121,11 +118,6 @@ export default function StatsTab({ league, season, roundsData }) {
         const cumulativeScores = {};
         Object.keys(season.members).forEach(uid => cumulativeScores[uid] = 0);
 
-        const captainAnalysisData = {};
-        Object.keys(season.members).forEach(uid => {
-            captainAnalysisData[uid] = { successfulPicks: 0, totalRoundsWithCaptain: 0, totalPointsLost: 0, pointsLostHistory: [] };
-        });
-
         roundsData.forEach(round => {
             const roundNumber = round.roundNumber;
             const scoresForRound = round.scores || {};
@@ -136,6 +128,8 @@ export default function StatsTab({ league, season, roundsData }) {
                     stats[uid].scores.push({score: scoresForRound[uid], roundNumber});
                 }
             });
+
+            const prevCumulativeScores = { ...cumulativeScores };
 
             participatingUids.forEach(uid => {
                 cumulativeScores[uid] += scoresForRound[uid];
@@ -178,74 +172,22 @@ export default function StatsTab({ league, season, roundsData }) {
             });
 
             Object.entries(season.members).forEach(([uid]) => {
-                const lineupDoc = allLineups[`${roundNumber}-${uid}`];
+                const lineup = allLineups[`${roundNumber}-${uid}`];
                 if (scoresForRound[uid] && typeof scoresForRound[uid] !== 'number') { stats[uid].nonScoringRounds++; }
-                if (lineupDoc) {
-                    
-                    const contributingPlayers = [];
-                    const inactiveStarterSlots = [];
-
-                    Object.entries(lineupDoc.players || {}).forEach(([slotId, player]) => {
-                        if (player && player.status === 'playing' && typeof player.points === 'number') {
-                            contributingPlayers.push({ ...player, slotId });
-                        } else if (player) {
-                            inactiveStarterSlots.push(slotId);
-                        }
-                    });
-
-                    const benchOrder = ['GK', 'DF', 'MF', 'FW'];
-                    
-                    benchOrder.forEach(pos => {
-                        const benchPlayer = lineupDoc.bench?.[pos];
-                        const slotToSub = inactiveStarterSlots.find(slotId => slotId.split('-')[1] === pos);
-                        
-                        if (benchPlayer && benchPlayer.active && benchPlayer.status === 'playing' && typeof benchPlayer.points === 'number' && slotToSub) {
-                            contributingPlayers.push({ ...benchPlayer, slotId: `bench-${pos}` });
-                            const indexToRemove = inactiveStarterSlots.indexOf(slotToSub);
-                            if (indexToRemove > -1) {
-                                inactiveStarterSlots.splice(indexToRemove, 1);
-                            }
-                        }
-                    });
-
-                    const coach = lineupDoc.coach;
-                    if (coach && coach.status === 'playing' && typeof coach.points === 'number') {
-                        contributingPlayers.push({ ...coach, slotId: 'coach-COACH' });
-                    }
-                    
-                    if (contributingPlayers.length > 0) {
-                        const captainSlot = lineupDoc.captainSlot;
-                        const captain = contributingPlayers.find(p => p.slotId === captainSlot);
-                        
-                        if (captain) {
-                            const maxScore = Math.max(...contributingPlayers.map(p => p.points));
-                            const captainScore = captain.points;
-                            const analysis = captainAnalysisData[uid];
-                            
-                            analysis.totalRoundsWithCaptain++;
-                            if (captainScore === maxScore) {
-                                analysis.successfulPicks++;
-                            }
-                            const pointsDifference = maxScore - captainScore;
-                            const roundPointsLost = pointsDifference > 0 ? pointsDifference : 0;
-                            analysis.totalPointsLost += roundPointsLost;
-                            analysis.pointsLostHistory.push(roundPointsLost);
-                        }
-                    }
-
+                if (lineup) {
                     const processPlayer = (player, slotId, isBench) => {
                         if (!player || !player.playerId) return;
-                        const updatePerformance = (perfObject) => { perfObject.fielded = (perfObject.fielded || 0) + 1; const points = player.points || 0; const isCaptain = lineupDoc.captainSlot === slotId; if (isBench) { if (player.active && player.status === 'playing') { perfObject.bench = (perfObject.bench || 0) + points; perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } else if (points > 0) { perfObject.wasted = (perfObject.wasted || 0) + points; } } else { if (player.status === 'playing') { perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } } };
+                        const updatePerformance = (perfObject) => { perfObject.fielded = (perfObject.fielded || 0) + 1; const points = player.points || 0; const isCaptain = lineup.captainSlot === slotId; if (isBench) { if (player.active && player.status === 'playing') { perfObject.bench = (perfObject.bench || 0) + points; perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } else if (points > 0) { perfObject.wasted = (perfObject.wasted || 0) + points; } } else { if (player.status === 'playing') { perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } } };
                         playerPerformanceByUser[uid][player.playerId] = playerPerformanceByUser[uid][player.playerId] || { name: player.name }; updatePerformance(playerPerformanceByUser[uid][player.playerId]);
                         playerPerformanceByUser['general'][player.playerId] = playerPerformanceByUser['general'][player.playerId] || { name: player.name }; updatePerformance(playerPerformanceByUser['general'][player.playerId]);
                     };
-                    Object.entries(lineupDoc.players || {}).forEach(([slotId, player]) => processPlayer(player, slotId, false));
-                    Object.entries(lineupDoc.bench || {}).forEach(([pos, player]) => processPlayer(player, `bench-${pos}`, true));
-                    processPlayer(lineupDoc.coach, 'coach-COACH', false);
-                    if (lineupDoc.captainSlot) { const [slotType, ...slotRest] = lineupDoc.captainSlot.split('-'); const slotKey = slotRest.join('-'); let captain = null; if (slotType === 'coach') captain = lineupDoc.coach; else if (slotType === 'players') captain = lineupDoc.players?.[lineupDoc.captainSlot]; else if (slotType === 'bench') captain = lineupDoc.bench?.[slotKey]; if (captain?.points > 0) { stats[uid].captainPoints += captain.points; } }
-                    Object.values(lineupDoc.players || {}).forEach(p => { if (p.status === 'playing' && p.points > 0) { stats[uid].pointsByPosition[p.positionAtTheTime] = (stats[uid].pointsByPosition[p.positionAtTheTime] || 0) + p.points; } });
-                    if (lineupDoc.coach?.status === 'playing' && lineupDoc.coach?.points > 0) { stats[uid].pointsByPosition['Entrenador'] = (stats[uid].pointsByPosition['Entrenador'] || 0) + lineupDoc.coach.points; }
-                    ['GK', 'DF', 'MF', 'FW'].forEach(pos => { const benchPlayer = lineupDoc.bench?.[pos]; if (benchPlayer?.points > 0 && benchPlayer.status === 'playing' && !benchPlayer.active) { stats[uid].wastedBenchPoints += benchPlayer.points; } });
+                    Object.entries(lineup.players || {}).forEach(([slotId, player]) => processPlayer(player, slotId, false));
+                    Object.entries(lineup.bench || {}).forEach(([pos, player]) => processPlayer(player, `bench-${pos}`, true));
+                    processPlayer(lineup.coach, 'coach-COACH', false);
+                    if (lineup.captainSlot) { const [slotType, ...slotRest] = lineup.captainSlot.split('-'); const slotKey = slotRest.join('-'); let captain = null; if (slotType === 'coach') captain = lineup.coach; else if (slotType === 'players') captain = lineup.players?.[lineup.captainSlot]; else if (slotType === 'bench') captain = lineup.bench?.[slotKey]; if (captain?.points > 0) { stats[uid].captainPoints += captain.points; } }
+                    Object.values(lineup.players || {}).forEach(p => { if (p.status === 'playing' && p.points > 0) { stats[uid].pointsByPosition[p.positionAtTheTime] = (stats[uid].pointsByPosition[p.positionAtTheTime] || 0) + p.points; } });
+                    if (lineup.coach?.status === 'playing' && lineup.coach?.points > 0) { stats[uid].pointsByPosition['Entrenador'] = (stats[uid].pointsByPosition['Entrenador'] || 0) + lineup.coach.points; }
+                    ['GK', 'DF', 'MF', 'FW'].forEach(pos => { const benchPlayer = lineup.bench?.[pos]; if (benchPlayer?.points > 0 && benchPlayer.status === 'playing' && !benchPlayer.active) { stats[uid].wastedBenchPoints += benchPlayer.points; } });
                 }
             });
 
@@ -301,32 +243,8 @@ export default function StatsTab({ league, season, roundsData }) {
         const finalTeamValueVsPoints = finalDetailedStats.map(p => ({ name: p.name, x: (season.members[p.uid].finances?.teamValue || 0), y: p.totalPoints }));
         const finalStreakData = finalDetailedStats.map(p => ({ name: p.name, username: p.username, positiveStreakCount: p.positiveStreakCount, neutralStreakCount: p.neutralStreakCount, negativeStreakCount: p.negativeStreakCount, biggestJump: p.biggestJump, biggestDrop: p.biggestDrop }));
         const finalTopWorstScoresData = finalDetailedStats.map(p => { const top5 = [...p.scores.map(s => s.score)].sort((a, b) => b - a).slice(0, 5); const worst5 = [...p.scores.map(s => s.score)].sort((a, b) => a - b).slice(0, 5); return { uid: p.uid, name: p.name, username: p.username, top5Scores: top5, worst5Scores: worst5, avgTop5: top5.length > 0 ? (top5.reduce((a, b) => a + b, 0) / top5.length).toFixed(1) : 'N/A', avgWorst5: worst5.length > 0 ? (worst5.reduce((a, b) => a + b, 0) / worst5.length).toFixed(1) : 'N/A' }; });
-        
-        const finalCaptainAnalysis = Object.entries(captainAnalysisData).map(([uid, data]) => {
-            const { totalRoundsWithCaptain, successfulPicks, totalPointsLost, pointsLostHistory } = data;
-            const successRate = totalRoundsWithCaptain > 0 ? (successfulPicks / totalRoundsWithCaptain) * 100 : 0;
-            const averagePointsLost = totalRoundsWithCaptain > 0 ? totalPointsLost / totalRoundsWithCaptain : 0;
-            const stdDev = calculateStandardDeviation(pointsLostHistory);
 
-            return {
-                userId: uid,
-                userName: season.members[uid]?.teamName || 'N/A',
-                username: season.members[uid]?.username || 'N/A',
-                successRate: parseFloat(successRate.toFixed(1)),
-                totalPointsLost,
-                averagePointsLost: parseFloat(averagePointsLost.toFixed(2)),
-                stdDev: parseFloat(stdDev.toFixed(2)),
-            };
-        });
-
-        return { 
-            detailedPlayerStats: finalDetailedStats, positionStats: finalPositionStats, headToHeadStats: finalH2HStats, rivalryStats, 
-            leagueRecords: records, scoreDistribution: finalScoreDistribution, playerConsistencyData: consistencyData, podiumDistributionForPie, 
-            lastPlaceFinishes: lastPlacesData, nonScoringRoundsData: nonScoringData, captainPointsData: finalCaptainPoints, 
-            benchPointsData: finalWastedBenchPoints, pointsByPositionData: finalPointsByPosData, teamValueVsPointsData: finalTeamValueVsPoints, 
-            streakData: finalStreakData, topWorstScoresData: finalTopWorstScoresData, playerPerformanceByUser,
-            captainAnalysis: finalCaptainAnalysis
-        };
+        return { detailedPlayerStats: finalDetailedStats, positionStats: finalPositionStats, headToHeadStats: finalH2HStats, rivalryStats, leagueRecords: records, scoreDistribution: finalScoreDistribution, playerConsistencyData: consistencyData, podiumDistributionForPie, lastPlaceFinishes: lastPlacesData, nonScoringRoundsData: nonScoringData, captainPointsData: finalCaptainPoints, benchPointsData: finalWastedBenchPoints, pointsByPositionData: finalPointsByPosData, teamValueVsPointsData: finalTeamValueVsPoints, streakData: finalStreakData, topWorstScoresData: finalTopWorstScoresData, playerPerformanceByUser };
     }, [roundsData, season, memberCount, allLineups, loadingLineups]);
 
     const sortedDetailedPlayerStats = useMemo(() => {
@@ -385,49 +303,12 @@ export default function StatsTab({ league, season, roundsData }) {
         return data;
     }, [memoizedStats.playerPerformanceByUser, playerPerformanceFilter, playerPerfSortConfig]);
 
-    const sortedCaptainStats = useMemo(() => {
-        let sortableItems = [...memoizedStats.captainAnalysis];
-        if (captainStatsSortConfig.key) {
-            sortableItems.sort((a, b) => {
-                const valA = a[captainStatsSortConfig.key];
-                const valB = b[captainStatsSortConfig.key];
-                 if (typeof valA === 'string') {
-                    return captainStatsSortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-                }
-                if (valA < valB) return captainStatsSortConfig.direction === 'asc' ? -1 : 1;
-                if (valA > valB) return captainStatsSortConfig.direction === 'asc' ? 1 : -1;
-                return 0;
-            });
-        }
-        return sortableItems;
-    }, [memoizedStats.captainAnalysis, captainStatsSortConfig]);
-
-
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
     const requestPositionSort = (key) => { let direction = 'desc'; if (positionSortConfig.key === key && positionSortConfig.direction === 'desc') { direction = 'asc'; } setPositionSortConfig({ key, direction }); };
     const requestStreakSort = (key) => { let direction = 'desc'; if (streakSortConfig.key === key && streakSortConfig.direction === 'desc') { direction = 'asc'; } setStreakSortConfig({ key, direction }); };
     const requestTopScoresSort = (key) => { let direction = 'asc'; if (topScoresSortConfig.key === key && topScoresSortConfig.direction === 'asc') { direction = 'desc'; } setTopScoresSortConfig({ key, direction }); };
     const requestPlayerPerfSort = (key) => { let direction = 'desc'; if (playerPerfSortConfig.key === key && playerPerfSortConfig.direction === 'desc') { direction = 'asc'; } setPlayerPerfSortConfig({ key, direction }); };
-    
-    const requestCaptainStatsSort = (key) => {
-        let direction = 'desc';
-        if (captainStatsSortConfig.key === key && captainStatsSortConfig.direction === 'desc') {
-            direction = 'asc';
-        }
-        setCaptainStatsSortConfig({ key, direction });
-    };
-
-    const getSortIndicator = (key, type = 'main') => { 
-        const config = type === 'main' ? sortConfig : 
-                       type === 'pos' ? positionSortConfig : 
-                       type === 'streak' ? streakSortConfig : 
-                       type === 'top_scores' ? topScoresSortConfig :
-                       type === 'captain' ? captainStatsSortConfig :
-                       playerPerfSortConfig; 
-        if (config.key !== key) return <ChevronsUpDown size={14} className="ml-1 text-gray-400" />; 
-        if (config.direction === 'asc') return <ArrowUp size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; 
-        return <ArrowDown size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; 
-    };
+    const getSortIndicator = (key, type = 'main') => { const config = type === 'main' ? sortConfig : type === 'pos' ? positionSortConfig : type === 'streak' ? streakSortConfig : type === 'top_scores' ? topScoresSortConfig : playerPerfSortConfig; if (config.key !== key) return <ChevronsUpDown size={14} className="ml-1 text-gray-400" />; if (config.direction === 'asc') return <ArrowUp size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; return <ArrowDown size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; };
     
     const { sanitizedPointsEvolution, sanitizedPositionEvolution, sanitizedPlayerPerformance, sanitizedH2hChart } = useMemo(() => {
         if (!season || !season.members) return { sanitizedPointsEvolution: [], sanitizedPositionEvolution: [], sanitizedPlayerPerformance: [], sanitizedH2hChart: [] };
@@ -485,35 +366,6 @@ export default function StatsTab({ league, season, roundsData }) {
                     </table>
                 </div>
             </div>
-            
-            <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
-                <div className="p-6"><h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2"><UserCog size={20}/> Análisis de Eficacia del Capitán</h3></div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50 dark:bg-gray-800/60"><tr className="border-b dark:border-gray-700">
-                            <th className="p-3 text-left font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestCaptainStatsSort('userName')} className="flex items-center">Jugador {getSortIndicator('userName', 'captain')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestCaptainStatsSort('successRate')} className="flex items-center justify-center w-full">% Acierto {getSortIndicator('successRate', 'captain')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestCaptainStatsSort('totalPointsLost')} className="flex items-center justify-center w-full">Puntos Perdidos* {getSortIndicator('totalPointsLost', 'captain')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestCaptainStatsSort('averagePointsLost')} className="flex items-center justify-center w-full">Pérdida Media {getSortIndicator('averagePointsLost', 'captain')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestCaptainStatsSort('stdDev')} className="flex items-center justify-center w-full">Dispersión (σ) {getSortIndicator('stdDev', 'captain')}</button></th>
-                        </tr></thead>
-                        <tbody className="divide-y dark:divide-gray-700">
-                            {sortedCaptainStats.map(user => (
-                                <tr key={user.userId} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                    <td className="p-3 font-semibold text-gray-800 dark:text-gray-200 whitespace-nowrap">
-                                        <Link to={`/profile/${user.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{user.userName}</Link>
-                                    </td>
-                                    <td className="p-3 text-center font-mono font-bold text-blue-600 dark:text-blue-400">{user.successRate}%</td>
-                                    <td className="p-3 text-center font-mono text-red-600 dark:text-red-500">{user.totalPointsLost}</td>
-                                    <td className="p-3 text-center font-mono text-yellow-600 dark:text-yellow-500">{user.averagePointsLost}</td>
-                                    <td className="p-3 text-center font-mono text-gray-600 dark:text-gray-300">{user.stdDev}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-                 <p className="p-4 text-xs text-gray-500 dark:text-gray-400">*Los Puntos Perdidos se calculan como la diferencia entre la puntuación del mejor jugador de tu equipo y la de tu capitán. No se duplican en este cálculo para mostrar el error real de la elección.</p>
-            </div>
 
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Swords />Análisis de Rivalidad</h3>
@@ -533,27 +385,27 @@ export default function StatsTab({ league, season, roundsData }) {
                 </div>
                 {currentRivalry && (
                      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-                         <div className="lg:col-span-2 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
-                             <p className="text-sm text-gray-500 dark:text-gray-400">Balance de Jornadas</p>
-                             <p className="text-xl font-bold">
-                                 <span className="text-emerald-600 dark:text-emerald-400">{memoizedStats.headToHeadStats[rivalryPlayer1]?.wins[rivalryPlayer2] || 0}</span>
-                                 <span className="text-gray-500 mx-2">-</span>
-                                 <span className="text-red-600 dark:text-red-500">{memoizedStats.headToHeadStats[rivalryPlayer2]?.wins[rivalryPlayer1] || 0}</span>
-                             </p>
-                         </div>
-                         <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
-                             <p className="text-sm text-gray-500 dark:text-gray-400">Diferencia Media</p>
-                             <p className={`text-xl font-bold ${currentRivalry.totalDifference > 0 ? 'text-emerald-600' : 'text-red-600'}`}>{currentRivalry.matchupCount > 0 ? (currentRivalry.totalDifference / currentRivalry.matchupCount).toFixed(2) : 0} pts</p>
-                         </div>
-                         <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
-                             <p className="text-sm text-gray-500 dark:text-gray-400">Mayor Victoria (Jornada)</p>
-                             <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">+{currentRivalry.maxPositiveDiff.value.toFixed(2)} <span className="text-xs">(J{currentRivalry.maxPositiveDiff.round})</span></p>
-                         </div>
-                          <div className="lg:col-span-4 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
-                             <p className="text-sm text-gray-500 dark:text-gray-400">Máxima Diferencia (General)</p>
-                             <p className="text-xl font-bold text-blue-600 dark:text-blue-400">+{currentRivalry.maxGeneralDiff.value.toFixed(2)} pts <span className="text-xs">(tras J{currentRivalry.maxGeneralDiff.round})</span></p>
-                         </div>
-                     </div>
+                        <div className="lg:col-span-2 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Balance de Jornadas</p>
+                            <p className="text-xl font-bold">
+                                <span className="text-emerald-600 dark:text-emerald-400">{memoizedStats.headToHeadStats[rivalryPlayer1]?.wins[rivalryPlayer2] || 0}</span>
+                                <span className="text-gray-500 mx-2">-</span>
+                                <span className="text-red-600 dark:text-red-500">{memoizedStats.headToHeadStats[rivalryPlayer2]?.wins[rivalryPlayer1] || 0}</span>
+                            </p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Diferencia Media</p>
+                            <p className={`text-xl font-bold ${currentRivalry.totalDifference > 0 ? 'text-emerald-600' : 'text-red-600'}`}>{currentRivalry.matchupCount > 0 ? (currentRivalry.totalDifference / currentRivalry.matchupCount).toFixed(2) : 0} pts</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Mayor Victoria (Jornada)</p>
+                            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">+{currentRivalry.maxPositiveDiff.value.toFixed(2)} <span className="text-xs">(J{currentRivalry.maxPositiveDiff.round})</span></p>
+                        </div>
+                         <div className="lg:col-span-4 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Máxima Diferencia (General)</p>
+                            <p className="text-xl font-bold text-blue-600 dark:text-blue-400">+{currentRivalry.maxGeneralDiff.value.toFixed(2)} pts <span className="text-xs">(tras J{currentRivalry.maxGeneralDiff.round})</span></p>
+                        </div>
+                    </div>
                 )}
             </div>
             
