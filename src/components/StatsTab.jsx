@@ -23,7 +23,7 @@ const StatHighlightCard = ({ title, value, subValue, colorClass, icon }) => (
 const calculateStandardDeviation = (array) => {
     const n = array.length;
     if (n < 2) return 0;
-    const mean = array.reduce((a, b) => a + b) / n;
+    const mean = array.reduce((a, b) => a + b, 0) / n;
     return Math.sqrt(array.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / (n - 1));
 };
 
@@ -182,33 +182,44 @@ export default function StatsTab({ league, season, roundsData }) {
                 if (scoresForRound[uid] && typeof scoresForRound[uid] !== 'number') { stats[uid].nonScoringRounds++; }
                 if (lineupDoc) {
                     
-                    // --- INICIO DE LA LÓGICA CORREGIDA ---
-                    const lineupPlayers = Object.values(lineupDoc.players || {});
-                    const benchPlayers = Object.values(lineupDoc.bench || {});
-                    const coach = lineupDoc.coach ? [lineupDoc.coach] : [];
-                    const allTeamMembers = [...lineupPlayers, ...benchPlayers, ...coach].filter(p => p);
+                    const contributingPlayers = [];
+                    const inactiveStarterSlots = [];
 
-                    const playersWhoPlayedAndScored = allTeamMembers.filter(p => p.status === 'playing' && typeof p.points === 'number');
+                    Object.entries(lineupDoc.players || {}).forEach(([slotId, player]) => {
+                        if (player && player.status === 'playing' && typeof player.points === 'number') {
+                            contributingPlayers.push({ ...player, slotId });
+                        } else if (player) {
+                            inactiveStarterSlots.push(slotId);
+                        }
+                    });
 
-                    if (playersWhoPlayedAndScored.length > 0) {
-                        const captainSlot = lineupDoc.captainSlot;
-                        let captainPlayer = null;
-
-                        if (captainSlot) {
-                            const [slotType, ...slotRest] = captainSlot.split('-');
-                            const slotKey = slotRest.join('-');
-                            if (slotType === 'coach') {
-                                captainPlayer = lineupDoc.coach;
-                            } else if (slotType === 'players') {
-                                captainPlayer = lineupDoc.players?.[captainSlot];
-                            } else if (slotType === 'bench') {
-                                captainPlayer = lineupDoc.bench?.[slotKey];
+                    const benchOrder = ['GK', 'DF', 'MF', 'FW'];
+                    
+                    benchOrder.forEach(pos => {
+                        const benchPlayer = lineupDoc.bench?.[pos];
+                        const slotToSub = inactiveStarterSlots.find(slotId => slotId.split('-')[1] === pos);
+                        
+                        if (benchPlayer && benchPlayer.active && benchPlayer.status === 'playing' && typeof benchPlayer.points === 'number' && slotToSub) {
+                            contributingPlayers.push({ ...benchPlayer, slotId: `bench-${pos}` });
+                            const indexToRemove = inactiveStarterSlots.indexOf(slotToSub);
+                            if (indexToRemove > -1) {
+                                inactiveStarterSlots.splice(indexToRemove, 1);
                             }
                         }
+                    });
+
+                    const coach = lineupDoc.coach;
+                    if (coach && coach.status === 'playing' && typeof coach.points === 'number') {
+                        contributingPlayers.push({ ...coach, slotId: 'coach-COACH' });
+                    }
+                    
+                    if (contributingPlayers.length > 0) {
+                        const captainSlot = lineupDoc.captainSlot;
+                        const captain = contributingPlayers.find(p => p.slotId === captainSlot);
                         
-                        if (captainPlayer && captainPlayer.status === 'playing' && typeof captainPlayer.points === 'number') {
-                            const maxScore = Math.max(...playersWhoPlayedAndScored.map(p => p.points));
-                            const captainScore = captainPlayer.points;
+                        if (captain) {
+                            const maxScore = Math.max(...contributingPlayers.map(p => p.points));
+                            const captainScore = captain.points;
                             const analysis = captainAnalysisData[uid];
                             
                             analysis.totalRoundsWithCaptain++;
@@ -221,7 +232,6 @@ export default function StatsTab({ league, season, roundsData }) {
                             analysis.pointsLostHistory.push(roundPointsLost);
                         }
                     }
-                    // --- FIN DE LA LÓGICA CORREGIDA ---
 
                     const processPlayer = (player, slotId, isBench) => {
                         if (!player || !player.playerId) return;
@@ -505,7 +515,6 @@ export default function StatsTab({ league, season, roundsData }) {
                  <p className="p-4 text-xs text-gray-500 dark:text-gray-400">*Los Puntos Perdidos se calculan como la diferencia entre la puntuación del mejor jugador de tu equipo y la de tu capitán. No se duplican en este cálculo para mostrar el error real de la elección.</p>
             </div>
 
-            
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Swords />Análisis de Rivalidad</h3>
                 <div className="flex flex-wrap items-center gap-4 mb-6">
