@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, CheckCircle2, XCircle, MinusCircle, HelpCircle } from 'lucide-react';
-import { getPlayerScoreBackgroundColor } from '../utils/helpers';
+// --- 1. IMPORTAMOS LA NUEVA FUNCIÓN DE COLOR DE TEXTO ---
+import { getPlayerScoreTextColor } from '../utils/helpers';
 
 export default function PlayerSlot({ player, position, onClick, onSetCaptain, isCaptain, isEditable, onToggleActive, isInline = false, isCoach = false }) {
     const hasPlayer = player && player.name;
@@ -40,7 +41,8 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
 
     return (
         <div className={`w-14 h-14 md:w-16 md:h-16 ${!isInline ? 'absolute' : 'relative'}`} style={position} onClick={onClick}>
-            <div className={`relative w-full h-full rounded-full flex items-center justify-center text-center cursor-pointer transition-all duration-300 ease-in-out transform hover:scale-105 ${hasPlayer ? `${getPlayerScoreBackgroundColor(player.points)} border-2 ${borderColor}` : 'bg-white/30 border-2 border-dashed border-white/60'}`}>
+            {/* --- EL FONDO VUELVE A SER EL ORIGINAL 'bg-white/90' --- */}
+            <div className={`relative w-full h-full rounded-full flex items-center justify-center text-center cursor-pointer transition-all duration-300 ease-in-out transform hover:scale-105 ${hasPlayer ? `bg-white/90 border-2 ${borderColor}` : 'bg-white/30 border-2 border-dashed border-white/60'}`}>
                 {hasPlayer && onSetCaptain && (
                     <button type="button" onClick={(e) => handleActionClick(e, onSetCaptain)} title="Hacer Capitán" className={`absolute -bottom-2 -left-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${isCaptain ? 'bg-yellow-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-yellow-400' : 'cursor-default'}`}>
                         <span className="font-bold text-sm">C</span>
@@ -59,7 +61,8 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
                     <div className="flex flex-col items-center justify-center w-full px-1">
                         <p className="text-[10px] md:text-xs font-bold text-gray-800 whitespace-nowrap overflow-hidden text-ellipsis w-full">{player.name}</p>
                         <p className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">{player.teamAtTheTime}</p>
-                        <p className={`text-[10px] md:text-xs font-semibold ${isCaptain ? 'text-yellow-600' : 'text-emerald-600'}`}>{player.points || 0} pts</p>
+                        {/* --- 2. AQUÍ APLICAMOS EL COLOR DE TEXTO DINÁMICO --- */}
+                        <p className={`text-sm md:text-base font-bold ${getPlayerScoreTextColor(player.points)}`}>{player.points ?? 0} pts</p>
                     </div>
                 ) : (<Plus size={24} className="text-white/80" />)}
             </div>

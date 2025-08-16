@@ -9,15 +9,14 @@ export const formatHolderNames = (names) => {
 
 export const formatCurrency = (value) => {
     const number = Number(value) || 0;
-    return new Intl.NumberFormat('es-ES', {
-        style: 'currency',
+    return new Intl.NumberFormat('es-ES', { 
+        style: 'currency', 
         currency: 'EUR',
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(number);
 };
 
-// --- FUNCIÓN AÑADIDA Y EXPORTADA ---
 export const calculateStandardDeviation = (array) => {
     const n = array.length;
     if (n < 2) return 0;
@@ -26,37 +25,37 @@ export const calculateStandardDeviation = (array) => {
 };
 
 /**
- * Devuelve la clase de Tailwind CSS para el color de fondo
+ * Devuelve la clase de Tailwind CSS para el COLOR DE TEXTO
  * basado en la puntuación de un jugador.
  * @param {number|undefined} points La puntuación del jugador.
  * @returns {string} La clase de Tailwind CSS correspondiente.
  */
-export const getPlayerScoreBackgroundColor = (points) => {
-  // Si no es un número, devolvemos un color neutro.
+export const getPlayerScoreTextColor = (points) => {
+  // Si no es un número, devolvemos un color por defecto.
   if (typeof points !== 'number') {
-    return 'bg-white/90 dark:bg-gray-700/90';
+    return 'text-gray-800';
   }
 
-  // Asignamos colores según los rangos que especificaste.
+  // Asignamos colores de TEXTO según los rangos.
   if (points < 0) {
-    return 'bg-red-500/80 text-white'; // Rojo
+    return 'text-red-500'; // Rojo
   }
   if (points >= 0 && points <= 5) {
-    return 'bg-yellow-400/80'; // Amarillo
+    return 'text-yellow-600'; // Amarillo
   }
   if (points >= 6 && points <= 9) {
-    return 'bg-green-400/80'; // Verde
+    return 'text-green-600'; // Verde
   }
   if (points >= 10 && points <= 15) {
-    return 'bg-blue-400/80'; // Azul
+    return 'text-blue-600'; // Azul
   }
   if (points >= 16 && points <= 19) {
-    return 'bg-purple-500/80 text-white'; // Morado
+    return 'text-purple-600'; // Morado
   }
   if (points >= 20) {
-    return 'bg-fuchsia-500/80 text-white'; // Rosa Fucsia
+    return 'text-fuchsia-500'; // Rosa Fucsia
   }
 
   // Color por defecto si ninguna condición se cumple.
-  return 'bg-white/90 dark:bg-gray-700/90';
+  return 'text-gray-800';
 };
