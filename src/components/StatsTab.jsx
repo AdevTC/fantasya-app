@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { db, auth } from '../config/firebase';
 import { Link } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ScatterChart, Scatter, Label } from 'recharts';
-import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, UserCog } from 'lucide-react'; // Importamos UserCog
+import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, UserCog } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import { useTheme } from '../context/ThemeContext';
 import { collection, query, getDocs } from 'firebase/firestore';
@@ -55,7 +55,6 @@ export default function StatsTab({ league, season, roundsData }) {
     const [streakSortConfig, setStreakSortConfig] = useState({ key: 'positiveStreakCount', direction: 'desc' });
     const [topScoresSortConfig, setTopScoresSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [playerPerfSortConfig, setPlayerPerfSortConfig] = useState({ key: 'total', direction: 'desc' });
-    // --- 1. AÑADIMOS ESTADO DE ORDENACIÓN PARA LA NUEVA TABLA ---
     const [captainStatsSortConfig, setCaptainStatsSortConfig] = useState({ key: 'successRate', direction: 'desc' });
 
     const [startRound, setStartRound] = useState(1);
@@ -103,7 +102,6 @@ export default function StatsTab({ league, season, roundsData }) {
                 lastPlaceFinishes: [], nonScoringRoundsData: [], captainPointsData: [], 
                 benchPointsData: [], pointsByPositionData: {}, teamValueVsPointsData: [], 
                 streakData: [], topWorstScoresData: [], playerPerformanceByUser: {},
-                // --- 2. AÑADIMOS EL ESTADO INICIAL PARA LOS DATOS DEL CAPITÁN ---
                 captainAnalysis: []
             };
         }
@@ -123,7 +121,6 @@ export default function StatsTab({ league, season, roundsData }) {
         const cumulativeScores = {};
         Object.keys(season.members).forEach(uid => cumulativeScores[uid] = 0);
 
-        // --- 3. LÓGICA DE ANÁLISIS DEL CAPITÁN INTEGRADA AQUÍ ---
         const captainAnalysisData = {};
         Object.keys(season.members).forEach(uid => {
             captainAnalysisData[uid] = { successfulPicks: 0, totalRoundsWithCaptain: 0, totalPointsLost: 0, pointsLostHistory: [] };
@@ -139,8 +136,6 @@ export default function StatsTab({ league, season, roundsData }) {
                     stats[uid].scores.push({score: scoresForRound[uid], roundNumber});
                 }
             });
-
-            const prevCumulativeScores = { ...cumulativeScores };
 
             participatingUids.forEach(uid => {
                 cumulativeScores[uid] += scoresForRound[uid];
@@ -186,27 +181,37 @@ export default function StatsTab({ league, season, roundsData }) {
                 const lineupDoc = allLineups[`${roundNumber}-${uid}`];
                 if (scoresForRound[uid] && typeof scoresForRound[uid] !== 'number') { stats[uid].nonScoringRounds++; }
                 if (lineupDoc) {
+
+                    // --- INICIO DE LA LÓGICA CORREGIDA ---
                     const lineupPlayers = Object.values(lineupDoc.players || {});
-                    const coach = lineupDoc.coach;
-                    const allTeamPlayers = coach ? [...lineupPlayers, coach] : lineupPlayers;
+                    const benchPlayers = Object.values(lineupDoc.bench || {});
+                    const coach = lineupDoc.coach ? [lineupDoc.coach] : [];
+                    const allTeamPlayers = [...lineupPlayers, ...benchPlayers, ...coach];
                     
-                    const playersWithPoints = allTeamPlayers.filter(p => typeof p.points === 'number' && p.status === 'playing');
-                    
+                    const playersWithPoints = allTeamPlayers.filter(p => p && typeof p.points === 'number');
+
                     if (playersWithPoints.length > 0) {
                         const captainSlot = lineupDoc.captainSlot;
-                        const captain = allTeamPlayers.find((p, i) => {
-                            // Construye un ID de slot potencial para comparar
-                            const playerSlotId = `players-FW-${i}`; // Esto es una simplificación, necesitarás tu lógica real de ID de slot
-                            return playerSlotId === captainSlot;
-                        });
+                        let captainPlayer = null;
 
+                        if (captainSlot) {
+                            const [slotType, ...slotRest] = captainSlot.split('-');
+                            const slotKey = slotRest.join('-');
+                            if (slotType === 'coach') {
+                                captainPlayer = lineupDoc.coach;
+                            } else if (slotType === 'players') {
+                                captainPlayer = lineupDoc.players?.[captainSlot];
+                            } else if (slotType === 'bench') {
+                                captainPlayer = lineupDoc.bench?.[slotKey];
+                            }
+                        }
+                        
                         const maxScore = Math.max(...playersWithPoints.map(p => p.points));
 
-                        if (captainSlot && lineupDoc.players[captainSlot]) {
-                            const captainPlayer = lineupDoc.players[captainSlot];
+                        if (captainPlayer && typeof captainPlayer.points === 'number') {
                             const captainScore = captainPlayer.points;
-
                             const analysis = captainAnalysisData[uid];
+                            
                             analysis.totalRoundsWithCaptain++;
                             if (captainScore === maxScore) {
                                 analysis.successfulPicks++;
@@ -217,7 +222,8 @@ export default function StatsTab({ league, season, roundsData }) {
                             analysis.pointsLostHistory.push(roundPointsLost);
                         }
                     }
-                    
+                    // --- FIN DE LA LÓGICA CORREGIDA ---
+
                     const processPlayer = (player, slotId, isBench) => {
                         if (!player || !player.playerId) return;
                         const updatePerformance = (perfObject) => { perfObject.fielded = (perfObject.fielded || 0) + 1; const points = player.points || 0; const isCaptain = lineupDoc.captainSlot === slotId; if (isBench) { if (player.active && player.status === 'playing') { perfObject.bench = (perfObject.bench || 0) + points; perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } else if (points > 0) { perfObject.wasted = (perfObject.wasted || 0) + points; } } else { if (player.status === 'playing') { perfObject.total = (perfObject.total || 0) + points; if(isCaptain) { perfObject.captain = (perfObject.captain || 0) + points; perfObject.total += points; } } } };
@@ -287,7 +293,6 @@ export default function StatsTab({ league, season, roundsData }) {
         const finalStreakData = finalDetailedStats.map(p => ({ name: p.name, username: p.username, positiveStreakCount: p.positiveStreakCount, neutralStreakCount: p.neutralStreakCount, negativeStreakCount: p.negativeStreakCount, biggestJump: p.biggestJump, biggestDrop: p.biggestDrop }));
         const finalTopWorstScoresData = finalDetailedStats.map(p => { const top5 = [...p.scores.map(s => s.score)].sort((a, b) => b - a).slice(0, 5); const worst5 = [...p.scores.map(s => s.score)].sort((a, b) => a - b).slice(0, 5); return { uid: p.uid, name: p.name, username: p.username, top5Scores: top5, worst5Scores: worst5, avgTop5: top5.length > 0 ? (top5.reduce((a, b) => a + b, 0) / top5.length).toFixed(1) : 'N/A', avgWorst5: worst5.length > 0 ? (worst5.reduce((a, b) => a + b, 0) / worst5.length).toFixed(1) : 'N/A' }; });
         
-        // --- 4. PROCESAMOS LOS DATOS FINALES DEL CAPITÁN ---
         const finalCaptainAnalysis = Object.entries(captainAnalysisData).map(([uid, data]) => {
             const { totalRoundsWithCaptain, successfulPicks, totalPointsLost, pointsLostHistory } = data;
             const successRate = totalRoundsWithCaptain > 0 ? (successfulPicks / totalRoundsWithCaptain) * 100 : 0;
@@ -311,7 +316,6 @@ export default function StatsTab({ league, season, roundsData }) {
             lastPlaceFinishes: lastPlacesData, nonScoringRoundsData: nonScoringData, captainPointsData: finalCaptainPoints, 
             benchPointsData: finalWastedBenchPoints, pointsByPositionData: finalPointsByPosData, teamValueVsPointsData: finalTeamValueVsPoints, 
             streakData: finalStreakData, topWorstScoresData: finalTopWorstScoresData, playerPerformanceByUser,
-            // --- 5. DEVOLVEMOS LOS DATOS PROCESADOS ---
             captainAnalysis: finalCaptainAnalysis
         };
     }, [roundsData, season, memberCount, allLineups, loadingLineups]);
@@ -372,13 +376,15 @@ export default function StatsTab({ league, season, roundsData }) {
         return data;
     }, [memoizedStats.playerPerformanceByUser, playerPerformanceFilter, playerPerfSortConfig]);
 
-    // --- 6. AÑADIMOS EL CÁLCULO DE ORDENACIÓN PARA LA NUEVA TABLA ---
     const sortedCaptainStats = useMemo(() => {
         let sortableItems = [...memoizedStats.captainAnalysis];
         if (captainStatsSortConfig.key) {
             sortableItems.sort((a, b) => {
                 const valA = a[captainStatsSortConfig.key];
                 const valB = b[captainStatsSortConfig.key];
+                 if (typeof valA === 'string') {
+                    return captainStatsSortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                }
                 if (valA < valB) return captainStatsSortConfig.direction === 'asc' ? -1 : 1;
                 if (valA > valB) return captainStatsSortConfig.direction === 'asc' ? 1 : -1;
                 return 0;
@@ -394,7 +400,6 @@ export default function StatsTab({ league, season, roundsData }) {
     const requestTopScoresSort = (key) => { let direction = 'asc'; if (topScoresSortConfig.key === key && topScoresSortConfig.direction === 'asc') { direction = 'desc'; } setTopScoresSortConfig({ key, direction }); };
     const requestPlayerPerfSort = (key) => { let direction = 'desc'; if (playerPerfSortConfig.key === key && playerPerfSortConfig.direction === 'desc') { direction = 'asc'; } setPlayerPerfSortConfig({ key, direction }); };
     
-    // --- 7. AÑADIMOS LA FUNCIÓN DE ORDENACIÓN ---
     const requestCaptainStatsSort = (key) => {
         let direction = 'desc';
         if (captainStatsSortConfig.key === key && captainStatsSortConfig.direction === 'desc') {
@@ -408,7 +413,6 @@ export default function StatsTab({ league, season, roundsData }) {
                        type === 'pos' ? positionSortConfig : 
                        type === 'streak' ? streakSortConfig : 
                        type === 'top_scores' ? topScoresSortConfig :
-                       // --- 8. AÑADIMOS EL NUEVO TIPO AL INDICADOR ---
                        type === 'captain' ? captainStatsSortConfig :
                        playerPerfSortConfig; 
         if (config.key !== key) return <ChevronsUpDown size={14} className="ml-1 text-gray-400" />; 
@@ -473,7 +477,6 @@ export default function StatsTab({ league, season, roundsData }) {
                 </div>
             </div>
             
-            {/* --- 9. RENDERIZAMOS LA NUEVA TABLA DE ANÁLISIS DE CAPITANÍA --- */}
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
                 <div className="p-6"><h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2"><UserCog size={20}/> Análisis de Eficacia del Capitán</h3></div>
                 <div className="overflow-x-auto">
@@ -502,7 +505,6 @@ export default function StatsTab({ league, season, roundsData }) {
                 </div>
                  <p className="p-4 text-xs text-gray-500 dark:text-gray-400">*Los Puntos Perdidos se calculan como la diferencia entre la puntuación del mejor jugador de tu equipo y la de tu capitán. No se duplican en este cálculo para mostrar el error real de la elección.</p>
             </div>
-
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Swords />Análisis de Rivalidad</h3>
                 <div className="flex flex-wrap items-center gap-4 mb-6">
