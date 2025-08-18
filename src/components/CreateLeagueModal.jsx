@@ -53,9 +53,8 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
               username: username,
               teamName: teamName.trim(),
               role: 'admin',
-              budget: 200,
-              team: [],
-              totalPoints: 0
+              totalPoints: 0,
+              finances: { budget: 200, teamValue: 0 } // Objeto de finanzas corregido
             }
         },
         inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase()
