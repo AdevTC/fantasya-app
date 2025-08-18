@@ -11,7 +11,7 @@ import RulesModal from '../components/RulesModal';
 import RequestJoinModal from '../components/RequestJoinModal';
 import LeagueSummaryModal from '../components/LeagueSummaryModal';
 import AdBanner from '../components/AdBanner'; 
-import { Plus, Users, ShieldCheck, Info, BookOpen, Copy, CheckCircle, Flag, Send, Eye } from 'lucide-react';
+import { Plus, Users, ShieldCheck, Info, BookOpen, Copy, CheckCircle, Flag, Send, Eye, Trophy } from 'lucide-react'; // <-- AÑADIMOS TROPHY
 import toast from 'react-hot-toast';
 
 const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, isMember }) => {
@@ -79,6 +79,19 @@ const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, isMembe
         </div>
     );
 };
+
+// Componente para el estado vacío
+const EmptyState = ({ title, message, buttonText, onButtonClick, icon }) => (
+    <div className="bento-card text-center p-8 sm:p-12 flex flex-col items-center justify-center">
+        <div className="text-emerald-500 mb-4">{icon}</div>
+        <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">{title}</h3>
+        <p className="text-gray-500 dark:text-gray-400 mt-2 mb-6 max-w-sm">{message}</p>
+        <button onClick={onButtonClick} className="btn-primary flex items-center justify-center gap-2">
+            <Plus size={20} />
+            {buttonText}
+        </button>
+    </div>
+);
 
 export default function DashboardPage() {
     const { profile } = useAuth();
@@ -219,10 +232,14 @@ export default function DashboardPage() {
                                     ))}
                                 </div>
                             ) : (
-                                <div className="bento-card text-center p-12">
-                                    <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No estás en ninguna temporada</h3>
-                                    <p className="text-gray-500 dark:text-gray-400 mt-2">Crea tu propia liga o únete a una con su código de invitación.</p>
-                                </div>
+                                // --- ESTE ES EL NUEVO ESTADO VACÍO ---
+                                <EmptyState
+                                    title="¡Bienvenido a Fantasya!"
+                                    message="Parece que todavía no estás en ninguna liga. ¡Crea la tuya e invita a tus amigos o únete a una existente con un código!"
+                                    buttonText="Crear mi primera Liga"
+                                    onButtonClick={() => setIsCreateModalOpen(true)}
+                                    icon={<Trophy size={48} />}
+                                />
                             )
                         )}
 
