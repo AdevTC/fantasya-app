@@ -21,7 +21,7 @@ export default function MyTeamTab({ league, season, roundsData }) {
     const [finances, setFinances] = useState({});
     const [activeSubTab, setActiveSubTab] = useState('myTeam');
     const [viewedUserId, setViewedUserId] = useState(userId);
-    const [selectedRound, setSelectedRound] = useState(roundsData.length > 0 ? roundsData[roundsData.length - 1].roundNumber : 1);
+    const [selectedRound, setSelectedRound] = useState(season?.currentRound || 1);
     const [lineup, setLineup] = useState({ formation: '4-4-2', players: {}, coach: {}, bench: {}, captainSlot: null });
     const [isSlotModalOpen, setIsSlotModalOpen] = useState(false);
     const [editingSlot, setEditingSlot] = useState(null);
@@ -173,7 +173,7 @@ export default function MyTeamTab({ league, season, roundsData }) {
                         {isScoreValidated && lineupPoints.officialScore !== undefined ? ( <div className="flex items-center gap-3"><CheckCircle size={24} className="text-emerald-600"/><div><p className="font-semibold text-emerald-800">Puntos validados</p><p className="text-2xl font-bold text-emerald-700">{lineupPoints.totalScore} pts</p></div></div> ) : ( <div className="space-y-2 text-sm"> <div className="flex items-center gap-2 font-semibold text-red-800"><AlertTriangle size={20}/> <p>La puntuación no coincide</p></div> <div className="flex justify-between pl-1"><span>Puntos Titulares (Cap. x2):</span><span className="font-bold">{lineupPoints.startersScore}</span></div> <div className="flex justify-between pl-1"><span>Puntos Banquillo (Activos):</span><span className="font-bold">{lineupPoints.benchScore}</span></div> <div className="flex justify-between pl-1"><span>Puntos Entrenador:</span><span className="font-bold">{lineupPoints.coachScore}</span></div> <div className="flex justify-between font-bold border-t pt-2 mt-2"><span>TOTAL ALINEACIÓN:</span><span>{lineupPoints.totalScore}</span></div> <div className="flex justify-between font-bold text-red-700"><span>TOTAL OFICIAL (Admin):</span><span>{lineupPoints.officialScore ?? 'N/A'}</span></div> </div> )}
                     </div>
                     
-                    <LineupDisplay lineupData={lineup} setLineupData={setLineup} roundsData={roundsData} selectedRound={selectedRound} onRoundChange={setSelectedRound} onSlotClick={handleSlotClick} isEditable={true} onSetCaptain={handleSetCaptain} captainSlot={lineup.captainSlot} onToggleActive={handleToggleActive} />
+                    <LineupDisplay lineupData={lineup} setLineupData={setLineup} roundsData={roundsData} selectedRound={selectedRound} onRoundChange={setSelectedRound} onSlotClick={handleSlotClick} isEditable={true} onSetCaptain={handleSetCaptain} captainSlot={lineup.captainSlot} onToggleActive={handleToggleActive} totalRounds={season?.totalRounds || 38} />
                 </div>
             )}
 

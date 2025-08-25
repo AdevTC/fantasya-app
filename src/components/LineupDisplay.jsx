@@ -16,7 +16,8 @@ export default function LineupDisplay({
     isEditable,
     onSetCaptain,
     captainSlot,
-    onToggleActive
+    onToggleActive,
+    totalRounds // <-- AÑADE ESTA LÍNEA
 }) {
     const handleFormationChange = (newFormation) => {
         if (!isEditable) return;
@@ -76,7 +77,16 @@ export default function LineupDisplay({
         <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-2 sm:p-6">
             <div className="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-6 gap-4">
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2"><label className="text-sm font-medium text-gray-700 dark:text-gray-300">Jornada:</label><select value={selectedRound} onChange={(e) => onRoundChange(Number(e.target.value))} className="input !w-auto !py-1" disabled={!roundsData || roundsData.length === 0}>{roundsData.length > 0 ? roundsData.map(r => <option key={r.id} value={r.roundNumber}>{r.roundNumber}</option>) : <option>{selectedRound}</option>}</select></div>
+                    <div className="flex items-center gap-2"><label className="text-sm font-medium text-gray-700 dark:text-gray-300">Jornada:</label><select 
+    value={selectedRound} 
+    onChange={(e) => onRoundChange(Number(e.target.value))} 
+    className="input !w-auto !py-1" 
+    disabled={!totalRounds}
+>
+    {Array.from({ length: totalRounds }, (_, i) => i + 1).map(r => 
+        <option key={r} value={r}>{r}</option>
+    )}
+</select></div>
                     <div className="flex items-center gap-2"><label className="text-sm font-medium text-gray-700 dark:text-gray-300">Formación:</label><select value={lineupData?.formation || '4-4-2'} onChange={(e) => handleFormationChange(e.target.value)} className="input !w-auto !py-1" disabled={!isEditable}>{formations.map(f => <option key={f} value={f}>{f}</option>)}</select></div>
                 </div>
             </div>
