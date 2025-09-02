@@ -206,7 +206,19 @@ export default function MyTeamTab({ league, season, roundsData }) {
                                 <div className={`p-4 rounded-lg border ${isScoreValidated ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                     {(isScoreValidated && lineupPoints.officialScore !== undefined) ? (<div className="flex items-center gap-3"><CheckCircle size={24} className="text-emerald-600"/><div><p className="font-semibold text-emerald-800">Puntos validados de {season.members[viewedUserId]?.teamName}</p><p className="text-2xl font-bold text-emerald-700">{lineupPoints.totalScore} pts</p></div></div>) : (<div className="space-y-2 text-sm"><div className="flex items-center gap-2 font-semibold text-red-800"><AlertTriangle size={20}/> <p>La puntuación de {season.members[viewedUserId]?.teamName} no coincide</p></div><div className="flex justify-between font-bold border-t pt-2 mt-2"><span>TOTAL ALINEACIÓN:</span><span>{lineupPoints.totalScore}</span></div><div className="flex justify-between font-bold text-red-700"><span>TOTAL OFICIAL (Admin):</span><span>{lineupPoints.officialScore ?? 'N/A'}</span></div></div>)}
                                 </div>
-                                <LineupDisplay lineupData={lineup} setLineupData={setLineup} roundsData={roundsData} selectedRound={selectedRound} onRoundChange={setSelectedRound} onSlotClick={handleSlotClick} isEditable={isEditableForLineup} onSetCaptain={handleSetCaptain} captainSlot={lineup.captainSlot} onToggleActive={handleToggleActive} />
+                                <LineupDisplay 
+                                    lineupData={lineup} 
+                                    setLineupData={setLineup} 
+                                    roundsData={roundsData} 
+                                    selectedRound={selectedRound} 
+                                    onRoundChange={setSelectedRound} 
+                                    onSlotClick={handleSlotClick} 
+                                    isEditable={isEditableForLineup} 
+                                    onSetCaptain={handleSetCaptain} 
+                                    captainSlot={lineup.captainSlot} 
+                                    onToggleActive={handleToggleActive} 
+                                    totalRounds={season?.totalRounds || 38} // <-- AÑADE ESTA LÍNEA
+                                />
                             </div>
                          }
                     </div>
