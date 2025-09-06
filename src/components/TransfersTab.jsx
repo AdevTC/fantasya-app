@@ -47,6 +47,15 @@ export default function TransfersTab({ league, season, userRole }) {
     const [itemsPerPage, setItemsPerPage] = useState(10);
     const [activeSubTab, setActiveSubTab] = useState('history');
 
+    // Filter states
+    const [filterUser1, setFilterUser1] = useState(null); // Stores username
+    const [filterUser2, setFilterUser2] = useState(null); // Stores username
+    const [filterType, setFilterType] = useState(null); // 'compra' or 'venta'
+    const [filterPlayer, setFilterPlayer] = useState('');
+    const [filterMinCost, setFilterMinCost] = useState('');
+    const [filterMaxCost, setFilterMaxCost] = useState('');
+    const [filterTransferMethod, setFilterTransferMethod] = useState(null); // 'Clausulazo', 'Acuerdo', 'Puja'
+
     useEffect(() => {
         if (!league || !season) return;
 
@@ -76,12 +85,89 @@ export default function TransfersTab({ league, season, userRole }) {
         } catch (error) { toast.error('No se pudo eliminar el fichaje.', { id: loadingToast }); }
     };
 
+    const uniqueTeamNames = useMemo(() => {
+        const names = new Set();
+        names.add('Mercado'); // Always include Mercado
+        allTransfers.forEach(transfer => {
+            if (transfer.buyerName) names.add(transfer.buyerName);
+            if (transfer.sellerName) names.add(transfer.sellerName);
+        });
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+    }, [allTransfers]);
+
+    const filteredTransfers = useMemo(() => {
+        return allTransfers.filter(transfer => {
+            // Normalize names for comparison
+            const normalizedBuyerName = transfer.buyerName.toLowerCase();
+            const normalizedSellerName = transfer.sellerName.toLowerCase();
+            const normalizedFilterUser1 = filterUser1 ? filterUser1.toLowerCase() : null;
+            const normalizedFilterUser2 = filterUser2 ? filterUser2.toLowerCase() : null;
+
+            let passesUserFilter = true;
+
+            if (normalizedFilterUser1 && normalizedFilterUser2) {
+                // Filter for movements between two specific users
+                passesUserFilter = (normalizedBuyerName === normalizedFilterUser1 && normalizedSellerName === normalizedFilterUser2) ||
+                                   (normalizedBuyerName === normalizedFilterUser2 && normalizedSellerName === normalizedFilterUser1);
+            } else if (normalizedFilterUser1) {
+                // Filter for movements involving a single user (as buyer or seller)
+                passesUserFilter = (normalizedBuyerName === normalizedFilterUser1 || normalizedSellerName === normalizedFilterUser1);
+
+                // Apply type filter in conjunction with user1 filter
+                if (filterType) {
+                    if (filterType === 'compra' && normalizedBuyerName !== normalizedFilterUser1) {
+                        passesUserFilter = false;
+                    }
+                    if (filterType === 'venta' && normalizedSellerName !== normalizedFilterUser1) {
+                        passesUserFilter = false;
+                    }
+                }
+            } else if (filterType) {
+                // Apply type filter globally if no user is selected
+                if (filterType === 'compra' && transfer.type.toLowerCase() !== 'compra') {
+                    passesUserFilter = false;
+                }
+                if (filterType === 'venta' && transfer.type.toLowerCase() !== 'venta') {
+                    passesUserFilter = false;
+                }
+            }
+
+            if (!passesUserFilter) {
+                return false;
+            }
+
+            // Filter by transfer method (Clausulazo, Acuerdo, Puja)
+            if (filterTransferMethod) {
+                if (transfer.type.toLowerCase() !== filterTransferMethod.toLowerCase()) {
+                    return false;
+                }
+            }
+
+            // Filter by player name
+            if (filterPlayer) {
+                if (!transfer.playerName.toLowerCase().includes(filterPlayer.toLowerCase())) {
+                    return false;
+                }
+            }
+
+            // Filter by cost range
+            if (filterMinCost !== '' && transfer.price < Number(filterMinCost)) {
+                return false;
+            }
+            if (filterMaxCost !== '' && transfer.price > Number(filterMaxCost)) {
+                return false;
+            }
+
+            return true;
+        });
+    }, [allTransfers, filterUser1, filterUser2, filterType, filterTransferMethod, filterPlayer, filterMinCost, filterMaxCost]);
+
     const { currentTransfers, totalPages } = useMemo(() => {
         const indexOfLastItem = currentPage * itemsPerPage;
         const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-        const currentItems = allTransfers.slice(indexOfFirstItem, indexOfLastItem);
-        return { currentTransfers: currentItems, totalPages: Math.ceil(allTransfers.length / itemsPerPage) };
-    }, [allTransfers, currentPage, itemsPerPage]);
+        const currentItems = filteredTransfers.slice(indexOfFirstItem, indexOfLastItem);
+        return { currentTransfers: currentItems, totalPages: Math.ceil(filteredTransfers.length / itemsPerPage) };
+    }, [filteredTransfers, currentPage, itemsPerPage]);
 
     if (loading) return <LoadingSpinner text="Cargando datos de fichajes..." />;
 
@@ -110,7 +196,7 @@ export default function TransfersTab({ league, season, userRole }) {
                     <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
                         <div className="flex items-baseline gap-2">
                             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Historial de Movimientos</h3>
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400">{allTransfers.length}</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">{filteredTransfers.length}</span>
                         </div>
                         {userRole === 'admin' && (
                             <button onClick={handleOpenModalForCreate} className="btn-primary flex items-center gap-2">
@@ -118,8 +204,102 @@ export default function TransfersTab({ league, season, userRole }) {
                             </button>
                         )}
                     </div>
-                    
-                    {allTransfers.length > 0 && (
+
+                    {/* Filter Controls */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 mb-6 p-4 bg-gray-100 dark:bg-gray-800/70 rounded-lg">
+                        <div>
+                            <label htmlFor="userFilter1" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario 1:</label>
+                            <select
+                                id="userFilter1"
+                                value={filterUser1 || ''}
+                                onChange={(e) => setFilterUser1(e.target.value || null)}
+                                className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            >
+                                <option value="">Todos</option>
+                                {uniqueTeamNames.map(name => (
+                                    <option key={name} value={name}>{name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="userFilter2" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario 2:</label>
+                            <select
+                                id="userFilter2"
+                                value={filterUser2 || ''}
+                                onChange={(e) => setFilterUser2(e.target.value || null)}
+                                className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            >
+                                <option value="">Todos</option>
+                                {uniqueTeamNames.map(name => (
+                                    <option key={name} value={name}>{name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="typeFilter" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo:</label>
+                            <select
+                                id="typeFilter"
+                                value={filterType || ''}
+                                onChange={(e) => setFilterType(e.target.value || null)}
+                                className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            >
+                                <option value="">Todos</option>
+                                <option value="compra">Compra</option>
+                                <option value="venta">Venta</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="transferMethodFilter" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Método:</label>
+                            <select
+                                id="transferMethodFilter"
+                                value={filterTransferMethod || ''}
+                                onChange={(e) => setFilterTransferMethod(e.target.value || null)}
+                                className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            >
+                                <option value="">Todos</option>
+                                <option value="clausulazo">Clausulazo</option>
+                                <option value="acuerdo">Acuerdo</option>
+                                <option value="puja">Puja</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="playerFilter" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Jugador:</label>
+                            <input
+                                id="playerFilter"
+                                type="text"
+                                value={filterPlayer}
+                                onChange={(e) => setFilterPlayer(e.target.value)}
+                                placeholder="Nombre del jugador"
+                                className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                        </div>
+                        <div className="flex items-end gap-2 col-span-full lg:col-span-2 xl:col-span-1"> {/* Adjusted column span */}
+                            <div className="flex-1">
+                                <label htmlFor="minCost" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Coste Mín:</label>
+                                <input
+                                    id="minCost"
+                                    type="number"
+                                    value={filterMinCost}
+                                    onChange={(e) => setFilterMinCost(e.target.value)}
+                                    placeholder="Min"
+                                    className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                            <div className="flex-1">
+                                <label htmlFor="maxCost" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Coste Máx:</label>
+                                <input
+                                    id="maxCost"
+                                    type="number"
+                                    value={filterMaxCost}
+                                    onChange={(e) => setFilterMaxCost(e.target.value)}
+                                    placeholder="Max"
+                                    className="input w-full dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {filteredTransfers.length > 0 && (
                         <div className="flex flex-wrap justify-between items-center mb-4 gap-4 text-sm text-gray-600 dark:text-gray-400">
                             <div className="flex items-center gap-2">
                                 <span>Mostrar</span>

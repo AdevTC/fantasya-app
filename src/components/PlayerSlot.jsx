@@ -1,5 +1,6 @@
 import React from 'react';
 import { Plus, CheckCircle2, XCircle, MinusCircle, HelpCircle } from 'lucide-react';
+import { getPlayerScoreTextColor } from '../utils/helpers';
 
 export default function PlayerSlot({ player, position, onClick, onSetCaptain, isCaptain, isEditable, onToggleActive, isInline = false, isCoach = false }) {
     const hasPlayer = player && player.name;
@@ -49,16 +50,17 @@ export default function PlayerSlot({ player, position, onClick, onSetCaptain, is
                 {statusIcon}
                 
                 {hasPlayer && typeof onToggleActive === 'function' && !isCoach && (
-                     <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
-                        <span className="font-bold text-sm">T</span>
-                    </button>
+                        <button type="button" onClick={(e) => handleActionClick(e, onToggleActive)} title={player.active ? "Puntuación Activada" : "Puntuación Desactivada"} className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${player.active ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-300 text-gray-600'} ${isEditable ? 'hover:bg-emerald-400' : 'cursor-default'}`}>
+                            <span className="font-bold text-sm">T</span>
+                        </button>
                 )}
 
                 {hasPlayer ? (
                     <div className="flex flex-col items-center justify-center w-full px-1">
                         <p className="text-[10px] md:text-xs font-bold text-gray-800 whitespace-nowrap overflow-hidden text-ellipsis w-full">{player.name}</p>
                         <p className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">{player.teamAtTheTime}</p>
-                        <p className={`text-[10px] md:text-xs font-semibold ${isCaptain ? 'text-yellow-600' : 'text-emerald-600'}`}>{player.points || 0} pts</p>
+                        {/* --- CAMBIO REALIZADO AQUÍ: SE ELIMINA " pts" --- */}
+                        <p className={`text-sm md:text-base font-bold ${getPlayerScoreTextColor(player.points)}`}>{player.points ?? 0}</p>
                     </div>
                 ) : (<Plus size={24} className="text-white/80" />)}
             </div>
