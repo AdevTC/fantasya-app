@@ -297,7 +297,7 @@ export default function LeaguePage() {
             case 'mi-equipo':     return <MyTeamTab {...props} />;
             case 'jornadas':      return <RoundsTab {...props} />;
             case 'fichajes':      return <TransfersTab {...props} />;
-            case 'estadisticas':  return <StatsTab {...props} />;
+            case 'estadisticas':  return <StatsTab {...props} seasons={seasons} />; // <-- Pasa 'seasons' explícitamente si no está en props
             case 'salon-de-la-fama': return <HallOfFameTab {...props} />;
             case 'retos':         return <ChallengesTab {...props} />;
             case 'admin':         return userRole === 'admin' ? <AdminTab {...props} /> : null;

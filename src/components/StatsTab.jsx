@@ -2,10 +2,12 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { db, auth } from '../config/firebase';
 import { Link } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ScatterChart, Scatter, Label } from 'recharts';
-import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords } from 'lucide-react';
+// FIX 1: Añadido 'History' a la importación
+import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, History } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import { useTheme } from '../context/ThemeContext';
 import { collection, query, getDocs } from 'firebase/firestore';
+import HistoricalStatsTab from './HistoricalStatsTab'; // <-- Importa el nuevo componente
 
 const StatHighlightCard = ({ title, value, subValue, colorClass, icon }) => (
     <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6 h-full flex flex-col justify-between">
@@ -43,7 +45,8 @@ const getNestedValue = (obj, path) => {
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F', '#FFBB28', '#FF8042', '#0088FE', '#A4DE6C', '#DE6C8A'];
 const PODIUM_COLORS = { Oro: '#FFD700', Plata: '#C0C0C0', Bronce: '#CD7F32' };
 
-export default function StatsTab({ league, season, roundsData }) {
+// FIX 2: Añadido 'seasons' a las props
+export default function StatsTab({ league, season, seasons, roundsData }) {
     const { theme } = useTheme();
     const tickColor = theme === 'dark' ? '#9ca3af' : '#6b7280';
     const gridColor = theme === 'dark' ? '#374151' : '#e5e7eb';
@@ -67,6 +70,7 @@ export default function StatsTab({ league, season, roundsData }) {
     const [loadingLineups, setLoadingLineups] = useState(true);
     const [pointsByPositionFilter, setPointsByPositionFilter] = useState('general');
     const [playerPerformanceFilter, setPlayerPerformanceFilter] = useState('general');
+    const [showHistorical, setShowHistorical] = useState(false); // <-- Nuevo estado para mostrar/ocultar
 
 
     useEffect(() => {
@@ -318,7 +322,7 @@ export default function StatsTab({ league, season, roundsData }) {
         const filteredRounds = roundsData.slice(startRound - 1, endRound);
         filteredRounds.forEach(round => { const scoresForRound = round.scores || {}; let roundTotal = 0; let roundParticipants = 0; Object.keys(season.members).forEach(uid => { const score = scoresForRound[uid]; if (typeof score === 'number') { cumulativeScores[uid] += score; if (h2hCumulative[uid] !== undefined) h2hCumulative[uid] += score; roundTotal += score; roundParticipants++; } }); const rankedPlayers = Object.keys(cumulativeScores).map(uid => ({ uid, points: cumulativeScores[uid] })).sort((a, b) => b.points - a.points); const roundRanks = {}; rankedPlayers.forEach((player, index) => { let rank = index + 1; if (index > 0 && player.points === rankedPlayers[index - 1].points) { rank = roundRanks[rankedPlayers[index - 1].uid]; } roundRanks[player.uid] = rank; }); const pointsDataPoint = { name: `J${round.roundNumber}` }; const positionDataPoint = { name: `J${round.roundNumber}` }; Object.keys(season.members).forEach(uid => { pointsDataPoint[season.members[uid].teamName] = cumulativeScores[uid]; positionDataPoint[season.members[uid].teamName] = roundRanks[uid]; }); pointsEvolution.push(pointsDataPoint); positionEvolution.push(positionDataPoint); const selectedPlayerScore = scoresForRound[selectedPlayer]; playerPerformance.push({ name: `J${round.roundNumber}`, "Puntos del Jugador": typeof selectedPlayerScore === 'number' ? selectedPlayerScore : null, "Media de la Liga": roundParticipants > 0 ? parseFloat((roundTotal / roundParticipants).toFixed(1)) : null, }); if (player1 && player2 && season.members[player1] && season.members[player2]) { h2hEvolution.push({ name: `J${round.roundNumber}`, [season.members[player1].teamName]: h2hCumulative[player1], [season.members[player2].teamName]: h2hCumulative[player2], }); } });
         return { sanitizedPointsEvolution: pointsEvolution, sanitizedPositionEvolution: positionEvolution, sanitizedPlayerPerformance: playerPerformance, sanitizedH2hChart: h2hEvolution };
-    }, [roundsData, season.members, userId, selectedPlayer, player1, player2, startRound, endRound]);
+    }, [roundsData, season.members, selectedPlayer, player1, player2, startRound, endRound]);
     
     const memberColors = useMemo(() => { if (!season || !season.members) return {}; const assignedColors = {}; Object.keys(season.members).forEach((uid, index) => { assignedColors[season.members[uid].teamName] = COLORS[index % COLORS.length]; }); return assignedColors; }, [season.members]);
 
@@ -330,6 +334,16 @@ export default function StatsTab({ league, season, roundsData }) {
 
     return (
         <div className="space-y-6">
+           {showHistorical ? (
+               <>
+                   <button onClick={() => setShowHistorical(false)} className="btn-secondary mb-4 flex items-center gap-2">
+                     ← Volver a Estadísticas Actuales
+                  </button>
+                   {/* Esta línea es correcta ahora que 'seasons' está en las props */}
+                   <HistoricalStatsTab league={league} seasons={seasons} />
+               </>
+           ) : (
+            <>
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
                  <StatHighlightCard title="Récord de Puntos" value={`${memoizedStats.leagueRecords.bestScore?.value || 0} pts`} subValue={`por ${formatHolderNames(memoizedStats.leagueRecords.bestScore?.holders || [])}`} colorClass="text-energetic-orange" icon={<Zap/>}/>
                  <StatHighlightCard title="Más Victorias de Jornada" value={`${memoizedStats.leagueRecords.mostWins?.value || 0}`} subValue={`por ${formatHolderNames(memoizedStats.leagueRecords.mostWins?.holders || [])}`} colorClass="text-yellow-500" icon={<Award/>}/>
@@ -338,7 +352,13 @@ export default function StatsTab({ league, season, roundsData }) {
             </div>
 
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
-                <div className="p-6"><h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Estadísticas Detalladas por Jugador</h3></div>
+                <div className="flex justify-between items-center p-6">
+                    <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Estadísticas Detalladas por Jugador</h3>
+                    {/* Esta línea es correcta ahora que 'History' está importado */}
+                    <button onClick={() => setShowHistorical(true)} className="btn-primary flex items-center gap-2 text-sm">
+                        <History size={16} /> Ver Historial Completo
+                    </button>
+                </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800/60"><tr className="border-b dark:border-gray-700">
@@ -608,6 +628,8 @@ export default function StatsTab({ league, season, roundsData }) {
                     </div>
                 )}
             </div>
+            </>         
+           )}
         </div>
     );
 }
