@@ -227,7 +227,60 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
             stats[uid1].matchupRecord.score = (stats[uid1].matchupRecord.wins * 3) + stats[uid1].matchupRecord.draws;
         });
         
-        const finalDetailedStats = Object.values(stats).map(p => { const participations = p.scores.length; p.totalPoints = p.scores.map(s=>s.score).reduce((a, b) => a + b, 0); const best = participations > 0 ? Math.max(...p.scores.map(s=>s.score)) : 0; const worst = participations > 0 ? Math.min(...p.scores.map(s=>s.score)) : 0; const averageNum = participations > 0 ? (p.totalPoints / participations) : 0; const regularityNum = calculateStandardDeviation(p.scores.map(s=>s.score)); const avgPos = p.participations > 0 ? (p.roundFinishes.reduce((sum, count, i) => sum + (count * (i + 1)), 0) / p.participations) : 0; return { ...p, best, worst, average: averageNum.toFixed(1), regularity: regularityNum.toFixed(2), averagePosition: avgPos > 0 ? avgPos.toFixed(2) : 'N/A' }; });
+        const finalDetailedStats = Object.values(stats).map(p => {
+    const participations = p.scores.length;
+    p.totalPoints = p.scores.map(s => s.score).reduce((a, b) => a + b, 0);
+    const scoresArray = p.scores.map(s => s.score).sort((a, b) => a - b); // Ordenar para mediana
+    const best = participations > 0 ? scoresArray[scoresArray.length - 1] : 0;
+    const worst = participations > 0 ? scoresArray[0] : 0;
+    const averageNum = participations > 0 ? (p.totalPoints / participations) : 0;
+    const regularityNum = calculateStandardDeviation(scoresArray);
+    const avgPos = p.participations > 0 ? (p.roundFinishes.reduce((sum, count, i) => sum + (count * (i + 1)), 0) / p.participations) : 0;
+
+    // --- NUEVOS CÁLCULOS ---
+    const victorias = p.roundFinishes[0] || 0;
+    const podios = (p.roundFinishes[0] || 0) + (p.roundFinishes[1] || 0) + (p.roundFinishes[2] || 0);
+
+    let mediana = 'N/A';
+    if (participations > 0) {
+        const mid = Math.floor(participations / 2);
+        mediana = participations % 2 !== 0 ? scoresArray[mid] : ((scoresArray[mid - 1] + scoresArray[mid]) / 2).toFixed(1);
+    }
+
+    let moda = '-';
+    if (participations > 1) {
+        const counts = {};
+        let maxCount = 0;
+        let modaValue = [];
+        scoresArray.forEach(score => {
+            counts[score] = (counts[score] || 0) + 1;
+            if (counts[score] > maxCount) {
+                maxCount = counts[score];
+                modaValue = [score];
+            } else if (counts[score] === maxCount && !modaValue.includes(score)) {
+                modaValue.push(score);
+            }
+        });
+        if (maxCount > 1) { // Solo mostrar moda si hay repeticiones
+           moda = modaValue.join(', ');
+        }
+    }
+    // --- FIN NUEVOS CÁLCULOS ---
+
+    return {
+        ...p,
+        best,
+        worst,
+        average: averageNum.toFixed(1),
+        regularity: regularityNum.toFixed(2),
+        averagePosition: avgPos > 0 ? avgPos.toFixed(2) : 'N/A',
+        // --- AÑADIR NUEVOS VALORES AL OBJETO ---
+        victorias,
+        podios,
+        mediana,
+        moda
+    };
+});
         const finalPositionStats = Object.values(stats).map(p => ({ name: p.name, username: p.username, positionCounts: p.roundFinishes, podiums: p.roundFinishes.slice(0,3).reduce((a,b) => a + b, 0), top5: p.roundFinishes.slice(0,5).reduce((a,b) => a + b, 0), top10: p.roundFinishes.slice(0,10).reduce((a,b) => a + b, 0), lastPlaces: p.lastPlaces, participations: p.participations, }));
         const finalH2HStats = {}; Object.values(stats).forEach(p => { finalH2HStats[p.uid] = { name: p.name, username: p.username, wins: p.h2h, h2hRecord: p.h2hRecord, matchupRecord: p.matchupRecord }; });
         const mostWinsValue = Math.max(0, ...finalPositionStats.map(p => p.positionCounts[0])); const mostWinsHolders = finalPositionStats.filter(p => p.positionCounts[0] === mostWinsValue).map(p => p.name); const mostPodiumsValue = Math.max(0, ...finalPositionStats.map(p => p.podiums)); const mostPodiumsHolders = finalPositionStats.filter(p => p.podiums === mostPodiumsValue).map(p => p.name); const bestScoreRecordValue = Math.max(0, ...finalDetailedStats.map(p => p.best)); const bestScoreHolders = finalDetailedStats.filter(p => p.best === bestScoreRecordValue).map(p => p.name);
@@ -361,28 +414,76 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
-                        <thead className="bg-gray-50 dark:bg-gray-800/60"><tr className="border-b dark:border-gray-700">
-                            <th className="p-3 text-left font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('name')} className="flex items-center">Jugador {getSortIndicator('name')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('averagePosition')} className="flex items-center justify-center w-full">Pos. Media {getSortIndicator('averagePosition')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('totalPoints')} className="flex items-center justify-center w-full">Total Pts {getSortIndicator('totalPoints')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('average')} className="flex items-center justify-center w-full">Media Pts {getSortIndicator('average')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('best')} className="flex items-center justify-center w-full">Mejor Jornada {getSortIndicator('best')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('worst')} className="flex items-center justify-center w-full">Peor Jornada {getSortIndicator('worst')}</button></th>
-                            <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300"><button onClick={() => requestSort('regularity')} className="flex items-center justify-center w-full">Regularidad {getSortIndicator('regularity')}</button></th>
-                        </tr></thead>
-                        <tbody className="divide-y dark:divide-gray-700">
-                            {sortedDetailedPlayerStats.map(member => (
-                                <tr key={member.uid} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                    <td className="p-3 font-semibold text-gray-800 dark:text-gray-200 whitespace-nowrap"><Link to={`/profile/${member.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{member.name}</Link></td>
-                                    <td className="p-3 text-center font-mono text-gray-600 dark:text-gray-300">{member.averagePosition}</td>
-                                    <td className="p-3 text-center font-mono font-bold text-gray-700 dark:text-gray-200">{member.totalPoints}</td>
-                                    <td className="p-3 text-center font-mono font-bold text-blue-600 dark:text-blue-400">{member.average}</td>
-                                    <td className="p-3 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">{member.best}</td>
-                                    <td className="p-3 text-center font-mono font-bold text-red-600 dark:text-red-500">{member.worst}</td>
-                                    <td className="p-3 text-center font-mono text-gray-600 dark:text-gray-300">{member.regularity}</td>
-                                </tr>
-                            ))}
-                        </tbody>
+                        <thead className="bg-gray-50 dark:bg-gray-800/60">
+                <tr className="border-b dark:border-gray-700">
+                    {/* Orden y Colores:
+                        Jugador (color negro) - text-black dark:text-white
+                        Total Pts (color fucsia) - text-fuchsia-600 dark:text-fuchsia-400
+                        Victorias (color dorado) - text-yellow-600 dark:text-yellow-400
+                        Podios (color morado) - text-purple-600 dark:text-purple-400
+                        Pos. Media (naranja) - text-orange-600 dark:text-orange-400
+                        Media Pts (color azul claro) - text-sky-600 dark:text-sky-400
+                        Mediana (color azul mas normal) - text-blue-600 dark:text-blue-400
+                        Moda (color mas oscuro) - text-indigo-600 dark:text-indigo-400
+                        Mejor Jornada (color verde) - text-emerald-600 dark:text-emerald-400
+                        Peor Jornada (color rojo) - text-red-600 dark:text-red-500
+                        Regularidad (color 1e40af) - text-[#1e40af] dark:text-[#60a5fa] (usando color directo o uno parecido de Tailwind)
+                    */}
+                    <th className="p-3 text-left font-semibold text-black dark:text-white">
+                        <button onClick={() => requestSort('name')} className="flex items-center">Jugador {getSortIndicator('name')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-fuchsia-600 dark:text-fuchsia-400">
+                        <button onClick={() => requestSort('totalPoints')} className="flex items-center justify-center w-full">Total Pts {getSortIndicator('totalPoints')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-yellow-600 dark:text-yellow-400">
+                         <button onClick={() => requestSort('victorias')} className="flex items-center justify-center w-full">Victorias {getSortIndicator('victorias')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-purple-600 dark:text-purple-400">
+                         <button onClick={() => requestSort('podios')} className="flex items-center justify-center w-full">Podios {getSortIndicator('podios')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-orange-600 dark:text-orange-400">
+                        <button onClick={() => requestSort('averagePosition')} className="flex items-center justify-center w-full">Pos. Media {getSortIndicator('averagePosition')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-sky-600 dark:text-sky-400"> {/* Azul claro */}
+                        <button onClick={() => requestSort('average')} className="flex items-center justify-center w-full">Media Pts {getSortIndicator('average')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-blue-600 dark:text-blue-400"> {/* Azul normal */}
+                         <button onClick={() => requestSort('mediana')} className="flex items-center justify-center w-full">Mediana {getSortIndicator('mediana')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-indigo-600 dark:text-indigo-400"> {/* Azul oscuro */}
+                         <button onClick={() => requestSort('moda')} className="flex items-center justify-center w-full">Moda {getSortIndicator('moda')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-emerald-600 dark:text-emerald-400"> {/* Verde */}
+                        <button onClick={() => requestSort('best')} className="flex items-center justify-center w-full">Mejor Jornada {getSortIndicator('best')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-red-600 dark:text-red-500"> {/* Rojo */}
+                        <button onClick={() => requestSort('worst')} className="flex items-center justify-center w-full">Peor Jornada {getSortIndicator('worst')}</button>
+                    </th>
+                    <th className="p-3 text-center font-semibold text-[#1e40af] dark:text-[#60a5fa]"> {/* Azul #1e40af */}
+                        <button onClick={() => requestSort('regularity')} className="flex items-center justify-center w-full">Regularidad {getSortIndicator('regularity')}</button>
+                    </th>
+                </tr>
+            </thead>
+            {/* --- CUERPO MODIFICADO --- */}
+            <tbody className="divide-y dark:divide-gray-700">
+                {sortedDetailedPlayerStats.map(member => (
+                    <tr key={member.uid} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                        <td className="p-3 font-semibold text-black dark:text-white whitespace-nowrap">
+                            <Link to={`/profile/${member.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{member.name}</Link>
+                        </td>
+                        <td className="p-3 text-center font-mono font-bold text-fuchsia-600 dark:text-fuchsia-400">{member.totalPoints}</td>
+                        <td className="p-3 text-center font-mono font-bold text-yellow-600 dark:text-yellow-400">{member.victorias}</td>
+                        <td className="p-3 text-center font-mono font-bold text-purple-600 dark:text-purple-400">{member.podios}</td>
+                        <td className="p-3 text-center font-mono text-orange-600 dark:text-orange-400">{member.averagePosition}</td>
+                        <td className="p-3 text-center font-mono font-bold text-sky-600 dark:text-sky-400">{member.average}</td>
+                        <td className="p-3 text-center font-mono font-bold text-blue-600 dark:text-blue-400">{member.mediana}</td>
+                        <td className="p-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">{member.moda}</td>
+                        <td className="p-3 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">{member.best}</td>
+                        <td className="p-3 text-center font-mono font-bold text-red-600 dark:text-red-500">{member.worst}</td>
+                        <td className="p-3 text-center font-mono text-[#1e40af] dark:text-[#60a5fa]">{member.regularity}</td>
+                    </tr>
+                ))}
+            </tbody>
                     </table>
                 </div>
             </div>
