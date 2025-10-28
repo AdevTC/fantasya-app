@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye } from 'lucide-react';
+import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye, PieChart, History } from 'lucide-react';
 
 import { useLeagueData } from '../hooks/useLeagueData';
 import AdminTab from '../components/AdminTab';
@@ -18,6 +18,9 @@ import RulesModal from '../components/RulesModal';
 import LeagueSummaryModal from '../components/LeagueSummaryModal';
 import ChallengesTab from '../components/ChallengesTab';
 import { useTheme } from '../context/ThemeContext';
+import PorraTab from '../components/PorraTab';
+import PorraHistoryTab from '../components/PorraHistoryTab';
+import PorraSubmissionsTab from '../components/PorraSubmissionsTab'; // Importar el nuevo componente
 
 const StatCard = ({ icon, title, value, colorClass }) => (
     <div className="bg-white dark:bg-gray-800/50 rounded-xl p-4 shadow-sm border dark:border-gray-700">
@@ -84,10 +87,10 @@ const ClassificationTab = ({ season, roundsData }) => {
             if (!season || !season.members) return;
             const memberIds = Object.keys(season.members).filter(uid => !season.members[uid].isPlaceholder);
             if (memberIds.length === 0) return;
-            
+
             const usersRef = collection(db, "users");
             const q = query(usersRef, where("__name__", "in", memberIds));
-            
+
             const querySnapshot = await getDocs(q);
             const profiles = {};
             querySnapshot.forEach((doc) => {
@@ -115,7 +118,7 @@ const ClassificationTab = ({ season, roundsData }) => {
         });
         const players = Object.values(memberPoints);
         players.sort((a, b) => b.totalPoints - a.totalPoints);
-        
+
         const ranked = [];
         for (let i = 0; i < players.length; i++) {
             let rank;
@@ -134,13 +137,13 @@ const ClassificationTab = ({ season, roundsData }) => {
 
         const currentRanks = getRankedPlayersForRound(selectedRound);
         const prevRanks = selectedRound > 1 ? getRankedPlayersForRound(selectedRound - 1) : null;
-        
+
         const leaderPoints = currentRanks.length > 0 ? currentRanks[0].totalPoints : 0;
 
         return currentRanks.map((player, index) => {
             const diff = player.totalPoints - leaderPoints;
             const diffAhead = index > 0 ? player.totalPoints - currentRanks[index - 1].totalPoints : 0;
-            
+
             let streak = 0;
             if (prevRanks) {
                 const prevPlayer = prevRanks.find(p => p.uid === player.uid);
@@ -151,7 +154,7 @@ const ClassificationTab = ({ season, roundsData }) => {
             return { ...player, diff, streak, diffAhead };
         });
     }, [season, roundsData, selectedRound]);
-    
+
     const currentUserData = classification.find(p => p.uid === userId);
     const playersToShow = isExpanded ? classification : classification.slice(0, 5);
 
@@ -210,17 +213,17 @@ const ClassificationTab = ({ season, roundsData }) => {
     );
 };
 
+
 export default function LeaguePage() {
     const { leagueId } = useParams();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const { theme, toggleTheme } = useTheme();
-
     const { league, seasons, loading, error } = useLeagueData(leagueId);
-    
     const [selectedSeason, setSelectedSeason] = useState(null);
     const [roundsData, setRoundsData] = useState([]);
     const [activeTab, setActiveTab] = useState('clasificacion');
+    const [activeJornadasSubTab, setActiveJornadasSubTab] = useState('resultados');
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
     const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
@@ -236,13 +239,11 @@ export default function LeaguePage() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [menuRef]);
-    
+
     useEffect(() => {
         if (!league || seasons.length === 0) return;
-    
         const seasonIdFromUrl = searchParams.get('season');
         const seasonToSelect = seasons.find(s => s.id === seasonIdFromUrl) || seasons.find(s => s.id === league.activeSeason) || seasons[0];
-    
         if (seasonToSelect) {
             setSelectedSeason(seasonToSelect);
         }
@@ -250,26 +251,26 @@ export default function LeaguePage() {
 
     useEffect(() => {
         if (!selectedSeason || !leagueId) return;
-
         if (searchParams.get('season') !== selectedSeason.id) {
             setSearchParams({ season: selectedSeason.id }, { replace: true });
         }
-        
         const roundsRef = collection(db, 'leagues', leagueId, 'seasons', selectedSeason.id, 'rounds');
         const q = query(roundsRef, orderBy('roundNumber'));
         const unsubscribeRounds = onSnapshot(q, (querySnapshot) => {
             const rounds = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setRoundsData(rounds);
+        }, (err) => {
+             console.error("Error fetching rounds:", err);
+             // Podrías mostrar un mensaje al usuario aquí
         });
-
         return () => unsubscribeRounds();
     }, [selectedSeason, leagueId, searchParams, setSearchParams]);
 
     const TabButton = ({ icon, text, tabName }) => {
         const isActive = activeTab === tabName;
         return (
-            <button 
-                onClick={() => setActiveTab(tabName)} 
+            <button
+                onClick={() => setActiveTab(tabName)}
                 className={`flex items-center py-4 px-2 border-b-2 font-semibold whitespace-nowrap transition-all duration-200 ${isActive ? 'border-emerald-500 text-emerald-500' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
             >
                 {icon}
@@ -277,7 +278,7 @@ export default function LeaguePage() {
             </button>
         );
     };
-    
+
     if (loading || !league || !selectedSeason) return <LoadingSpinner fullScreen text="Cargando liga..." />;
     if (error) return <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center text-red-500">{error}</div>;
 
@@ -288,35 +289,54 @@ export default function LeaguePage() {
     const renderTabContent = () => {
         if (!selectedSeason) return <LoadingSpinner />;
         if (!isMemberOfSelectedSeason && !['clasificacion', 'estadisticas', 'jornadas', 'salon-de-la-fama', 'retos'].includes(activeTab)) {
-            return <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700"><p className="text-gray-600 dark:text-gray-400">No eres miembro de esta temporada. Solo puedes ver la información pública.</p></div>;
+             return <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700"><p className="text-gray-600 dark:text-gray-400">No eres miembro de esta temporada. Solo puedes ver la información pública.</p></div>;
         }
-
         const props = { league, season: selectedSeason, roundsData, userRole, seasons };
+
         switch (activeTab) {
             case 'clasificacion': return <ClassificationTab {...props} />;
-            case 'mi-equipo':     return <MyTeamTab {...props} />;
-            case 'jornadas':      return <RoundsTab {...props} />;
-            case 'fichajes':      return <TransfersTab {...props} />;
-            case 'estadisticas':  return <StatsTab {...props} seasons={seasons} />; // <-- Pasa 'seasons' explícitamente si no está en props
+            case 'mi-equipo':     return isMemberOfSelectedSeason ? <MyTeamTab {...props} /> : null;
+            case 'jornadas':
+                return (
+                    <div className="space-y-6">
+                        <div className="flex border-b dark:border-gray-700 overflow-x-auto pb-px">
+                            <button onClick={() => setActiveJornadasSubTab('resultados')} className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 font-semibold ${activeJornadasSubTab === 'resultados' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>
+                                <CalendarDays size={18}/> Resultados
+                            </button>
+                            <button onClick={() => setActiveJornadasSubTab('porra')} className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 font-semibold ${activeJornadasSubTab === 'porra' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>
+                                <PieChart size={18}/> Hacer Porra
+                            </button>
+                             <button onClick={() => setActiveJornadasSubTab('porra-submissions')} className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 font-semibold ${activeJornadasSubTab === 'porra-submissions' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>
+                                <Eye size={18}/> Ver Porras
+                            </button>
+                            <button onClick={() => setActiveJornadasSubTab('porra-historial')} className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 font-semibold ${activeJornadasSubTab === 'porra-historial' ? 'border-b-2 border-emerald-500 text-emerald-500' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>
+                                <History size={18}/> Historial Ganadores
+                            </button>
+                        </div>
+                        {activeJornadasSubTab === 'resultados' && <RoundsTab {...props} />}
+                        {activeJornadasSubTab === 'porra' && <PorraTab {...props} />}
+                        {activeJornadasSubTab === 'porra-submissions' && <PorraSubmissionsTab {...props} />}
+                        {activeJornadasSubTab === 'porra-historial' && <PorraHistoryTab {...props} />}
+                    </div>
+                );
+            case 'fichajes':      return isMemberOfSelectedSeason ? <TransfersTab {...props} /> : null;
+            case 'estadisticas':  return <StatsTab {...props} />;
             case 'salon-de-la-fama': return <HallOfFameTab {...props} />;
             case 'retos':         return <ChallengesTab {...props} />;
             case 'admin':         return userRole === 'admin' ? <AdminTab {...props} /> : null;
             default: return null;
         }
     };
-    
+
     return (
         <>
             <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} league={league} seasons={seasons} />
             <RulesModal isOpen={isRulesModalOpen} onClose={() => setIsRulesModalOpen(false)} leagueName={league.name} rules={league.rules} />
             <LeagueSummaryModal isOpen={isSummaryModalOpen} onClose={() => setIsSummaryModalOpen(false)} league={league} season={selectedSeason} />
 
-            {/* --- CONTENEDOR PRINCIPAL DE LA PÁGINA --- */}
             <div>
-                {/* --- CABECERA DE LA LIGA (STICKY) --- */}
-                {/* Se pega en la parte de arriba del scroll. z-30 para que esté por encima del contenido */}
                 <header className="bg-white dark:bg-gray-800/50 shadow-sm border-b dark:border-gray-700 sticky top-0 z-30">
-                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
                             <div className="flex items-center space-x-3">
                                 <button onClick={() => navigate('/dashboard')} className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"><ArrowLeft size={22} /></button>
@@ -339,7 +359,7 @@ export default function LeaguePage() {
                                     )}
                                 </div>
                             </div>
-                            
+
                             <div className="hidden md:flex items-center space-x-2">
                                 {userRole === 'admin' && <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-semibold">Admin</span>}
                                 <button onClick={() => setIsSummaryModalOpen(true)} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="Ver Resumen">
@@ -381,9 +401,7 @@ export default function LeaguePage() {
                         </div>
                     </div>
                 </header>
-                
-                {/* --- BARRA DE PESTAÑAS (STICKY) --- */}
-                {/* Se pega debajo de la cabecera (top-16) porque la cabecera mide h-16 (4rem) */}
+
                 <div className="bg-white dark:bg-gray-800/50 border-b dark:border-gray-700 sticky top-16 z-20">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex space-x-4 sm:space-x-8 -mb-px overflow-x-auto">
@@ -403,8 +421,6 @@ export default function LeaguePage() {
                     </div>
                 </div>
 
-                {/* --- CONTENIDO DE LA PESTAÑA --- */}
-                {/* Este es el contenido que hará scroll por detrás de las barras fijas */}
                 <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                     {renderTabContent()}
                 </main>
