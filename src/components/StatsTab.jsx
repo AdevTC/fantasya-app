@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { db, auth } from '../config/firebase';
 import { Link } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ScatterChart, Scatter, Label } from 'recharts';
-// FIX 1: Añadido 'History' a la importación
-import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, History } from 'lucide-react';
+// --- MODIFICADO ---: Añadido 'Flame' y 'UserCheck' (aunque UserCheck ya estaba)
+import { Award, Star, TrendingUp, Zap, Scale, Filter, ChevronsUpDown, ArrowUp, ArrowDown, Shield, Users, Sofa, UserCheck, Activity, ThumbsUp, ThumbsDown, Swords, History, Flame } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import { useTheme } from '../context/ThemeContext';
 import { collection, query, getDocs } from 'firebase/firestore';
@@ -56,6 +56,7 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
     const [sortConfig, setSortConfig] = useState({ key: 'totalPoints', direction: 'desc' });
     const [positionSortConfig, setPositionSortConfig] = useState({ key: 'participations', direction: 'desc' });
     const [streakSortConfig, setStreakSortConfig] = useState({ key: 'positiveStreakCount', direction: 'desc' });
+    const [roundStreakSortConfig, setRoundStreakSortConfig] = useState({ key: 'maxWinStreak', direction: 'desc' });
     const [topScoresSortConfig, setTopScoresSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [playerPerfSortConfig, setPlayerPerfSortConfig] = useState({ key: 'total', direction: 'desc' });
     const [startRound, setStartRound] = useState(1);
@@ -103,7 +104,8 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                 scoreDistribution: [], playerConsistencyData: [], podiumDistributionForPie: [], 
                 lastPlaceFinishes: [], nonScoringRoundsData: [], captainPointsData: [], 
                 benchPointsData: [], pointsByPositionData: {}, teamValueVsPointsData: [], 
-                streakData: [], topWorstScoresData: [], playerPerformanceByUser: {}
+                streakData: [], topWorstScoresData: [], playerPerformanceByUser: {},
+                detailedStreakData: [] 
             };
         }
         
@@ -113,7 +115,30 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
         const rivalryStats = {};
 
         Object.entries(season.members).forEach(([uid, data]) => {
-            stats[uid] = { uid, name: data.teamName, username: data.username, scores: [], totalPoints: 0, weeksAtNum1: 0, weeksInPodium: 0, weeksInTop5: 0, roundFinishes: Array(memberCount).fill(0), lastPlaces: 0, participations: 0, h2h: {}, h2hRecord: { wins: 0, draws: 0, losses: 0 }, matchupRecord: { wins: 0, draws: 0, losses: 0, score: 0 }, nonScoringRounds: 0, captainPoints: 0, wastedBenchPoints: 0, pointsByPosition: { 'Portero': 0, 'Defensa': 0, 'Centrocampista': 0, 'Delantero': 0, 'Entrenador': 0 }, positiveStreakCount: 0, neutralStreakCount: 0, negativeStreakCount: 0, biggestJump: 0, biggestDrop: 0, lastRank: null };
+            stats[uid] = { 
+                uid, name: data.teamName, username: data.username, scores: [], totalPoints: 0, 
+                weeksAtNum1: 0, weeksInPodium: 0, weeksInTop5: 0, 
+                roundFinishes: Array(memberCount).fill(0), lastPlaces: 0, participations: 0, 
+                h2h: {}, h2hRecord: { wins: 0, draws: 0, losses: 0 }, 
+                matchupRecord: { wins: 0, draws: 0, losses: 0, score: 0 }, 
+                nonScoringRounds: 0, captainPoints: 0, 
+                wastedBenchPoints: 0, 
+                // --- NUEVO ---: Añadido pointsFromBench
+                pointsFromBench: 0,
+                pointsByPosition: { 'Portero': 0, 'Defensa': 0, 'Centrocampista': 0, 'Delantero': 0, 'Entrenador': 0 }, 
+                positiveStreakCount: 0, neutralStreakCount: 0, negativeStreakCount: 0, 
+                biggestJump: 0, biggestDrop: 0, lastRank: null,
+                maxWinStreak: 0,
+                currentWinStreak: 0,
+                maxPodiumStreak: 0,
+                currentPodiumStreak: 0,
+                maxTop5Streak: 0,
+                currentTop5Streak: 0,
+                maxTop10Streak: 0,
+                currentTop10Streak: 0,
+                maxScoringStreak: 0,
+                currentScoringStreak: 0
+            };
             playerPerformanceByUser[uid] = {};
             rivalryStats[uid] = {};
             Object.keys(season.members).forEach(opId => { if (opId !== uid) { stats[uid].h2h[opId] = 0; rivalryStats[uid][opId] = { maxPositiveDiff: {value: 0, round: 0}, maxNegativeDiff: {value: 0, round: 0}, totalDifference: 0, matchupCount: 0, maxGeneralDiff: {value: 0, round: 0} }; } });
@@ -191,13 +216,52 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                     if (lineup.captainSlot) { const [slotType, ...slotRest] = lineup.captainSlot.split('-'); const slotKey = slotRest.join('-'); let captain = null; if (slotType === 'coach') captain = lineup.coach; else if (slotType === 'players') captain = lineup.players?.[lineup.captainSlot]; else if (slotType === 'bench') captain = lineup.bench?.[slotKey]; if (captain?.points > 0) { stats[uid].captainPoints += captain.points; } }
                     Object.values(lineup.players || {}).forEach(p => { if (p.status === 'playing' && p.points > 0) { stats[uid].pointsByPosition[p.positionAtTheTime] = (stats[uid].pointsByPosition[p.positionAtTheTime] || 0) + p.points; } });
                     if (lineup.coach?.status === 'playing' && lineup.coach?.points > 0) { stats[uid].pointsByPosition['Entrenador'] = (stats[uid].pointsByPosition['Entrenador'] || 0) + lineup.coach.points; }
-                    ['GK', 'DF', 'MF', 'FW'].forEach(pos => { const benchPlayer = lineup.bench?.[pos]; if (benchPlayer?.points > 0 && benchPlayer.status === 'playing' && !benchPlayer.active) { stats[uid].wastedBenchPoints += benchPlayer.points; } });
+                    
+                    // --- MODIFICADO ---: Lógica para Puntos Ganados y Desperdiciados del Banquillo
+                    // (Se elimina la lógica antigua que solo calculaba wastedBenchPoints)
+                    ['GK', 'DF', 'MF', 'FW'].forEach(pos => {
+                        const benchPlayer = lineup.bench?.[pos];
+                        // Comprobar si el jugador del banquillo jugó y puntuó
+                        if (benchPlayer?.points > 0 && benchPlayer.status === 'playing') {
+                            if (benchPlayer.active) {
+                                // El jugador entró (activo), así que sus puntos SUMARON
+                                stats[uid].pointsFromBench += benchPlayer.points;
+                            } else {
+                                // El jugador NO entró (no activo), así que sus puntos se DESPERDICIARON
+                                stats[uid].wastedBenchPoints += benchPlayer.points;
+                            }
+                        }
+                    });
+                    // --- FIN MODIFICADO ---
                 }
             });
 
             const rankedRound = participatingUids.map(uid => ({ uid, points: scoresForRound[uid] })).sort((a,b) => b.points - a.points);
-            if (rankedRound.length > 0) { const lowestScore = rankedRound[rankedRound.length - 1].points; rankedRound.forEach((p, index) => { let rank = index; while(rank > 0 && rankedRound[rank - 1].points === p.points) { rank--; } stats[p.uid].roundFinishes[rank]++; if (p.points === lowestScore) stats[p.uid].lastPlaces++; }); }
-        
+            const playerRanks = {};
+            
+            if (rankedRound.length > 0) { 
+                const lowestScore = rankedRound[rankedRound.length - 1].points; 
+                rankedRound.forEach((p, index) => { 
+                    let rank = index; 
+                    while(rank > 0 && rankedRound[rank - 1].points === p.points) { rank--; } 
+                    stats[p.uid].roundFinishes[rank]++; 
+                    if (p.points === lowestScore) stats[p.uid].lastPlaces++;
+                    playerRanks[p.uid] = rank; // Guardar ranking (0-indexed)
+                }); 
+            }
+
+            Object.keys(stats).forEach(uid => {
+                const playerStats = stats[uid];
+                const rank = playerRanks[uid]; 
+                const score = scoresForRound[uid];
+
+                if (rank === 0) { playerStats.currentWinStreak++; } else { if (playerStats.currentWinStreak > playerStats.maxWinStreak) playerStats.maxWinStreak = playerStats.currentWinStreak; playerStats.currentWinStreak = 0; }
+                if (rank !== undefined && rank <= 2) { playerStats.currentPodiumStreak++; } else { if (playerStats.currentPodiumStreak > playerStats.maxPodiumStreak) playerStats.maxPodiumStreak = playerStats.currentPodiumStreak; playerStats.currentPodiumStreak = 0; }
+                if (rank !== undefined && rank <= 4) { playerStats.currentTop5Streak++; } else { if (playerStats.currentTop5Streak > playerStats.maxTop5Streak) playerStats.maxTop5Streak = playerStats.currentTop5Streak; playerStats.currentTop5Streak = 0; }
+                if (rank !== undefined && rank <= 9) { playerStats.currentTop10Streak++; } else { if (playerStats.currentTop10Streak > playerStats.maxTop10Streak) playerStats.maxTop10Streak = playerStats.currentTop10Streak; playerStats.currentTop10Streak = 0; }
+                if (typeof score === 'number') { playerStats.currentScoringStreak++; } else { if (playerStats.currentScoringStreak > playerStats.maxScoringStreak) playerStats.maxScoringStreak = playerStats.currentScoringStreak; playerStats.currentScoringStreak = 0; }
+            });
+
             const rankedGeneral = Object.keys(cumulativeScores).map(uid => ({uid, points: cumulativeScores[uid]})).sort((a,b) => b.points - a.points);
             const roundRanks = {};
             rankedGeneral.forEach((p, index) => { let rank = index; while(rank > 0 && rankedGeneral[rank - 1].points === p.points) { rank--; } roundRanks[p.uid] = rank + 1; });
@@ -214,6 +278,14 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
             });
         });
 
+        Object.values(stats).forEach(playerStats => {
+            if (playerStats.currentWinStreak > playerStats.maxWinStreak) playerStats.maxWinStreak = playerStats.currentWinStreak;
+            if (playerStats.currentPodiumStreak > playerStats.maxPodiumStreak) playerStats.maxPodiumStreak = playerStats.currentPodiumStreak;
+            if (playerStats.currentTop5Streak > playerStats.maxTop5Streak) playerStats.maxTop5Streak = playerStats.currentTop5Streak;
+            if (playerStats.currentTop10Streak > playerStats.maxTop10Streak) playerStats.maxTop10Streak = playerStats.currentTop10Streak;
+            if (playerStats.currentScoringStreak > playerStats.maxScoringStreak) playerStats.maxScoringStreak = playerStats.currentScoringStreak;
+        });
+
         Object.keys(stats).forEach(uid1 => {
             Object.keys(stats).forEach(uid2 => {
                 if (uid1 !== uid2) {
@@ -228,59 +300,63 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
         });
         
         const finalDetailedStats = Object.values(stats).map(p => {
-    const participations = p.scores.length;
-    p.totalPoints = p.scores.map(s => s.score).reduce((a, b) => a + b, 0);
-    const scoresArray = p.scores.map(s => s.score).sort((a, b) => a - b); // Ordenar para mediana
-    const best = participations > 0 ? scoresArray[scoresArray.length - 1] : 0;
-    const worst = participations > 0 ? scoresArray[0] : 0;
-    const averageNum = participations > 0 ? (p.totalPoints / participations) : 0;
-    const regularityNum = calculateStandardDeviation(scoresArray);
-    const avgPos = p.participations > 0 ? (p.roundFinishes.reduce((sum, count, i) => sum + (count * (i + 1)), 0) / p.participations) : 0;
+            const participations = p.scores.length;
+            p.totalPoints = p.scores.map(s => s.score).reduce((a, b) => a + b, 0);
+            const scoresArray = p.scores.map(s => s.score).sort((a, b) => a - b); 
+            const best = participations > 0 ? scoresArray[scoresArray.length - 1] : 0;
+            const worst = participations > 0 ? scoresArray[0] : 0;
+            const averageNum = participations > 0 ? (p.totalPoints / participations) : 0;
+            const regularityNum = calculateStandardDeviation(scoresArray);
+            const avgPos = p.participations > 0 ? (p.roundFinishes.reduce((sum, count, i) => sum + (count * (i + 1)), 0) / p.participations) : 0;
 
-    // --- NUEVOS CÁLCULOS ---
-    const victorias = p.roundFinishes[0] || 0;
-    const podios = (p.roundFinishes[0] || 0) + (p.roundFinishes[1] || 0) + (p.roundFinishes[2] || 0);
+            const victorias = p.roundFinishes[0] || 0;
+            const podios = (p.roundFinishes[0] || 0) + (p.roundFinishes[1] || 0) + (p.roundFinishes[2] || 0);
 
-    let mediana = 'N/A';
-    if (participations > 0) {
-        const mid = Math.floor(participations / 2);
-        mediana = participations % 2 !== 0 ? scoresArray[mid] : ((scoresArray[mid - 1] + scoresArray[mid]) / 2).toFixed(1);
-    }
-
-    let moda = '-';
-    if (participations > 1) {
-        const counts = {};
-        let maxCount = 0;
-        let modaValue = [];
-        scoresArray.forEach(score => {
-            counts[score] = (counts[score] || 0) + 1;
-            if (counts[score] > maxCount) {
-                maxCount = counts[score];
-                modaValue = [score];
-            } else if (counts[score] === maxCount && !modaValue.includes(score)) {
-                modaValue.push(score);
+            let mediana = 'N/A';
+            if (participations > 0) {
+                const mid = Math.floor(participations / 2);
+                mediana = participations % 2 !== 0 ? scoresArray[mid] : ((scoresArray[mid - 1] + scoresArray[mid]) / 2).toFixed(1);
             }
-        });
-        if (maxCount > 1) { // Solo mostrar moda si hay repeticiones
-           moda = modaValue.join(', ');
-        }
-    }
-    // --- FIN NUEVOS CÁLCULOS ---
 
-    return {
-        ...p,
-        best,
-        worst,
-        average: averageNum.toFixed(1),
-        regularity: regularityNum.toFixed(2),
-        averagePosition: avgPos > 0 ? avgPos.toFixed(2) : 'N/A',
-        // --- AÑADIR NUEVOS VALORES AL OBJETO ---
-        victorias,
-        podios,
-        mediana,
-        moda
-    };
-});
+            let moda = '-';
+            if (participations > 1) {
+                const counts = {};
+                let maxCount = 0;
+                let modaValue = [];
+                scoresArray.forEach(score => {
+                    counts[score] = (counts[score] || 0) + 1;
+                    if (counts[score] > maxCount) {
+                        maxCount = counts[score];
+                        modaValue = [score];
+                    } else if (counts[score] === maxCount && !modaValue.includes(score)) {
+                        modaValue.push(score);
+                    }
+                });
+                if (maxCount > 1) { 
+                   moda = modaValue.join(', ');
+                }
+            }
+
+            // --- NUEVO ---: Cálculo de Efectividad del Capitán
+            const basePoints = p.totalPoints - p.captainPoints;
+            const captainEffectiveness = basePoints > 0 ? ((p.captainPoints / basePoints) * 100) : 0;
+            // --- FIN NUEVO ---
+
+            return {
+                ...p,
+                best,
+                worst,
+                average: averageNum.toFixed(1),
+                regularity: regularityNum.toFixed(2),
+                averagePosition: avgPos > 0 ? avgPos.toFixed(2) : 'N/A',
+                victorias,
+                podios,
+                mediana,
+                moda,
+                // --- NUEVO ---: Añadir efectividad al objeto
+                captainEffectiveness: captainEffectiveness.toFixed(1)
+            };
+        });
         const finalPositionStats = Object.values(stats).map(p => ({ name: p.name, username: p.username, positionCounts: p.roundFinishes, podiums: p.roundFinishes.slice(0,3).reduce((a,b) => a + b, 0), top5: p.roundFinishes.slice(0,5).reduce((a,b) => a + b, 0), top10: p.roundFinishes.slice(0,10).reduce((a,b) => a + b, 0), lastPlaces: p.lastPlaces, participations: p.participations, }));
         const finalH2HStats = {}; Object.values(stats).forEach(p => { finalH2HStats[p.uid] = { name: p.name, username: p.username, wins: p.h2h, h2hRecord: p.h2hRecord, matchupRecord: p.matchupRecord }; });
         const mostWinsValue = Math.max(0, ...finalPositionStats.map(p => p.positionCounts[0])); const mostWinsHolders = finalPositionStats.filter(p => p.positionCounts[0] === mostWinsValue).map(p => p.name); const mostPodiumsValue = Math.max(0, ...finalPositionStats.map(p => p.podiums)); const mostPodiumsHolders = finalPositionStats.filter(p => p.podiums === mostPodiumsValue).map(p => p.name); const bestScoreRecordValue = Math.max(0, ...finalDetailedStats.map(p => p.best)); const bestScoreHolders = finalDetailedStats.filter(p => p.best === bestScoreRecordValue).map(p => p.name);
@@ -294,14 +370,61 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
         const lastPlacesData = finalPositionStats.map(p => ({name: p.name, 'Último Puesto': p.lastPlaces})).filter(p => p['Último Puesto'] > 0).sort((a,b) => b['Último Puesto'] - a['Último Puesto']);
         const nonScoringData = finalDetailedStats.map(p => ({name: p.name, 'Jornadas sin puntuar': p.nonScoringRounds})).filter(p => p['Jornadas sin puntuar'] > 0).sort((a,b) => b['Jornadas sin puntuar'] - a['Jornadas sin puntuar']);
         const finalCaptainPoints = finalDetailedStats.map(p => ({ name: p.name, 'Puntos Extra Capitán': p.captainPoints })).sort((a,b) => b['Puntos Extra Capitán'] - a['Puntos Extra Capitán']);
-        const finalWastedBenchPoints = finalDetailedStats.map(p => ({ name: p.name, 'Puntos Desperdiciados': p.wastedBenchPoints })).filter(p => p['Puntos Desperdiciados'] > 0).sort((a,b) => b['Puntos Desperdiciados'] - a['Puntos Desperdiciados']);
+        
+        // --- MODIFICADO ---: Datos para la gráfica de Gestión del Banquillo
+        const finalBenchPointsData = finalDetailedStats.map(p => ({ 
+            name: p.name, 
+            'Puntos Ganados': p.pointsFromBench || 0,
+            'Puntos Desperdiciados': p.wastedBenchPoints || 0
+        }))
+        .filter(p => p['Puntos Ganados'] > 0 || p['Puntos Desperdiciados'] > 0)
+        // Ordenar por el total de puntos gestionados (ganados + desperdiciados)
+        .sort((a,b) => (b['Puntos Ganados'] + b['Puntos Desperdiciados']) - (a['Puntos Ganados'] + a['Puntos Desperdiciados']));
+        // --- FIN MODIFICADO ---
+
         const finalPointsByPosData = { general: Object.entries(finalDetailedStats.reduce((acc, p) => { Object.entries(p.pointsByPosition).forEach(([pos, pts]) => { acc[pos] = (acc[pos] || 0) + pts; }); return acc; }, {})).map(([name, value]) => ({ name, value })) };
         finalDetailedStats.forEach(p => { finalPointsByPosData[p.uid] = Object.entries(p.pointsByPosition).map(([name, value]) => ({ name, value })) });
         const finalTeamValueVsPoints = finalDetailedStats.map(p => ({ name: p.name, x: (season.members[p.uid].finances?.teamValue || 0), y: p.totalPoints }));
         const finalStreakData = finalDetailedStats.map(p => ({ name: p.name, username: p.username, positiveStreakCount: p.positiveStreakCount, neutralStreakCount: p.neutralStreakCount, negativeStreakCount: p.negativeStreakCount, biggestJump: p.biggestJump, biggestDrop: p.biggestDrop }));
         const finalTopWorstScoresData = finalDetailedStats.map(p => { const top5 = [...p.scores.map(s => s.score)].sort((a, b) => b - a).slice(0, 5); const worst5 = [...p.scores.map(s => s.score)].sort((a, b) => a - b).slice(0, 5); return { uid: p.uid, name: p.name, username: p.username, top5Scores: top5, worst5Scores: worst5, avgTop5: top5.length > 0 ? (top5.reduce((a, b) => a + b, 0) / top5.length).toFixed(1) : 'N/A', avgWorst5: worst5.length > 0 ? (worst5.reduce((a, b) => a + b, 0) / worst5.length).toFixed(1) : 'N/A' }; });
 
-        return { detailedPlayerStats: finalDetailedStats, positionStats: finalPositionStats, headToHeadStats: finalH2HStats, rivalryStats, leagueRecords: records, scoreDistribution: finalScoreDistribution, playerConsistencyData: consistencyData, podiumDistributionForPie, lastPlaceFinishes: lastPlacesData, nonScoringRoundsData: nonScoringData, captainPointsData: finalCaptainPoints, benchPointsData: finalWastedBenchPoints, pointsByPositionData: finalPointsByPosData, teamValueVsPointsData: finalTeamValueVsPoints, streakData: finalStreakData, topWorstScoresData: finalTopWorstScoresData, playerPerformanceByUser };
+        const finalDetailedStreakData = finalDetailedStats.map(p => ({
+            uid: p.uid,
+            name: p.name,
+            username: p.username,
+            maxWinStreak: p.maxWinStreak,
+            maxPodiumStreak: p.maxPodiumStreak,
+            maxTop5Streak: p.maxTop5Streak,
+            maxTop10Streak: p.maxTop10Streak,
+            maxScoringStreak: p.maxScoringStreak,
+            currentWinStreak: p.currentWinStreak,
+            currentPodiumStreak: p.currentPodiumStreak,
+            currentTop5Streak: p.currentTop5Streak,
+            currentTop10Streak: p.currentTop10Streak,
+            currentScoringStreak: p.currentScoringStreak,
+        }));
+
+        return { 
+            detailedPlayerStats: finalDetailedStats, 
+            positionStats: finalPositionStats, 
+            headToHeadStats: finalH2HStats, 
+            rivalryStats, 
+            leagueRecords: records, 
+            scoreDistribution: finalScoreDistribution, 
+            playerConsistencyData: consistencyData, 
+            podiumDistributionForPie, 
+            lastPlaceFinishes: lastPlacesData, 
+            nonScoringRoundsData: nonScoringData, 
+            captainPointsData: finalCaptainPoints, 
+            // --- MODIFICADO ---: Usar la nueva variable
+            benchPointsData: finalBenchPointsData, 
+            pointsByPositionData: finalPointsByPosData, 
+            teamValueVsPointsData: finalTeamValueVsPoints, 
+            streakData: finalStreakData, 
+            topWorstScoresData: finalTopWorstScoresData, 
+            playerPerformanceByUser,
+            detailedStreakData: finalDetailedStreakData 
+        };
     }, [roundsData, season, memberCount, allLineups, loadingLineups]);
 
     const sortedDetailedPlayerStats = useMemo(() => {
@@ -340,8 +463,26 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
         return sortableItems;
     }, [memoizedStats.detailedPlayerStats, sortConfig]);
 
-    const sortedPositionStats = useMemo(() => { let sortableItems = [...memoizedStats.positionStats]; if (positionSortConfig.key !== null) { sortableItems.sort((a, b) => { const valA = positionSortConfig.key === 'name' ? a.name : a[positionSortConfig.key] ?? a.positionCounts[positionSortConfig.key]; const valB = positionSortConfig.key === 'name' ? b.name : b[positionSortConfig.key] ?? b.positionCounts[positionSortConfig.key]; if (typeof valA === 'string') { return positionSortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA); } if (valA < valB) return positionSortConfig.direction === 'asc' ? -1 : 1; if (valA > valB) return positionSortConfig.direction === 'asc' ? 1 : -1; return 0; }); } return sortableItems; }, [memoizedStats.positionStats, positionSortConfig]);
+    const sortedPositionStats = useMemo(() => { let sortableItems = [...memoizedStats.positionStats]; if (positionSortConfig.key !== null) { sortableItems.sort((a, b) => { const valA = positionSortConfig.key === 'name' ? a.name : a[positionSortConfig.key] ?? a.positionCounts[positionSortConfig.key]; const valB = positionSortConfig.key === 'name' ? b.name : b[positionSortConfig.key] ?? b.positionCounts[positionSortConfig.key]; if (typeof valA === 'string') { return positionSortConfig.direction === 'asc' ? valA.localeCompare(b.name) : b.name.localeCompare(valA); } if (valA < valB) return positionSortConfig.direction === 'asc' ? -1 : 1; if (valA > valB) return positionSortConfig.direction === 'asc' ? 1 : -1; return 0; }); } return sortableItems; }, [memoizedStats.positionStats, positionSortConfig]);
     const sortedStreakStats = useMemo(() => { let sortableItems = [...memoizedStats.streakData]; if (streakSortConfig.key) { sortableItems.sort((a,b) => { const valA = a[streakSortConfig.key]; const valB = b[streakSortConfig.key]; if (valA < valB) return streakSortConfig.direction === 'asc' ? -1 : 1; if (valA > valB) return streakSortConfig.direction === 'asc' ? 1 : -1; return 0; }); } return sortableItems; }, [memoizedStats.streakData, streakSortConfig]);
+    
+    const sortedRoundStreakStats = useMemo(() => {
+        let sortableItems = [...memoizedStats.detailedStreakData];
+        if (roundStreakSortConfig.key) {
+            sortableItems.sort((a, b) => {
+                const valA = a[roundStreakSortConfig.key];
+                const valB = b[roundStreakSortConfig.key];
+                if (typeof valA === 'string') {
+                    return roundStreakSortConfig.direction === 'asc' ? valA.localeCompare(b.name) : b.name.localeCompare(valA);
+                }
+                if (valA < valB) return roundStreakSortConfig.direction === 'asc' ? -1 : 1;
+                if (valA > valB) return roundStreakSortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+        return sortableItems;
+    }, [memoizedStats.detailedStreakData, roundStreakSortConfig]);
+
     const sortedTopWorstScores = useMemo(() => { let sortableItems = [...memoizedStats.topWorstScoresData]; if (topScoresSortConfig.key) { sortableItems.sort((a, b) => { if (topScoresSortConfig.key === 'name') { return topScoresSortConfig.direction === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name); } const valA = a[topScoresSortConfig.key] === 'N/A' ? (topScoresSortConfig.direction === 'asc' ? Infinity : -Infinity) : parseFloat(a[topScoresSortConfig.key]); const valB = b[topScoresSortConfig.key] === 'N/A' ? (topScoresSortConfig.direction === 'asc' ? Infinity : -Infinity) : parseFloat(b[topScoresSortConfig.key]); if (valA < valB) return topScoresSortConfig.direction === 'asc' ? -1 : 1; if (valA > valB) return topScoresSortConfig.direction === 'asc' ? 1 : -1; return 0; }); } return sortableItems; }, [memoizedStats.topWorstScoresData, topScoresSortConfig]);
     const sortedPlayerPerformance = useMemo(() => {
         const data = Object.values(memoizedStats.playerPerformanceByUser[playerPerformanceFilter] || {});
@@ -350,7 +491,7 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                 const valA = a[playerPerfSortConfig.key] || 0;
                 const valB = b[playerPerfSortConfig.key] || 0;
                 if (typeof valA === 'string') {
-                    return playerPerfSortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                    return playerPerfSortConfig.direction === 'asc' ? valA.localeCompare(b.name) : b.name.localeCompare(valA);
                 }
                 if (valA < valB) return playerPerfSortConfig.direction === 'asc' ? -1 : 1;
                 if (valA > valB) return playerPerfSortConfig.direction === 'asc' ? 1 : -1;
@@ -363,9 +504,23 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
     const requestPositionSort = (key) => { let direction = 'desc'; if (positionSortConfig.key === key && positionSortConfig.direction === 'desc') { direction = 'asc'; } setPositionSortConfig({ key, direction }); };
     const requestStreakSort = (key) => { let direction = 'desc'; if (streakSortConfig.key === key && streakSortConfig.direction === 'desc') { direction = 'asc'; } setStreakSortConfig({ key, direction }); };
+    const requestRoundStreakSort = (key) => { let direction = 'desc'; if (roundStreakSortConfig.key === key && roundStreakSortConfig.direction === 'desc') { direction = 'asc'; } setRoundStreakSortConfig({ key, direction }); };
     const requestTopScoresSort = (key) => { let direction = 'asc'; if (topScoresSortConfig.key === key && topScoresSortConfig.direction === 'asc') { direction = 'desc'; } setTopScoresSortConfig({ key, direction }); };
     const requestPlayerPerfSort = (key) => { let direction = 'desc'; if (playerPerfSortConfig.key === key && playerPerfSortConfig.direction === 'desc') { direction = 'asc'; } setPlayerPerfSortConfig({ key, direction }); };
-    const getSortIndicator = (key, type = 'main') => { const config = type === 'main' ? sortConfig : type === 'pos' ? positionSortConfig : type === 'streak' ? streakSortConfig : type === 'top_scores' ? topScoresSortConfig : playerPerfSortConfig; if (config.key !== key) return <ChevronsUpDown size={14} className="ml-1 text-gray-400" />; if (config.direction === 'asc') return <ArrowUp size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; return <ArrowDown size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; };
+    
+    const getSortIndicator = (key, type = 'main') => { 
+        const config = type === 'main' ? sortConfig : 
+                       type === 'pos' ? positionSortConfig : 
+                       type === 'streak' ? streakSortConfig : 
+                       type === 'top_scores' ? topScoresSortConfig : 
+                       type === 'player_perf' ? playerPerfSortConfig :
+                       type === 'round_streak' ? roundStreakSortConfig : 
+                       sortConfig; 
+        
+        if (config.key !== key) return <ChevronsUpDown size={14} className="ml-1 text-gray-400" />; 
+        if (config.direction === 'asc') return <ArrowUp size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; 
+        return <ArrowDown size={14} className="ml-1 text-gray-800 dark:text-gray-200" />; 
+    };
     
     const { sanitizedPointsEvolution, sanitizedPositionEvolution, sanitizedPlayerPerformance, sanitizedH2hChart } = useMemo(() => {
         if (!season || !season.members) return { sanitizedPointsEvolution: [], sanitizedPositionEvolution: [], sanitizedPlayerPerformance: [], sanitizedH2hChart: [] };
@@ -392,7 +547,6 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                    <button onClick={() => setShowHistorical(false)} className="btn-secondary mb-4 flex items-center gap-2">
                      ← Volver a Estadísticas Actuales
                   </button>
-                   {/* Esta línea es correcta ahora que 'seasons' está en las props */}
                    <HistoricalStatsTab league={league} seasons={seasons} />
                </>
            ) : (
@@ -407,83 +561,86 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
                 <div className="flex justify-between items-center p-6">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Estadísticas Detalladas por Jugador</h3>
-                    {/* Esta línea es correcta ahora que 'History' está importado */}
-                    <button onClick={() => setShowHistorical(true)} className="btn-primary flex items-center gap-2 text-sm">
-                        <History size={16} /> Ver Historial Completo
-                    </button>
+                    {/* --- NUEVO ---: Botón de Stats Avanzadas (a la izquierda) */}
+                    <div className="flex items-center gap-4">
+                        <button 
+                            onClick={() => alert('Próximamente: Modal de Estadísticas Avanzadas')} 
+                            className="btn-secondary hidden sm:flex items-center gap-2 text-sm"
+                            title="Próximamente"
+                        >
+                            <Zap size={16} /> Ver Stats Avanzadas
+                        </button>
+                        <button onClick={() => setShowHistorical(true)} className="btn-primary flex items-center gap-2 text-sm">
+                            <History size={16} /> Ver Historial Completo
+                        </button>
+                    </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800/60">
-                <tr className="border-b dark:border-gray-700">
-                    {/* Orden y Colores:
-                        Jugador (color negro) - text-black dark:text-white
-                        Total Pts (color fucsia) - text-fuchsia-600 dark:text-fuchsia-400
-                        Victorias (color dorado) - text-yellow-600 dark:text-yellow-400
-                        Podios (color morado) - text-purple-600 dark:text-purple-400
-                        Pos. Media (naranja) - text-orange-600 dark:text-orange-400
-                        Media Pts (color azul claro) - text-sky-600 dark:text-sky-400
-                        Mediana (color azul mas normal) - text-blue-600 dark:text-blue-400
-                        Moda (color mas oscuro) - text-indigo-600 dark:text-indigo-400
-                        Mejor Jornada (color verde) - text-emerald-600 dark:text-emerald-400
-                        Peor Jornada (color rojo) - text-red-600 dark:text-red-500
-                        Regularidad (color 1e40af) - text-[#1e40af] dark:text-[#60a5fa] (usando color directo o uno parecido de Tailwind)
-                    */}
-                    <th className="p-3 text-left font-semibold text-black dark:text-white">
-                        <button onClick={() => requestSort('name')} className="flex items-center">Jugador {getSortIndicator('name')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-fuchsia-600 dark:text-fuchsia-400">
-                        <button onClick={() => requestSort('totalPoints')} className="flex items-center justify-center w-full">Total Pts {getSortIndicator('totalPoints')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-yellow-600 dark:text-yellow-400">
-                         <button onClick={() => requestSort('victorias')} className="flex items-center justify-center w-full">Victorias {getSortIndicator('victorias')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-purple-600 dark:text-purple-400">
-                         <button onClick={() => requestSort('podios')} className="flex items-center justify-center w-full">Podios {getSortIndicator('podios')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-orange-600 dark:text-orange-400">
-                        <button onClick={() => requestSort('averagePosition')} className="flex items-center justify-center w-full">Pos. Media {getSortIndicator('averagePosition')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-sky-600 dark:text-sky-400"> {/* Azul claro */}
-                        <button onClick={() => requestSort('average')} className="flex items-center justify-center w-full">Media Pts {getSortIndicator('average')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-blue-600 dark:text-blue-400"> {/* Azul normal */}
-                         <button onClick={() => requestSort('mediana')} className="flex items-center justify-center w-full">Mediana {getSortIndicator('mediana')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-indigo-600 dark:text-indigo-400"> {/* Azul oscuro */}
-                         <button onClick={() => requestSort('moda')} className="flex items-center justify-center w-full">Moda {getSortIndicator('moda')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-emerald-600 dark:text-emerald-400"> {/* Verde */}
-                        <button onClick={() => requestSort('best')} className="flex items-center justify-center w-full">Mejor Jornada {getSortIndicator('best')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-red-600 dark:text-red-500"> {/* Rojo */}
-                        <button onClick={() => requestSort('worst')} className="flex items-center justify-center w-full">Peor Jornada {getSortIndicator('worst')}</button>
-                    </th>
-                    <th className="p-3 text-center font-semibold text-[#1e40af] dark:text-[#60a5fa]"> {/* Azul #1e40af */}
-                        <button onClick={() => requestSort('regularity')} className="flex items-center justify-center w-full">Regularidad {getSortIndicator('regularity')}</button>
-                    </th>
-                </tr>
-            </thead>
-            {/* --- CUERPO MODIFICADO --- */}
-            <tbody className="divide-y dark:divide-gray-700">
-                {sortedDetailedPlayerStats.map(member => (
-                    <tr key={member.uid} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                        <td className="p-3 font-semibold text-black dark:text-white whitespace-nowrap">
-                            <Link to={`/profile/${member.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{member.name}</Link>
-                        </td>
-                        <td className="p-3 text-center font-mono font-bold text-fuchsia-600 dark:text-fuchsia-400">{member.totalPoints}</td>
-                        <td className="p-3 text-center font-mono font-bold text-yellow-600 dark:text-yellow-400">{member.victorias}</td>
-                        <td className="p-3 text-center font-mono font-bold text-purple-600 dark:text-purple-400">{member.podios}</td>
-                        <td className="p-3 text-center font-mono text-orange-600 dark:text-orange-400">{member.averagePosition}</td>
-                        <td className="p-3 text-center font-mono font-bold text-sky-600 dark:text-sky-400">{member.average}</td>
-                        <td className="p-3 text-center font-mono font-bold text-blue-600 dark:text-blue-400">{member.mediana}</td>
-                        <td className="p-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">{member.moda}</td>
-                        <td className="p-3 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">{member.best}</td>
-                        <td className="p-3 text-center font-mono font-bold text-red-600 dark:text-red-500">{member.worst}</td>
-                        <td className="p-3 text-center font-mono text-[#1e40af] dark:text-[#60a5fa]">{member.regularity}</td>
-                    </tr>
-                ))}
-            </tbody>
+                            <tr className="border-b dark:border-gray-700">
+                                <th className="p-3 text-left font-semibold text-black dark:text-white">
+                                    <button onClick={() => requestSort('name')} className="flex items-center">Jugador {getSortIndicator('name')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-fuchsia-600 dark:text-fuchsia-400">
+                                    <button onClick={() => requestSort('totalPoints')} className="flex items-center justify-center w-full">Total Pts {getSortIndicator('totalPoints')}</button>
+                                </th>
+                                {/* --- NUEVA COLUMNA --- */}
+                                <th className="p-3 text-center font-semibold text-yellow-500 dark:text-yellow-300">
+                                    <button onClick={() => requestSort('captainEffectiveness')} className="flex items-center justify-center w-full" title="Efectividad del Capitán">% Cap. {getSortIndicator('captainEffectiveness')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-yellow-600 dark:text-yellow-400">
+                                    <button onClick={() => requestSort('victorias')} className="flex items-center justify-center w-full">Victorias {getSortIndicator('victorias')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-purple-600 dark:text-purple-400">
+                                    <button onClick={() => requestSort('podios')} className="flex items-center justify-center w-full">Podios {getSortIndicator('podios')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-orange-600 dark:text-orange-400">
+                                    <button onClick={() => requestSort('averagePosition')} className="flex items-center justify-center w-full">Pos. Media {getSortIndicator('averagePosition')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-sky-600 dark:text-sky-400">
+                                    <button onClick={() => requestSort('average')} className="flex items-center justify-center w-full">Media Pts {getSortIndicator('average')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-blue-600 dark:text-blue-400">
+                                    <button onClick={() => requestSort('mediana')} className="flex items-center justify-center w-full">Mediana {getSortIndicator('mediana')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-indigo-600 dark:text-indigo-400">
+                                    <button onClick={() => requestSort('moda')} className="flex items-center justify-center w-full">Moda {getSortIndicator('moda')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-emerald-600 dark:text-emerald-400">
+                                    <button onClick={() => requestSort('best')} className="flex items-center justify-center w-full">Mejor Jornada {getSortIndicator('best')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-red-600 dark:text-red-500">
+                                    <button onClick={() => requestSort('worst')} className="flex items-center justify-center w-full">Peor Jornada {getSortIndicator('worst')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-[#1e40af] dark:text-[#60a5fa]">
+                                    <button onClick={() => requestSort('regularity')} className="flex items-center justify-center w-full">Regularidad {getSortIndicator('regularity')}</button>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y dark:divide-gray-700">
+                            {sortedDetailedPlayerStats.map(member => (
+                                <tr key={member.uid} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                                    <td className="p-3 font-semibold text-black dark:text-white whitespace-nowrap">
+                                        <Link to={`/profile/${member.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{member.name}</Link>
+                                    </td>
+                                    <td className="p-3 text-center font-mono font-bold text-fuchsia-600 dark:text-fuchsia-400">{member.totalPoints}</td>
+                                    {/* --- NUEVA CELDA --- */}
+                                    <td className="p-3 text-center font-mono font-bold text-yellow-500 dark:text-yellow-300" title={`+${member.captainPoints} Pts Extra`}>
+                                        {member.captainEffectiveness}%
+                                    </td>
+                                    <td className="p-3 text-center font-mono font-bold text-yellow-600 dark:text-yellow-400">{member.victorias}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-purple-600 dark:text-purple-400">{member.podios}</td>
+                                    <td className="p-3 text-center font-mono text-orange-600 dark:text-orange-400">{member.averagePosition}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-sky-600 dark:text-sky-400">{member.average}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-blue-600 dark:text-blue-400">{member.mediana}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">{member.moda}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">{member.best}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-red-600 dark:text-red-500">{member.worst}</td>
+                                    <td className="p-3 text-center font-mono text-[#1e40af] dark:text-[#60a5fa]">{member.regularity}</td>
+                                </tr>
+                            ))}
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -554,6 +711,99 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                                     <td className="p-3 text-center font-mono text-red-600 dark:text-red-500">{player.negativeStreakCount}</td>
                                     <td className="p-3 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">+{player.biggestJump}</td>
                                     <td className="p-3 text-center font-mono font-bold text-red-600 dark:text-red-500">{player.biggestDrop}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
+                <div className="p-6">
+                    <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                        <Flame size={20} className="text-energetic-orange" /> Rachas de Rendimiento por Jornada
+                    </h3>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-gray-50 dark:bg-gray-800/60">
+                            <tr className="border-b dark:border-gray-700">
+                                <th className="p-3 text-left font-semibold text-gray-600 dark:text-gray-300 sticky left-0 bg-gray-50 dark:bg-gray-800/60 z-10">
+                                    <button onClick={() => requestRoundStreakSort('name')} className="flex items-center">Jugador {getSortIndicator('name', 'round_streak')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300">
+                                    <button onClick={() => requestRoundStreakSort('maxWinStreak')} className="flex items-center justify-center w-full">Max Victorias Seguidas {getSortIndicator('maxWinStreak', 'round_streak')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300">
+                                    <button onClick={() => requestRoundStreakSort('maxPodiumStreak')} className="flex items-center justify-center w-full">Max Podios Seguidos {getSortIndicator('maxPodiumStreak', 'round_streak')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300">
+                                    <button onClick={() => requestRoundStreakSort('maxTop5Streak')} className="flex items-center justify-center w-full">Max Top 5 Seguidos {getSortIndicator('maxTop5Streak', 'round_streak')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300">
+                                    <button onClick={() => requestRoundStreakSort('maxTop10Streak')} className="flex items-center justify-center w-full">Max Top 10 Seguidos {getSortIndicator('maxTop10Streak', 'round_streak')}</button>
+                                </th>
+                                <th className="p-3 text-center font-semibold text-gray-600 dark:text-gray-300">
+                                    <button onClick={() => requestRoundStreakSort('maxScoringStreak')} className="flex items-center justify-center w-full">Max Jornadas Puntuando {getSortIndicator('maxScoringStreak', 'round_streak')}</button>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y dark:divide-gray-700">
+                            {sortedRoundStreakStats.map(player => (
+                                <tr key={player.uid} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                                    <td className="p-3 font-semibold text-gray-800 dark:text-gray-200 whitespace-nowrap sticky left-0 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 z-10">
+                                        <Link to={`/profile/${player.username}`} className="hover:text-deep-blue dark:hover:text-blue-400 hover:underline">{player.name}</Link>
+                                    </td>
+                                    <td className="p-3 text-center font-mono">
+                                        <span className={player.maxWinStreak > 0 ? "font-bold text-yellow-600 dark:text-yellow-400" : "text-gray-400 dark:text-gray-500"}>
+                                            {player.maxWinStreak}
+                                        </span>
+                                        {player.currentWinStreak > 0 && (
+                                            <span className="ml-2 text-xs font-bold text-energetic-orange" title={`Racha activa de ${player.currentWinStreak}`}>
+                                                ({player.currentWinStreak} <Flame size={12} className="inline"/>)
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="p-3 text-center font-mono">
+                                        <span className={player.maxPodiumStreak > 0 ? "font-bold text-purple-600 dark:text-purple-400" : "text-gray-400 dark:text-gray-500"}>
+                                            {player.maxPodiumStreak}
+                                        </span>
+                                        {player.currentPodiumStreak > 0 && player.currentPodiumStreak !== player.currentWinStreak && (
+                                            <span className="ml-2 text-xs font-bold text-energetic-orange" title={`Racha activa de ${player.currentPodiumStreak}`}>
+                                                ({player.currentPodiumStreak} <Flame size={12} className="inline"/>)
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="p-3 text-center font-mono">
+                                        <span className={player.maxTop5Streak > 0 ? "font-bold text-blue-600 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}>
+                                            {player.maxTop5Streak}
+                                        </span>
+                                        {player.currentTop5Streak > 0 && player.currentTop5Streak !== player.currentPodiumStreak && (
+                                            <span className="ml-2 text-xs font-bold text-energetic-orange" title={`Racha activa de ${player.currentTop5Streak}`}>
+                                                ({player.currentTop5Streak} <Flame size={12} className="inline"/>)
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="p-3 text-center font-mono">
+                                        <span className={player.maxTop10Streak > 0 ? "font-bold text-sky-600 dark:text-sky-400" : "text-gray-400 dark:text-gray-500"}>
+                                            {player.maxTop10Streak}
+                                        </span>
+                                        {player.currentTop10Streak > 0 && player.currentTop10Streak !== player.currentTop5Streak && (
+                                            <span className="ml-2 text-xs font-bold text-energetic-orange" title={`Racha activa de ${player.currentTop10Streak}`}>
+                                                ({player.currentTop10Streak} <Flame size={12} className="inline"/>)
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="p-3 text-center font-mono">
+                                        <span className={player.maxScoringStreak > 0 ? "font-bold text-emerald-600 dark:text-emerald-400" : "text-gray-400 dark:text-gray-500"}>
+                                            {player.maxScoringStreak}
+                                        </span>
+                                        {player.currentScoringStreak > 0 && (
+                                            <span className="ml-2 text-xs font-bold text-energetic-orange" title={`Racha activa de ${player.currentScoringStreak}`}>
+                                                ({player.currentScoringStreak} <Flame size={12} className="inline"/>)
+                                            </span>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -649,8 +899,9 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
+                 {/* --- MODIFICADO ---: Gráfica de Gestión del Banquillo */}
                  <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-6">
-                    <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Sofa size={20}/> Puntos Desperdiciados en el Banquillo</h3>
+                    <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2"><Sofa size={20}/> Gestión del Banquillo</h3>
                     <ResponsiveContainer width="100%" height={300}>
                         <BarChart data={memoizedStats.benchPointsData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
@@ -658,10 +909,12 @@ export default function StatsTab({ league, season, seasons, roundsData }) {
                             <YAxis dataKey="name" type="category" width={100} tick={{fill: tickColor}}/>
                             <Tooltip contentStyle={{ backgroundColor: theme === 'dark' ? '#1f2937' : '#ffffff', border: `1px solid ${gridColor}` }} formatter={(value) => `${value} pts`}/>
                             <Legend wrapperStyle={{ color: tickColor }}/>
-                            <Bar dataKey="Puntos Desperdiciados" fill="#7c3aed" />
+                            <Bar dataKey="Puntos Ganados" fill="#22c55e" name="Puntos Ganados (Banquillo)" />
+                            <Bar dataKey="Puntos Desperdiciados" fill="#7c3aed" name="Puntos Desperdiciados (Banquillo)" />
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
+                {/* --- FIN MODIFICADO --- */}
             </div>
 
             <div className="grid lg:grid-cols-2 gap-6">
