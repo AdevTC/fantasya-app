@@ -1,0 +1,37 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Posts images - users can upload images for their posts
+    match /posts/{userId}/{allPaths=**} {
+      // Allow authenticated users to read post images
+      allow read: if isAuthenticated();
+      // Allow users to upload images to their own folder
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Profile photos - users can upload their own profile photo
+    match /profilePhotos/{userId}/{allPaths=**} {
+      // Allow anyone to read profile photos (public)
+      allow read: if true;
+      // Allow users to write their own profile photo
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Chat images - any authenticated user can upload/read chat images
+    // (Access control is handled at the Firestore level for chat participation)
+    match /chats/{chatId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Default deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

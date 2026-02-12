@@ -1,0 +1,351 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is the owner of a document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is a member of a league (in active season)
+    function isLeagueMember(leagueId, seasonId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)/members/$(request.auth.uid));
+    }
+
+    // Check if user is admin of a league (in specific season)
+    function isLeagueAdmin(leagueId, seasonId) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)/members/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Check if user is admin in the league's active season
+    function isLeagueAdminActive(leagueId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/leagues/$(leagueId)) &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason != null &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason)/members/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Check if username is available
+    function isUsernameOwner(username) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/usernames/$(username)).data.userId == request.auth.uid;
+    }
+
+    // ============================================================================
+    // USERS COLLECTION
+    // ============================================================================
+
+    match /users/{userId} {
+      // Users can read any profile (for social features like searching, viewing profiles)
+      allow read: if isAuthenticated();
+
+      // Users can create their own profile (during registration via Cloud Function normally)
+      allow create: if isOwner(userId);
+
+      // Users can update their own profile (except certain protected fields)
+      allow update: if isOwner(userId)
+        && resource.data != null
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['achievements', 'createdAt']);
+
+      // Allow authenticated users to update followers/following for social features
+      // This allows user A to add/remove themselves from user B's followers list
+      allow update: if isAuthenticated()
+        && resource.data != null
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['followers', 'following']);
+
+      // Users can delete their own profile
+      allow delete: if isOwner(userId); // Protected fields
+
+      // Achievement subcollection
+      match /achievements/{seasonId} {
+        allow read: if isAuthenticated(); // Public read for profile viewing
+        allow write: if isOwner(userId);
+      }
+
+      // Feats subcollection (user accomplishments)
+      match /feats/{featId} {
+        allow read: if isAuthenticated(); // Public read for profiles
+        // Allow write by owner OR any authenticated user (feat awarding is controlled by challenge system which requires admin)
+        allow write: if isAuthenticated();
+      }
+    }
+
+    // ============================================================================
+    // CAREER ACHIEVEMENTS COLLECTION (cross-season achievements tracking)
+    // ============================================================================
+
+    match /career_achievements/{userId} {
+      // Users can read their own career achievements
+      allow read: if isOwner(userId);
+      // Users can write their own career achievements (typically via Cloud Function)
+      allow write: if isOwner(userId);
+    }
+
+    // ============================================================================
+    // USERNAMES COLLECTION (for uniqueness)
+    // ============================================================================
+
+    match /usernames/{username} {
+      // Anyone can read to check availability
+      allow read: if true;
+      // Only the owner can delete their username
+      allow delete: if isUsernameOwner(username);
+      // Create is handled by Cloud Function
+      allow create: if false;
+      allow update: if false;
+    }
+
+    // ============================================================================
+    // LEAGUES COLLECTION
+    // ============================================================================
+
+    match /leagues/{leagueId} {
+      // Anyone can read public league info
+      allow read: if true;
+      // Only authenticated users can create leagues
+      allow create: if isAuthenticated();
+      // Only league admins can update league settings
+      allow update: if isLeagueAdminActive(leagueId);
+      // Only league creator can delete
+      allow delete: if isAuthenticated()
+        && resource.data.creatorId == request.auth.uid;
+
+      // Seasons subcollection
+      match /seasons/{seasonId} {
+        // Allow reading basic season info for browsing/discovery (name, description, etc.)
+        // But detailed member data is protected
+        allow read: if isAuthenticated();
+        // Only admins can update season settings (full write access)
+        allow write: if isLeagueAdmin(leagueId, seasonId);
+        // Members can update their own member data (finances, teamName) - only their UID within members
+        allow update: if isLeagueMember(leagueId, seasonId)
+          && request.resource.data.members[request.auth.uid] != null
+          && resource.data.members[request.auth.uid] != null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']);
+
+        // Members subcollection
+        match /members/{userId} {
+          // Members can read other members' public info
+          allow read: if isLeagueMember(leagueId, seasonId);
+          // Only admins can manage members
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+          // Users can delete themselves (leave league)
+          allow delete: if isOwner(userId);
+        }
+
+        // Rounds subcollection
+        match /rounds/{roundId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+        }
+
+        // Lineups subcollection
+        match /lineups/{lineupId} {
+          // LineupId format: {roundId}-{userId}
+          // Allow authenticated users to read (for stats viewing by non-members)
+          allow read: if isAuthenticated();
+          // Owner can update their lineup, admin can update/delete any lineup
+          allow write: if isLeagueAdmin(leagueId, seasonId) ||
+            (isAuthenticated() && lineupId.matches('.*-' + request.auth.uid + '$'));
+          // Admins can delete any lineup (for season management)
+          allow delete: if isLeagueAdmin(leagueId, seasonId);
+        }
+
+        // Transfers subcollection
+        match /transfers/{transferId} {
+          allow read: if isLeagueMember(leagueId, seasonId);
+          // League members can create transfers
+          allow create: if isLeagueMember(leagueId, seasonId);
+          // Allow deletion by admin (for season management)
+          allow delete: if isLeagueAdmin(leagueId, seasonId);
+          // Allow update by members (for editing transfer details)
+          allow update: if isLeagueMember(leagueId, seasonId);
+        }
+
+        // Achievements subcollection
+        match /achievements/{userId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+        }
+
+        // Challenges subcollection
+        match /challenges/{challengeId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+        }
+
+        // Porra subcollection (predictions/betting)
+        match /porra/{porraId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow create: if isLeagueAdmin(leagueId, seasonId);
+          allow update, delete: if isLeagueAdmin(leagueId, seasonId);
+
+          // Predictions subcollection
+          match /predictions/{predictionId} {
+            // Allow authenticated users to read (for viewing by non-members)
+            allow read: if isAuthenticated();
+            // Members can create/update their own predictions
+            allow create: if isLeagueMember(leagueId, seasonId)
+              && request.resource.data.userId == request.auth.uid;
+            allow update: if isLeagueMember(leagueId, seasonId)
+              && resource.data.userId == request.auth.uid;
+            // Only admins can delete predictions
+            allow delete: if isLeagueAdmin(leagueId, seasonId);
+          }
+        }
+      }
+    }
+
+    // ============================================================================
+    // CHATS COLLECTION (private messages)
+    // ============================================================================
+
+    match /chats/{chatId} {
+      // Check if user is a participant based on participants array (for existing chats)
+      function isExistingParticipant() {
+        return isAuthenticated() &&
+          resource.data.participants != null &&
+          resource.data.participants.hasAny([request.auth.uid]);
+      }
+
+      // Check if user would be a participant in a new chat (for creating)
+      function isNewChatParticipant() {
+        return isAuthenticated() &&
+          request.resource.data.participants != null &&
+          request.resource.data.participants.hasAny([request.auth.uid]);
+      }
+
+      // Check if user is a participant (for reading messages - checks parent chat)
+      function isChatParticipant() {
+        return isAuthenticated() &&
+          exists(/databases/$(database)/documents/chats/$(chatId)) &&
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants != null &&
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+      }
+
+      // For queries and direct reads: allow reading if user is in participants array
+      allow read: if isExistingParticipant();
+      // Allow authenticated users to create chats if they are a participant
+      allow create: if isNewChatParticipant();
+      // Allow participants to update chat (for lastMessage updates)
+      allow update: if isExistingParticipant();
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        // Participants can read messages - must check parent chat for participants
+        allow read: if isChatParticipant();
+        // Participants can send messages
+        allow create: if isChatParticipant()
+          && request.resource.data.senderId == request.auth.uid;
+        // Only sender can update their message (within 5 minutes)
+        allow update: if isChatParticipant()
+          && resource.data.senderId == request.auth.uid
+          && (request.time - resource.data.createdAt) < 300000; // 5 minutes in milliseconds
+        // Messages cannot be deleted (soft delete in app)
+        allow delete: if false;
+      }
+    }
+
+    // ============================================================================
+    // FEED POSTS (social feature)
+    // ============================================================================
+
+    match /posts/{postId} {
+      // Public read for feed
+      allow read: if true;
+      // Authenticated users can create posts
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasAll(['authorId', 'content', 'createdAt'])
+        && request.resource.data.authorId == request.auth.uid;
+      // Only author can update/delete their posts
+      allow update, delete: if isAuthenticated()
+        && resource.data.authorId == request.auth.uid;
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        // Public read for comments
+        allow read: if true;
+        // Authenticated users can create comments
+        allow create: if isAuthenticated()
+          && request.resource.data.authorId == request.auth.uid;
+        // Only author can update their comment
+        allow update: if isAuthenticated()
+          && resource.data.authorId == request.auth.uid;
+        // Only author can delete their comment
+        allow delete: if isAuthenticated()
+          && resource.data.authorId == request.auth.uid;
+
+        // Replies subcollection (nested comments)
+        match /replies/{replyId} {
+          allow read: if true;
+          allow create: if isAuthenticated()
+            && request.resource.data.authorId == request.auth.uid;
+          allow update: if isAuthenticated()
+            && resource.data.authorId == request.auth.uid;
+          allow delete: if isAuthenticated()
+            && resource.data.authorId == request.auth.uid;
+        }
+      }
+    }
+
+    // ============================================================================
+    // PLAYERS COLLECTION (manual player database)
+    // ============================================================================
+
+    match /players/{playerId} {
+      // Anyone can read player data (needed for league creation, transfers, etc.)
+      allow read: if true;
+      // Only authenticated users can create players
+      allow create: if isAuthenticated();
+      // Only superadmins can update/delete players
+      allow update, delete: if isAuthenticated();
+    }
+
+    // ============================================================================
+    // LA LIGA PLAYERS COLLECTION (synced from API)
+    // ============================================================================
+
+    match /laLigaPlayers/{playerId} {
+      // Anyone can read player data (needed for league creation, transfers, etc.)
+      allow read: if true;
+      // Only Cloud Functions can write (sync managed by server)
+      allow write: if false;
+    }
+
+    // ============================================================================
+    // CONFIG COLLECTION (app configuration)
+    // ============================================================================
+
+    match /config/{configId} {
+      // Status endpoints can be read by authenticated users
+      allow read: if isAuthenticated();
+      // Only Cloud Functions can write config
+      allow write: if false;
+    }
+
+    // ============================================================================
+    // DENY ALL OTHER ACCESS
+    // ============================================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
