@@ -37,7 +37,7 @@ export default function PlayersSyncTab() {
 
             if (token) {
                 try {
-                    const response = await fetch('https://synclaligaplayers-950074372501.us-central1.run.app', {
+                    const response = await fetch('https://synclaligaplayers-6co4rpvhqa-uc.a.run.app', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -56,7 +56,7 @@ export default function PlayersSyncTab() {
 
                 // Try the status endpoint
                 try {
-                    const statusResponse = await fetch('https://getlaligasyncstatus-950074372501.us-central1.run.app', {
+                    const statusResponse = await fetch('https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -144,7 +144,7 @@ export default function PlayersSyncTab() {
                 throw new Error('No estás autenticado');
             }
 
-            const response = await fetch('https://synclaligaplayers-950074372501.us-central1.run.app', {
+            const response = await fetch('https://synclaligaplayers-6co4rpvhqa-uc.a.run.app', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
