@@ -255,9 +255,10 @@ const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
  */
 const POSITION_MAP = {
     "Goalkeeper": "POR",
-    "Defender": "DEF",
-    "Midfielder": "MED",
-    "Forward": "DEL"
+    "Defence": "DEF",
+    "Midfield": "MED",
+    "Forward": "DEL",
+    "Offence": "DEL"
 };
 
 /**
@@ -269,11 +270,14 @@ const TEAM_NAME_MAP = {
     "Atlético de Madrid": "Atlético de Madrid",
     "Athletic Club": "Athletic Club",
     "Sevilla FC": "Sevilla",
+    "Real Betis Balompié": "Real Betis",
     "Real Betis": "Real Betis",
+    "Real Sociedad de Fútbol": "Real Sociedad",
     "Real Sociedad": "Real Sociedad",
     "Villarreal CF": "Villarreal",
     "Valencia CF": "Valencia",
     "RC Celta": "Celta",
+    "RC Celta de Vigo": "Celta",
     "CA Osasuna": "Osasuna",
     "Getafe CF": "Getafe",
     "CD Leganés": "Leganés",
@@ -281,9 +285,17 @@ const TEAM_NAME_MAP = {
     "Real Valladolid CF": "Valladolid",
     "SD Eibar": "Eibar",
     "RCD Espanyol": "Espanyol",
+    "RCD Espanyol de Barcelona": "Espanyol",
     "Deportivo Alavés": "Alavés",
     "Granada CF": "Granada",
-    "Mallorca": "Mallorca"
+    "RCD Mallorca": "Mallorca",
+    "Rayo Vallecano de Madrid": "Rayo Vallecano",
+    "Girona FC": "Girona",
+    "UD Las Palmas": "Las Palmas",
+    "Deportivo Alavés": "Alavés",
+    "UD Almería": "Almería",
+    "Cádiz CF": "Cádiz",
+    "Elche CF": "Elche"
 };
 
 /**
@@ -293,7 +305,9 @@ const TEAM_NAME_MAP = {
 exports.syncLaLigaPlayers = onRequest(
     {
         region: "us-central1",
-        cors: true
+        cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"],
+        timeoutSeconds: 540,
+        memory: "1GiB"
     },
     async (req, res) => {
         if (req.method !== 'POST') {
@@ -331,13 +345,15 @@ exports.syncLaLigaPlayers = onRequest(
                 startedBy: userId
             }, { merge: true });
 
-            // Step 1: Fetch La Liga teams
+            // Step 1: Fetch La Liga teams with their squads
             logger.info("Fetching La Liga teams from football-data.org");
             const teamsResponse = await fetch(`${FOOTBALL_API_BASE}/competitions/${LA_LIGA_ID}/teams`, {
                 headers: { "X-Auth-Token": API_KEY }
             });
 
             if (!teamsResponse.ok) {
+                const errorText = await teamsResponse.text();
+                logger.error(`API Error fetching teams: ${teamsResponse.status} - ${errorText}`);
                 throw new Error(`API Error fetching teams: ${teamsResponse.status} ${teamsResponse.statusText}`);
             }
 
@@ -345,61 +361,97 @@ exports.syncLaLigaPlayers = onRequest(
             const teams = teamsData.teams || [];
             logger.info(`Found ${teams.length} teams in La Liga`);
 
-            // Step 2: Fetch players for each team
+            // Step 2: Fetch team details sequentially to respect API rate limit (10 req/min)
             const allPlayers = [];
-            let totalPlayersFetched = 0;
+            const DELAY_BETWEEN_REQUESTS = 6500; // 6.5 seconds between requests
 
-            for (const team of teams) {
-                logger.info(`Fetching players for ${team.name}`);
-                const playersResponse = await fetch(`${FOOTBALL_API_BASE}/teams/${team.id}/players`, {
-                    headers: { "X-Auth-Token": API_KEY }
-                });
+            for (let i = 0; i < teams.length; i++) {
+                const team = teams[i];
+                logger.info(`Fetching squad ${i + 1}/${teams.length}: ${team.name}`);
 
-                if (!playersResponse.ok) {
-                    logger.warn(`Failed to fetch players for ${team.name}: ${playersResponse.status}`);
-                    continue;
-                }
-
-                const playersData = await playersResponse.json();
-                const players = playersData.players || [];
-
-                for (const player of players) {
-                    const fantasyaTeam = TEAM_NAME_MAP[player.currentTeam?.name] || player.currentTeam?.name;
-                    const fantasyaPosition = POSITION_MAP[player.position] || "MED";
-
-                    allPlayers.push({
-                        id: player.id,
-                        name: player.name,
-                        firstName: player.firstName || "",
-                        lastName: player.lastName || "",
-                        dateOfBirth: player.dateOfBirth || null,
-                        nationality: player.nationality || null,
-                        position: fantasyaPosition,
-                        team: fantasyaTeam,
-                        shirtNumber: player.shirtNumber || null,
-                        lastUpdated: FieldValue.serverTimestamp(),
-                        // History tracking
-                        teamHistory: [{
-                            team: fantasyaTeam,
-                            since: new Date().toISOString()
-                        }],
-                        positionHistory: [{
-                            position: fantasyaPosition,
-                            since: new Date().toISOString()
-                        }]
+                try {
+                    const teamResponse = await fetch(`${FOOTBALL_API_BASE}/teams/${team.id}`, {
+                        headers: { "X-Auth-Token": API_KEY }
                     });
 
-                    totalPlayersFetched++;
-                }
+                    if (!teamResponse.ok) {
+                        logger.warn(`Failed to fetch team ${team.name}: ${teamResponse.status}`);
+                        // If rate limited, wait longer and retry once
+                        if (teamResponse.status === 429) {
+                            logger.info(`Rate limited, waiting 30 seconds...`);
+                            await new Promise(resolve => setTimeout(resolve, 30000));
+                            // Retry
+                            const retryResponse = await fetch(`${FOOTBALL_API_BASE}/teams/${team.id}`, {
+                                headers: { "X-Auth-Token": API_KEY }
+                            });
+                            if (!retryResponse.ok) {
+                                logger.warn(`Retry failed for ${team.name}: ${retryResponse.status}`);
+                                continue;
+                            }
+                            const retryData = await retryResponse.json();
+                            const squad = retryData.squad || [];
+                            const teamName = retryData.name;
+                            logger.info(`Found ${squad.length} players for ${teamName} (after retry)`);
 
-                // Respect API rate limit (10 requests per minute)
-                // Sleep 6.5 seconds between requests to stay under limit
-                await new Promise(resolve => setTimeout(resolve, 6500));
+                            for (const player of squad) {
+                                const fantasyaTeam = TEAM_NAME_MAP[teamName] || teamName;
+                                const fantasyaPosition = POSITION_MAP[player.position] || "MED";
+                                allPlayers.push({
+                                    id: player.id,
+                                    name: player.name,
+                                    firstName: player.firstName || "",
+                                    lastName: player.lastName || "",
+                                    dateOfBirth: player.dateOfBirth || null,
+                                    nationality: player.nationality || null,
+                                    position: fantasyaPosition,
+                                    team: fantasyaTeam,
+                                    shirtNumber: null,
+                                    lastUpdated: FieldValue.serverTimestamp(),
+                                    teamHistory: [{ team: fantasyaTeam, since: new Date().toISOString() }],
+                                    positionHistory: [{ position: fantasyaPosition, since: new Date().toISOString() }]
+                                });
+                            }
+                        }
+                        continue;
+                    }
+
+                    const teamData = await teamResponse.json();
+                    const squad = teamData.squad || [];
+                    const teamName = teamData.name;
+
+                    logger.info(`Found ${squad.length} players for ${teamName}`);
+
+                    for (const player of squad) {
+                        const fantasyaTeam = TEAM_NAME_MAP[teamName] || teamName;
+                        const fantasyaPosition = POSITION_MAP[player.position] || "MED";
+                        allPlayers.push({
+                            id: player.id,
+                            name: player.name,
+                            firstName: player.firstName || "",
+                            lastName: player.lastName || "",
+                            dateOfBirth: player.dateOfBirth || null,
+                            nationality: player.nationality || null,
+                            position: fantasyaPosition,
+                            team: fantasyaTeam,
+                            shirtNumber: null,
+                            lastUpdated: FieldValue.serverTimestamp(),
+                            teamHistory: [{ team: fantasyaTeam, since: new Date().toISOString() }],
+                            positionHistory: [{ position: fantasyaPosition, since: new Date().toISOString() }]
+                        });
+                    }
+
+                    // Wait between requests to respect rate limit (except for last team)
+                    if (i < teams.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_REQUESTS));
+                    }
+                } catch (error) {
+                    logger.error(`Error fetching team ${team.name}:`, error);
+                }
             }
 
-            logger.info(`Total players fetched: ${totalPlayersFetched}`);
+            logger.info(`Total players fetched: ${allPlayers.length}`);
 
-            // Step 3: Batch write to Firestore
+            // Step 3: Batch write to Firestore (simplified - no individual reads)
             const batchSize = 500;
             const batches = Math.ceil(allPlayers.length / batchSize);
 
@@ -411,39 +463,6 @@ exports.syncLaLigaPlayers = onRequest(
                 for (let j = start; j < end; j++) {
                     const player = allPlayers[j];
                     const playerRef = db.doc(`laLigaPlayers/${player.id}`);
-
-                    // Check if player exists to preserve history
-                    const existingDoc = await playerRef.get();
-                    if (existingDoc.exists) {
-                        const existingData = existingDoc.data();
-                        const currentTeam = player.team;
-                        const currentPosition = player.position;
-
-                        // Only update history if team or position changed
-                        let newTeamHistory = existingData.teamHistory || [];
-                        let newPositionHistory = existingData.positionHistory || [];
-
-                        const lastTeamEntry = newTeamHistory[newTeamHistory.length - 1];
-                        const lastPositionEntry = newPositionHistory[newPositionHistory.length - 1];
-
-                        if (lastTeamEntry && lastTeamEntry.team !== currentTeam) {
-                            newTeamHistory.push({
-                                team: currentTeam,
-                                since: new Date().toISOString()
-                            });
-                        }
-
-                        if (lastPositionEntry && lastPositionEntry.position !== currentPosition) {
-                            newPositionHistory.push({
-                                position: currentPosition,
-                                since: new Date().toISOString()
-                            });
-                        }
-
-                        player.teamHistory = newTeamHistory;
-                        player.positionHistory = newPositionHistory;
-                    }
-
                     batch.set(playerRef, player, { merge: true });
                 }
 
@@ -491,7 +510,7 @@ exports.syncLaLigaPlayers = onRequest(
 exports.getLaLigaSyncStatus = onRequest(
     {
         region: "us-central1",
-        cors: true
+        cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"]
     },
     async (req, res) => {
         // CORS is handled by the cors option
