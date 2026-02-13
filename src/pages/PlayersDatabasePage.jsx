@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { collection, addDoc, getDocs, orderBy, query, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { ShieldPlus, UserPlus, Edit, Trash2 } from 'lucide-react';
+import { ShieldPlus, UserPlus, Edit, Trash2, RefreshCw, Database } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import EditPlayerModal from '../components/EditPlayerModal'; // <-- Importamos el nuevo modal
+import PlayersSyncTab from '../components/PlayersSyncTab'; // <-- Importamos la nueva pestaña de sincronización
 
 const positions = ['Portero', 'Defensa', 'Centrocampista', 'Delantero', 'Entrenador'];
 const teams = ['Athletic Club', 'Atlético de Madrid', 'CA Osasuna', 'Deportivo Alavés', 'Elche CF', 'FC Barcelona', 'Getafe CF', 'Girona FC', 'Levante UD', 'Rayo Vallecano', 'RC Celta de Vigo', 'RCD Espanyol', 'RCD Mallorca', 'Real Betis Balompié', 'Real Madrid', 'Real Oviedo', 'Real Sociedad', 'Sevilla FC', 'Valencia CF', 'Villarreal CF'].sort();
@@ -15,7 +16,8 @@ export default function PlayersDatabasePage() {
     const [name, setName] = useState('');
     const [position, setPosition] = useState(positions[0]);
     const [team, setTeam] = useState(teams[0]);
-    
+    const [activeTab, setActiveTab] = useState('manual'); // 'manual' or 'sync'
+
     // --- ESTADOS PARA CONTROLAR EL MODAL DE EDICIÓN ---
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [playerToEdit, setPlayerToEdit] = useState(null);
@@ -76,10 +78,45 @@ export default function PlayersDatabasePage() {
         <>
             <EditPlayerModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} player={playerToEdit} onPlayerUpdated={fetchPlayers} />
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <div className="flex justify-between items-center mb-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                     <h1 className="text-3xl font-bold text-gray-800">Base de Datos de Jugadores</h1>
-                    <Link to="/dashboard" className="text-deep-blue hover:underline font-semibold">Volver al Dashboard</Link>
+                    <div className="flex items-center gap-4">
+                        <Link to="/dashboard" className="text-deep-blue hover:underline font-semibold">Volver al Dashboard</Link>
+                    </div>
                 </div>
+
+                {/* Tab Navigation */}
+                <div className="mb-6 border-b border-gray-200 dark:border-gray-700">
+                    <nav className="flex gap-8">
+                        <button
+                            onClick={() => setActiveTab('manual')}
+                            className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                                activeTab === 'manual'
+                                    ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                            }`}
+                        >
+                            <UserPlus size={18} />
+                            Gestión Manual
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('sync')}
+                            className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                                activeTab === 'sync'
+                                    ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                            }`}
+                        >
+                            <RefreshCw size={18} />
+                            Sincronización La Liga
+                        </button>
+                    </nav>
+                </div>
+
+                {/* Tab Content */}
+                {activeTab === 'sync' ? (
+                    <PlayersSyncTab />
+                ) : (
                 <div className="grid lg:grid-cols-3 gap-8">
                     <div className="lg:col-span-1">
                         <form onSubmit={handleAddPlayer} className="bg-white p-6 rounded-xl shadow-sm border space-y-4 sticky top-8">
@@ -119,6 +156,7 @@ export default function PlayersDatabasePage() {
                          </div>
                     </div>
                 </div>
+                )}
             </div>
         </>
     );

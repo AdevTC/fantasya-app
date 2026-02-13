@@ -116,13 +116,20 @@ export default function LoginPage() {
             } catch (err) {
                 // Borrar el usuario de Auth si la creación del perfil en Firestore falla (ej. nombre de usuario duplicado)
                 if (auth.currentUser) {
-                    await auth.currentUser.delete();
+                    try {
+                        await auth.currentUser.delete();
+                    } catch (deleteError) {
+                        console.error("No se pudo eliminar el usuario de Auth:", deleteError);
+                        // El usuario quedará huérfano, pero el flujo continúa
+                    }
                 }
 
                 if (err.code === 'auth/email-already-in-use') {
                     toast.error('Este correo electrónico ya está en uso.');
-                } else if (err.code === 'functions/already-exists') { // Error personalizado de la Cloud Function
+                } else if (err.code === 'functions/already-exists' || err.message?.includes('already exists')) {
                     toast.error('Este nombre de usuario ya está cogido.');
+                } else if (err.code === 'auth/user-token-expired') {
+                    toast.error('La sesión expiró. Por favor, intenta registrarte de nuevo.');
                 } else {
                     toast.error(err.message || 'Ha ocurrido un error inesperado.');
                 }

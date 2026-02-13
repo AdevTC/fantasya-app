@@ -4,10 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "firebase:login": "firebase login",
+    "firebase:deploy:rules": "firebase deploy --only firestore:rules",
+    "firebase:deploy:firestore": "firebase deploy --only firestore",
+    "firebase:deploy:functions": "firebase deploy --only functions",
+    "firebase:deploy:all": "firebase deploy"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,5 +1,6 @@
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
+const cors = require("cors")({ origin: true });
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const logger = require("firebase-functions/logger");
@@ -240,3 +241,300 @@ exports.createOrGetChat = onCall({ region: "us-central1", cors: ["https://fantas
         throw new HttpsError("internal", "Ocurrió un error inesperado al iniciar el chat.");
     }
 });
+
+// ============================================================================
+// LA LIGA PLAYER SYNC
+// ============================================================================
+
+const FOOTBALL_API_BASE = "https://api.football-data.org/v4";
+const LA_LIGA_ID = "PD"; // La Liga competition ID in football-data.org
+const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
+
+/**
+ * Position mapping from football-data.org to Fantasya positions
+ */
+const POSITION_MAP = {
+    "Goalkeeper": "POR",
+    "Defender": "DEF",
+    "Midfielder": "MED",
+    "Forward": "DEL"
+};
+
+/**
+ * Normalize team names to match Fantasya's team IDs/names
+ */
+const TEAM_NAME_MAP = {
+    "Real Madrid CF": "Real Madrid",
+    "FC Barcelona": "Barcelona",
+    "Atlético de Madrid": "Atlético de Madrid",
+    "Athletic Club": "Athletic Club",
+    "Sevilla FC": "Sevilla",
+    "Real Betis": "Real Betis",
+    "Real Sociedad": "Real Sociedad",
+    "Villarreal CF": "Villarreal",
+    "Valencia CF": "Valencia",
+    "RC Celta": "Celta",
+    "CA Osasuna": "Osasuna",
+    "Getafe CF": "Getafe",
+    "CD Leganés": "Leganés",
+    "Levante UD": "Levante",
+    "Real Valladolid CF": "Valladolid",
+    "SD Eibar": "Eibar",
+    "RCD Espanyol": "Espanyol",
+    "Deportivo Alavés": "Alavés",
+    "Granada CF": "Granada",
+    "Mallorca": "Mallorca"
+};
+
+/**
+ * Sync La Liga players from football-data.org to Firestore
+ * HTTP function with CORS support
+ */
+exports.syncLaLigaPlayers = onRequest(
+    {
+        region: "us-central1",
+        cors: true
+    },
+    async (req, res) => {
+        if (req.method !== 'POST') {
+            res.status(405).send('Method not allowed');
+            return;
+        }
+
+        // Verify authentication from Authorization header
+        const authHeader = req.headers.authorization || '';
+        const token = authHeader.replace('Bearer ', '');
+
+        let userId;
+        try {
+            const decoded = await admin.auth().verifyIdToken(token);
+            userId = decoded.uid;
+        } catch (error) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        if (!API_KEY) {
+            logger.error("FOOTBALL_DATA_API_KEY not configured");
+            res.status(500).json({ error: "La API key no está configurada en el servidor." });
+            return;
+        }
+
+        logger.info(`Starting La Liga player sync requested by user ${userId}`);
+
+        try {
+            // Update sync status to "in_progress"
+            const statusRef = db.doc("config/laLigaSync");
+            await statusRef.set({
+                status: "in_progress",
+                startedAt: FieldValue.serverTimestamp(),
+                startedBy: userId
+            }, { merge: true });
+
+            // Step 1: Fetch La Liga teams
+            logger.info("Fetching La Liga teams from football-data.org");
+            const teamsResponse = await fetch(`${FOOTBALL_API_BASE}/competitions/${LA_LIGA_ID}/teams`, {
+                headers: { "X-Auth-Token": API_KEY }
+            });
+
+            if (!teamsResponse.ok) {
+                throw new Error(`API Error fetching teams: ${teamsResponse.status} ${teamsResponse.statusText}`);
+            }
+
+            const teamsData = await teamsResponse.json();
+            const teams = teamsData.teams || [];
+            logger.info(`Found ${teams.length} teams in La Liga`);
+
+            // Step 2: Fetch players for each team
+            const allPlayers = [];
+            let totalPlayersFetched = 0;
+
+            for (const team of teams) {
+                logger.info(`Fetching players for ${team.name}`);
+                const playersResponse = await fetch(`${FOOTBALL_API_BASE}/teams/${team.id}/players`, {
+                    headers: { "X-Auth-Token": API_KEY }
+                });
+
+                if (!playersResponse.ok) {
+                    logger.warn(`Failed to fetch players for ${team.name}: ${playersResponse.status}`);
+                    continue;
+                }
+
+                const playersData = await playersResponse.json();
+                const players = playersData.players || [];
+
+                for (const player of players) {
+                    const fantasyaTeam = TEAM_NAME_MAP[player.currentTeam?.name] || player.currentTeam?.name;
+                    const fantasyaPosition = POSITION_MAP[player.position] || "MED";
+
+                    allPlayers.push({
+                        id: player.id,
+                        name: player.name,
+                        firstName: player.firstName || "",
+                        lastName: player.lastName || "",
+                        dateOfBirth: player.dateOfBirth || null,
+                        nationality: player.nationality || null,
+                        position: fantasyaPosition,
+                        team: fantasyaTeam,
+                        shirtNumber: player.shirtNumber || null,
+                        lastUpdated: FieldValue.serverTimestamp(),
+                        // History tracking
+                        teamHistory: [{
+                            team: fantasyaTeam,
+                            since: new Date().toISOString()
+                        }],
+                        positionHistory: [{
+                            position: fantasyaPosition,
+                            since: new Date().toISOString()
+                        }]
+                    });
+
+                    totalPlayersFetched++;
+                }
+
+                // Respect API rate limit (10 requests per minute)
+                // Sleep 6.5 seconds between requests to stay under limit
+                await new Promise(resolve => setTimeout(resolve, 6500));
+            }
+
+            logger.info(`Total players fetched: ${totalPlayersFetched}`);
+
+            // Step 3: Batch write to Firestore
+            const batchSize = 500;
+            const batches = Math.ceil(allPlayers.length / batchSize);
+
+            for (let i = 0; i < batches; i++) {
+                const batch = db.batch();
+                const start = i * batchSize;
+                const end = Math.min(start + batchSize, allPlayers.length);
+
+                for (let j = start; j < end; j++) {
+                    const player = allPlayers[j];
+                    const playerRef = db.doc(`laLigaPlayers/${player.id}`);
+
+                    // Check if player exists to preserve history
+                    const existingDoc = await playerRef.get();
+                    if (existingDoc.exists) {
+                        const existingData = existingDoc.data();
+                        const currentTeam = player.team;
+                        const currentPosition = player.position;
+
+                        // Only update history if team or position changed
+                        let newTeamHistory = existingData.teamHistory || [];
+                        let newPositionHistory = existingData.positionHistory || [];
+
+                        const lastTeamEntry = newTeamHistory[newTeamHistory.length - 1];
+                        const lastPositionEntry = newPositionHistory[newPositionHistory.length - 1];
+
+                        if (lastTeamEntry && lastTeamEntry.team !== currentTeam) {
+                            newTeamHistory.push({
+                                team: currentTeam,
+                                since: new Date().toISOString()
+                            });
+                        }
+
+                        if (lastPositionEntry && lastPositionEntry.position !== currentPosition) {
+                            newPositionHistory.push({
+                                position: currentPosition,
+                                since: new Date().toISOString()
+                            });
+                        }
+
+                        player.teamHistory = newTeamHistory;
+                        player.positionHistory = newPositionHistory;
+                    }
+
+                    batch.set(playerRef, player, { merge: true });
+                }
+
+                await batch.commit();
+                logger.info(`Committed batch ${i + 1}/${batches}`);
+            }
+
+            // Update sync status to "completed"
+            await statusRef.set({
+                status: "completed",
+                lastSync: FieldValue.serverTimestamp(),
+                playersCount: allPlayers.length,
+                syncedBy: userId
+            }, { merge: true });
+
+            logger.info(`La Liga player sync completed successfully. ${allPlayers.length} players synced.`);
+
+            res.json({
+                success: true,
+                playersSynced: allPlayers.length,
+                teamsProcessed: teams.length,
+                message: `Sincronización completada: ${allPlayers.length} jugadores actualizados.`
+            });
+
+        } catch (error) {
+            logger.error("Error syncing La Liga players:", error);
+
+            // Update sync status to "error"
+            const statusRef = db.doc("config/laLigaSync");
+            await statusRef.set({
+                status: "error",
+                lastError: error.message,
+                failedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+
+            res.status(500).json({ error: `Error al sincronizar jugadores: ${error.message}` });
+        }
+    }
+);
+
+/**
+ * Get the current sync status of La Liga players
+ * HTTP function with CORS support
+ */
+exports.getLaLigaSyncStatus = onRequest(
+    {
+        region: "us-central1",
+        cors: true
+    },
+    async (req, res) => {
+        // CORS is handled by the cors option
+        if (req.method !== 'POST') {
+            res.status(405).send('Method not allowed');
+            return;
+        }
+
+        // Verify authentication from Authorization header
+        const authHeader = req.headers.authorization || '';
+        const token = authHeader.replace('Bearer ', '');
+
+        let userId;
+        try {
+            const decoded = await admin.auth().verifyIdToken(token);
+            userId = decoded.uid;
+        } catch (error) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        try {
+            const statusDoc = await db.doc("config/laLigaSync").get();
+
+            if (!statusDoc.exists) {
+                res.json({
+                    status: "never_synced",
+                    lastSync: null,
+                    playersCount: 0
+                });
+                return;
+            }
+
+            const data = statusDoc.data();
+            res.json({
+                status: data.status || "unknown",
+                lastSync: data.lastSync || data.startedAt || null,
+                playersCount: data.playersCount || 0,
+                lastError: data.lastError || null
+            });
+        } catch (error) {
+            logger.error("Error getting sync status:", error);
+            res.status(500).json({ error: "Error al obtener el estado de sincronización." });
+        }
+    }
+);

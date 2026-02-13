@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { doc, onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
+import { onSnapshot, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { User, ArrowLeft, Settings, Trophy, CalendarDays, Repeat, BarChart2, ShieldCheck, Medal, Star, ArrowUp, Flame, Crown, ChevronDown, TrendingUp, TrendingDown, Minus, ChevronsUpDown, Swords, BookOpen, Menu, Sun, Moon, Eye, PieChart, History } from 'lucide-react';
 
@@ -228,6 +228,7 @@ export default function LeaguePage() {
     const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
     const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
     const menuRef = useRef(null);
 
     useEffect(() => {
@@ -266,7 +267,33 @@ export default function LeaguePage() {
         return () => unsubscribeRounds();
     }, [selectedSeason, leagueId, searchParams, setSearchParams]);
 
-    const TabButton = ({ icon, text, tabName }) => {
+    // Listen for pending join requests count (for admin badge)
+    useEffect(() => {
+        if (!leagueId || !selectedSeason) return;
+
+        const user = auth.currentUser;
+        const isMember = user && selectedSeason.members && selectedSeason.members[user.uid];
+        const userRole = isMember ? selectedSeason.members[user.uid].role : 'guest';
+
+        // Only listen for admins
+        if (userRole !== 'admin') {
+            setPendingRequestsCount(0);
+            return;
+        }
+
+        const requestsRef = collection(db, 'leagues', leagueId, 'seasons', selectedSeason.id, 'joinRequests');
+        const q = query(requestsRef, where('status', '==', 'pending'));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setPendingRequestsCount(snapshot.size);
+        }, (err) => {
+            console.error("Error fetching join requests count:", err);
+        });
+
+        return () => unsubscribe();
+    }, [leagueId, selectedSeason]);
+
+    const TabButton = ({ icon, text, tabName, badge }) => {
         const isActive = activeTab === tabName;
         return (
             <button
@@ -275,6 +302,11 @@ export default function LeaguePage() {
             >
                 {icon}
                 <span className="ml-2">{text}</span>
+                {badge > 0 && (
+                    <span className="ml-2 min-w-[20px] h-5 px-1.5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                        {badge > 99 ? '99+' : badge}
+                    </span>
+                )}
             </button>
         );
     };
@@ -414,7 +446,7 @@ export default function LeaguePage() {
                                 <>
                                     <TabButton icon={<User size={18} />} text="Mi Equipo" tabName="mi-equipo" />
                                     <TabButton icon={<Repeat size={18} />} text="Fichajes" tabName="fichajes" />
-                                    {userRole === 'admin' && <TabButton icon={<ShieldCheck size={18} />} text="Admin" tabName="admin" />}
+                                    {userRole === 'admin' && <TabButton icon={<ShieldCheck size={18} />} text="Admin" tabName="admin" badge={pendingRequestsCount} />}
                                 </>
                             )}
                         </div>

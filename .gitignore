@@ -19,3 +19,20 @@ pnpm-debug.log*
 # Archivos de sistema operativo
 .DS_Store
 Thumbs.db
+
+# Claude Code y herramientas de desarrollo
+.claude/
+.serena/
+.playwright-mcp/
+CLAUDE.md
+docs/
+
+# Firebase debug
+firestore-debug.log
+firestore.indexes.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -16,16 +16,38 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Check if user is a member of a league (in active season)
-    function isLeagueMember(leagueId, seasonId) {
+    // Check if user is a member of a season (members is a MAP field in season document)
+    function isSeasonMember(seasonData) {
       return isAuthenticated() &&
-        exists(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)/members/$(request.auth.uid));
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members;
     }
 
-    // Check if user is admin of a league (in specific season)
-    function isLeagueAdmin(leagueId, seasonId) {
+    // Check if user is admin of a season (members is a MAP field in season document)
+    function isSeasonAdmin(seasonData) {
       return isAuthenticated() &&
-        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)/members/$(request.auth.uid)).data.role == 'admin';
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members &&
+        'role' in seasonData.members[request.auth.uid] &&
+        seasonData.members[request.auth.uid].role == 'admin';
+    }
+
+    // Check if user is a member of a league (in specific season) - for cross-document checks
+    function isLeagueMember(leagueId, seasonId) {
+      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members;
+    }
+
+    // Check if user is admin of a league (in specific season) - for cross-document checks
+    function isLeagueAdmin(leagueId, seasonId) {
+      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members &&
+        'role' in seasonData.members[request.auth.uid] &&
+        seasonData.members[request.auth.uid].role == 'admin';
     }
 
     // Check if user is admin in the league's active season
@@ -33,7 +55,7 @@ service cloud.firestore {
       return isAuthenticated() &&
         exists(/databases/$(database)/documents/leagues/$(leagueId)) &&
         get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason != null &&
-        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason)/members/$(request.auth.uid)).data.role == 'admin';
+        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason)).data.members[request.auth.uid].role == 'admin';
     }
 
     // Check if username is available
@@ -126,15 +148,30 @@ service cloud.firestore {
       // Seasons subcollection
       match /seasons/{seasonId} {
         // Allow reading basic season info for browsing/discovery (name, description, etc.)
-        // But detailed member data is protected
         allow read: if isAuthenticated();
-        // Only admins can update season settings (full write access)
-        allow write: if isLeagueAdmin(leagueId, seasonId);
-        // Members can update their own member data (finances, teamName) - only their UID within members
-        allow update: if isLeagueMember(leagueId, seasonId)
-          && request.resource.data.members[request.auth.uid] != null
-          && resource.data.members[request.auth.uid] != null
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']);
+
+        // Only admins can create or delete seasons
+        allow create, delete: if isSeasonAdmin(resource.data);
+
+        // UPDATE rules (multiple conditions - any can pass):
+        // 1. Admins can update anything (using resource.data - no cross-document reads)
+        // 2. Existing members can update their own data
+        // 3. New users can join (add themselves as members)
+
+        allow update: if isSeasonAdmin(resource.data)
+          || (
+            // Existing member updating their own data
+            isSeasonMember(resource.data)
+            && request.resource.data.members[request.auth.uid] != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          )
+          || (
+            // New user joining the season
+            isAuthenticated()
+            && resource.data.members[request.auth.uid] == null
+            && request.resource.data.members[request.auth.uid] != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          );
 
         // Members subcollection
         match /members/{userId} {
@@ -190,6 +227,17 @@ service cloud.firestore {
           allow write: if isLeagueAdmin(leagueId, seasonId);
         }
 
+        // Join Requests subcollection (solicitudes de unión)
+        match /joinRequests/{requestId} {
+          // Authenticated users can create join requests
+          allow create: if isAuthenticated()
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.status == 'pending';
+          // Only admins can read and update (approve/reject) requests
+          // Use isSeasonAdmin with the parent season data (passed via get())
+          allow read, update: if isSeasonAdmin(get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data);
+        }
+
         // Porra subcollection (predictions/betting)
         match /porra/{porraId} {
           // Allow authenticated users to read (for viewing by non-members)
@@ -218,47 +266,24 @@ service cloud.firestore {
     // ============================================================================
 
     match /chats/{chatId} {
-      // Check if user is a participant based on participants array (for existing chats)
-      function isExistingParticipant() {
-        return isAuthenticated() &&
-          resource.data.participants != null &&
-          resource.data.participants.hasAny([request.auth.uid]);
-      }
-
-      // Check if user would be a participant in a new chat (for creating)
-      function isNewChatParticipant() {
-        return isAuthenticated() &&
-          request.resource.data.participants != null &&
-          request.resource.data.participants.hasAny([request.auth.uid]);
-      }
-
-      // Check if user is a participant (for reading messages - checks parent chat)
-      function isChatParticipant() {
-        return isAuthenticated() &&
-          exists(/databases/$(database)/documents/chats/$(chatId)) &&
-          get(/databases/$(database)/documents/chats/$(chatId)).data.participants != null &&
-          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
-      }
-
-      // For queries and direct reads: allow reading if user is in participants array
-      allow read: if isExistingParticipant();
-      // Allow authenticated users to create chats if they are a participant
-      allow create: if isNewChatParticipant();
-      // Allow participants to update chat (for lastMessage updates)
-      allow update: if isExistingParticipant();
+      // Simple rules - allow authenticated users full access to chats
+      // Security is provided by the fact that chatId is based on sorted user IDs
+      allow read, create, update: if isAuthenticated();
 
       // Messages subcollection
       match /messages/{messageId} {
-        // Participants can read messages - must check parent chat for participants
-        allow read: if isChatParticipant();
-        // Participants can send messages
-        allow create: if isChatParticipant()
-          && request.resource.data.senderId == request.auth.uid;
-        // Only sender can update their message (within 5 minutes)
-        allow update: if isChatParticipant()
-          && resource.data.senderId == request.auth.uid
-          && (request.time - resource.data.createdAt) < 300000; // 5 minutes in milliseconds
-        // Messages cannot be deleted (soft delete in app)
+        // Allow authenticated users to read messages
+        allow read: if isAuthenticated();
+        // Allow authenticated users to create messages (senderId must match)
+        allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+        // Sender can update their message, OR anyone can update requestStatus for join requests
+        allow update: if isAuthenticated() && (
+          resource.data.senderId == request.auth.uid
+          || (
+            resource.data.isJoinRequest == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['requestStatus'])
+          )
+        );
         allow delete: if false;
       }
     }

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs } from 'firebase/firestore';
+import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions'; // AÑADIDO
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
-import { Calendar, List, Award } from 'lucide-react';
+import { Calendar, List, Award, UserCheck } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import JoinRequestCard from './JoinRequestCard';
 
 export const TROPHY_DEFINITIONS = {
     CHAMPION: { name: 'Campeón de Liga', description: 'Ganador de la temporada con más puntos.' },
@@ -39,6 +40,10 @@ export default function AdminTab({ league, season, roundsData }) {
     const [loading, setLoading] = useState(false);
     const [members, setMembers] = useState(season?.members || {});
     const [newTeamName, setNewTeamName] = useState('');
+    const [joinRequests, setJoinRequests] = useState([]);
+    const [loadingRequests, setLoadingRequests] = useState(true);
+    const [processingRequest, setProcessingRequest] = useState(null);
+    const [requestUserProfiles, setRequestUserProfiles] = useState({});
 
     useEffect(() => {
         if (!season) return;
@@ -67,6 +72,48 @@ export default function AdminTab({ league, season, roundsData }) {
         });
         return () => unsubscribe();
     }, [league.id, season.id]);
+
+    // Listen for join requests
+    useEffect(() => {
+        if (!league?.id || !season?.id) return;
+        setLoadingRequests(true);
+
+        const requestsRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'joinRequests');
+        const q = query(requestsRef, where('status', '==', 'pending'));
+
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
+            const requests = [];
+            snapshot.forEach(doc => {
+                requests.push({ id: doc.id, ...doc.data() });
+            });
+            // Sort by createdAt descending (newest first)
+            requests.sort((a, b) => {
+                const timeA = a.createdAt?.toMillis?.() || 0;
+                const timeB = b.createdAt?.toMillis?.() || 0;
+                return timeB - timeA;
+            });
+            setJoinRequests(requests);
+
+            // Fetch user profiles for the requests
+            const userIds = [...new Set(requests.map(r => r.userId))];
+            if (userIds.length > 0) {
+                const usersRef = collection(db, 'users');
+                const usersQ = query(usersRef, where('__name__', 'in', userIds.slice(0, 10))); // Firestore limit
+                const userSnaps = await getDocs(usersQ);
+                const profiles = {};
+                userSnaps.forEach(doc => {
+                    profiles[doc.id] = doc.data();
+                });
+                setRequestUserProfiles(profiles);
+            }
+            setLoadingRequests(false);
+        }, (error) => {
+            console.error("Error listening to join requests:", error);
+            setLoadingRequests(false);
+        });
+
+        return () => unsubscribe();
+    }, [league?.id, season?.id]);
 
     const handleScoreChange = (roundNum, uid, value) => {
         const newScores = { ...scores };
@@ -219,6 +266,95 @@ export default function AdminTab({ league, season, roundsData }) {
             }
         }
     };
+
+    // --- JOIN REQUEST HANDLERS ---
+    const handleApproveRequest = async (request) => {
+        if (!window.confirm(`¿Aprobar a "${request.username}" con el equipo "${request.teamName}"?`)) return;
+
+        setProcessingRequest(request.id);
+        const loadingToast = toast.loading('Aprobando solicitud...');
+
+        try {
+            const batch = writeBatch(db);
+
+            // 1. Update request status
+            const requestRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'joinRequests', request.id);
+            batch.update(requestRef, {
+                status: 'approved',
+                reviewedAt: serverTimestamp(),
+                reviewedBy: adminProfile?.uid || 'unknown'
+            });
+
+            // 2. Add user to members
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', season.id);
+            batch.update(seasonRef, {
+                [`members.${request.userId}`]: {
+                    teamName: request.teamName,
+                    username: request.username,
+                    role: 'member',
+                    totalPoints: 0,
+                    finances: { budget: 200, teamValue: 0 }
+                }
+            });
+
+            await batch.commit();
+
+            // 3. Send notification message to chat
+            if (request.chatId) {
+                const notificationMessage = `¡Felicidades! Tu solicitud para unirte a la liga ha sido aprobada. Bienvenido "${request.teamName}" a la temporada!`;
+                await addDoc(collection(db, 'chats', request.chatId, 'messages'), {
+                    senderId: adminProfile?.uid || 'system',
+                    text: notificationMessage,
+                    createdAt: serverTimestamp(),
+                    read: false,
+                    isSystemMessage: true
+                });
+            }
+
+            toast.success(`¡${request.username} ha sido aprobado!`, { id: loadingToast });
+        } catch (error) {
+            console.error("Error approving request:", error);
+            toast.error('Error al aprobar la solicitud.', { id: loadingToast });
+        } finally {
+            setProcessingRequest(null);
+        }
+    };
+
+    const handleRejectRequest = async (request) => {
+        if (!window.confirm(`¿Rechazar la solicitud de "${request.username}"?`)) return;
+
+        setProcessingRequest(request.id);
+        const loadingToast = toast.loading('Rechazando solicitud...');
+
+        try {
+            // 1. Update request status
+            const requestRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'joinRequests', request.id);
+            await updateDoc(requestRef, {
+                status: 'rejected',
+                reviewedAt: serverTimestamp(),
+                reviewedBy: adminProfile?.uid || 'unknown'
+            });
+
+            // 2. Send notification message to chat
+            if (request.chatId) {
+                const notificationMessage = `Lo sentimos, tu solicitud para unirte a la liga con el equipo "${request.teamName}" ha sido rechazada.`;
+                await addDoc(collection(db, 'chats', request.chatId, 'messages'), {
+                    senderId: adminProfile?.uid || 'system',
+                    text: notificationMessage,
+                    createdAt: serverTimestamp(),
+                    read: false,
+                    isSystemMessage: true
+                });
+            }
+
+            toast.success('Solicitud rechazada.', { id: loadingToast });
+        } catch (error) {
+            console.error("Error rejecting request:", error);
+            toast.error('Error al rechazar la solicitud.', { id: loadingToast });
+        } finally {
+            setProcessingRequest(null);
+        }
+    };
     
     if (!season || !members) {
         return <LoadingSpinner text="Cargando datos de administrador..." />;
@@ -226,6 +362,43 @@ export default function AdminTab({ league, season, roundsData }) {
 
     return (
         <div className="space-y-6">
+            {/* JOIN REQUESTS SECTION */}
+            {joinRequests.length > 0 && (
+                <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-4 sm:p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 bg-emerald-100 dark:bg-emerald-900/50 rounded-lg">
+                            <UserCheck className="text-emerald-600 dark:text-emerald-400" size={24} />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                                Solicitudes Pendientes
+                            </h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                                {joinRequests.length} {joinRequests.length === 1 ? 'usuario quiere' : 'usuarios quieren'} unirse a la temporada
+                            </p>
+                        </div>
+                    </div>
+
+                    {loadingRequests ? (
+                        <LoadingSpinner text="Cargando solicitudes..." />
+                    ) : (
+                        <div className="space-y-4">
+                            {joinRequests.map(request => (
+                                <JoinRequestCard
+                                    key={request.id}
+                                    request={request}
+                                    userProfile={requestUserProfiles[request.userId]}
+                                    onApprove={handleApproveRequest}
+                                    onReject={handleRejectRequest}
+                                    processing={processingRequest === request.id}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* SCORE MANAGEMENT SECTION */}
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700 p-4 sm:p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Gestión de Puntuaciones</h3>
