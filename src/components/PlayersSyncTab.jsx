@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { app, db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle } from 'lucide-react';
+import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X } from 'lucide-react';
 
 const POSITION_MAP_DISPLAY = {
     'POR': 'Portero',
@@ -22,12 +22,42 @@ export default function PlayersSyncTab() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncProgress, setSyncProgress] = useState(null);
     const [syncedPlayers, setSyncedPlayers] = useState([]);
+    const [teamFilter, setTeamFilter] = useState('');
+    const [positionFilter, setPositionFilter] = useState('');
 
     // Fetch sync status on mount
     useEffect(() => {
         fetchSyncStatus();
         fetchSyncedPlayers();
     }, []);
+
+    // Get unique teams and positions for filters
+    const uniqueTeams = useMemo(() => {
+        const teams = [...new Set(syncedPlayers.map(p => p.team).filter(Boolean))];
+        return teams.sort();
+    }, [syncedPlayers]);
+
+    const uniquePositions = useMemo(() => {
+        const positions = [...new Set(syncedPlayers.map(p => p.position).filter(Boolean))];
+        return positions.sort();
+    }, [syncedPlayers]);
+
+    // Filtered players
+    const filteredPlayers = useMemo(() => {
+        return syncedPlayers.filter(player => {
+            const matchesTeam = !teamFilter || player.team === teamFilter;
+            const matchesPosition = !positionFilter || player.position === positionFilter;
+            return matchesTeam && matchesPosition;
+        });
+    }, [syncedPlayers, teamFilter, positionFilter]);
+
+    // Clear filters
+    const clearFilters = () => {
+        setTeamFilter('');
+        setPositionFilter('');
+    };
+
+    const hasActiveFilters = teamFilter || positionFilter;
 
     const fetchSyncStatus = async () => {
         try {
@@ -349,10 +379,57 @@ export default function PlayersSyncTab() {
             {/* Synced Players Table */}
             <div className="bg-white dark:bg-gray-800/50 rounded-xl shadow-sm border dark:border-gray-700">
                 <div className="p-6 border-b dark:border-gray-700">
-                    <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-                        <Database className="w-5 h-5" />
-                        Jugadores Sincronizados ({syncedPlayers.length})
-                    </h3>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                            <Database className="w-5 h-5" />
+                            Jugadores Sincronizados ({filteredPlayers.length}{hasActiveFilters ? ` de ${syncedPlayers.length}` : ''})
+                        </h3>
+
+                        {/* Filters */}
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                <Filter className="w-4 h-4" />
+                                <span>Filtros:</span>
+                            </div>
+
+                            {/* Team Filter */}
+                            <select
+                                value={teamFilter}
+                                onChange={(e) => setTeamFilter(e.target.value)}
+                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                            >
+                                <option value="">Todos los equipos</option>
+                                {uniqueTeams.map(team => (
+                                    <option key={team} value={team}>{team}</option>
+                                ))}
+                            </select>
+
+                            {/* Position Filter */}
+                            <select
+                                value={positionFilter}
+                                onChange={(e) => setPositionFilter(e.target.value)}
+                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                            >
+                                <option value="">Todas las posiciones</option>
+                                {uniquePositions.map(position => (
+                                    <option key={position} value={position}>
+                                        {POSITION_MAP_DISPLAY[position] || position}
+                                    </option>
+                                ))}
+                            </select>
+
+                            {/* Clear Filters Button */}
+                            {hasActiveFilters && (
+                                <button
+                                    onClick={clearFilters}
+                                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                >
+                                    <X className="w-4 h-4" />
+                                    Limpiar
+                                </button>
+                            )}
+                        </div>
+                    </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -372,8 +449,14 @@ export default function PlayersSyncTab() {
                                         No hay jugadores sincronizados. Haz clic en "Sincronizar Ahora" para comenzar.
                                     </td>
                                 </tr>
+                            ) : filteredPlayers.length === 0 ? (
+                                <tr>
+                                    <td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">
+                                        No hay jugadores que coincidan con los filtros seleccionados.
+                                    </td>
+                                </tr>
                             ) : (
-                                syncedPlayers.map(player => (
+                                filteredPlayers.map(player => (
                                     <tr key={player.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td className="p-4 font-medium text-gray-800 dark:text-gray-200">
                                             {player.name}
