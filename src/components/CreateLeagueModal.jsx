@@ -15,8 +15,8 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
       return;
     }
     if (teamName.length > 24) {
-        toast.error('El nombre del equipo no puede tener más de 24 caracteres.');
-        return;
+      toast.error('El nombre del equipo no puede tener más de 24 caracteres.');
+      return;
     }
     setLoading(true);
 
@@ -27,7 +27,10 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
       const userProfileRef = doc(db, 'users', user.uid);
       const userProfileSnap = await getDoc(userProfileRef);
       if (!userProfileSnap.exists()) throw new Error("No se encontró el perfil del usuario.");
-      const username = userProfileSnap.data().username;
+
+      const userData = userProfileSnap.data();
+      const username = userData.username;
+      const userPhotoURL = userData.photoURL || ''; // GET REAL PHOTO FROM FIRESTORE
 
       const newLeagueRef = doc(collection(db, 'leagues'));
       const batch = writeBatch(db);
@@ -39,7 +42,7 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
         name: leagueName,
         createdAt: serverTimestamp(),
         ownerId: user.uid,
-        activeSeason: initialSeasonId, 
+        activeSeason: initialSeasonId,
       });
 
       // Creación de la primera temporada en una subcolección
@@ -49,19 +52,20 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
         seasonNumber: 1,
         createdAt: serverTimestamp(),
         members: {
-            [user.uid]: {
-              username: username,
-              teamName: teamName.trim(),
-              role: 'admin',
-              totalPoints: 0,
-              finances: { budget: 200, teamValue: 0 } // Objeto de finanzas corregido
-            }
+          [user.uid]: {
+            username: username,
+            teamName: teamName.trim(),
+            photoURL: userPhotoURL, // USE REAL PHOTO
+            role: 'admin',
+            totalPoints: 0,
+            finances: { budget: 200, teamValue: 0 } // Objeto de finanzas corregido
+          }
         },
         inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase()
       });
 
       await batch.commit();
-      
+
       toast.success('¡Liga creada con éxito!');
       onLeagueCreated();
       onClose();
@@ -83,8 +87,8 @@ export default function CreateLeagueModal({ isOpen, onClose, onLeagueCreated }) 
       <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
         <div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-bold text-gray-800">Crear Nueva Liga</h3><button onClick={onClose} className="text-gray-500 hover:text-gray-700">&times;</button></div>
         <form onSubmit={handleCreateLeague} className="space-y-4">
-          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de la Liga</label><input type="text" value={leagueName} onChange={(e) => setLeagueName(e.target.value)} className="input" placeholder="Ej: Liga de los Lunes"/></div>
-          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de tu Equipo (Temporada 1)</label><input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="input" placeholder="Ej: Los Máquinas FC"/></div>
+          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de la Liga</label><input type="text" value={leagueName} onChange={(e) => setLeagueName(e.target.value)} className="input" placeholder="Ej: Liga de los Lunes" /></div>
+          <div><label className="block text-gray-700 text-sm font-bold mb-2">Nombre de tu Equipo (Temporada 1)</label><input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="input" placeholder="Ej: Los Máquinas FC" /></div>
           <div className="flex justify-end gap-4 pt-2"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Creando...' : 'Crear Liga'}</button></div>
         </form>
       </div>
