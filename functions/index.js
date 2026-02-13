@@ -252,13 +252,30 @@ const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 
 /**
  * Position mapping from football-data.org to Fantasya positions
+ * API returns specific positions like "Centre-Back", "Central Midfield", etc.
  */
 const POSITION_MAP = {
+    // Porteros
     "Goalkeeper": "POR",
+    // Defensas
     "Defence": "DEF",
+    "Centre-Back": "DEF",
+    "Left-Back": "DEF",
+    "Right-Back": "DEF",
+    "Defender": "DEF",
+    // Centrocampistas
     "Midfield": "MED",
+    "Central Midfield": "MED",
+    "Attacking Midfield": "MED",
+    "Defensive Midfield": "MED",
+    "Midfielder": "MED",
+    // Delanteros
     "Forward": "DEL",
-    "Offence": "DEL"
+    "Offence": "DEL",
+    "Centre-Forward": "DEL",
+    "Left Winger": "DEL",
+    "Right Winger": "DEL",
+    "Striker": "DEL"
 };
 
 /**

@@ -3,7 +3,7 @@ import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/fires
 import { getAuth } from 'firebase/auth';
 import { app, db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X } from 'lucide-react';
+import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search } from 'lucide-react';
 
 const POSITION_MAP_DISPLAY = {
     'POR': 'Portero',
@@ -24,6 +24,7 @@ export default function PlayersSyncTab() {
     const [syncedPlayers, setSyncedPlayers] = useState([]);
     const [teamFilter, setTeamFilter] = useState('');
     const [positionFilter, setPositionFilter] = useState('');
+    const [searchName, setSearchName] = useState('');
 
     // Fetch sync status on mount
     useEffect(() => {
@@ -47,17 +48,20 @@ export default function PlayersSyncTab() {
         return syncedPlayers.filter(player => {
             const matchesTeam = !teamFilter || player.team === teamFilter;
             const matchesPosition = !positionFilter || player.position === positionFilter;
-            return matchesTeam && matchesPosition;
+            const matchesSearch = !searchName ||
+                player.name?.toLowerCase().includes(searchName.toLowerCase());
+            return matchesTeam && matchesPosition && matchesSearch;
         });
-    }, [syncedPlayers, teamFilter, positionFilter]);
+    }, [syncedPlayers, teamFilter, positionFilter, searchName]);
 
     // Clear filters
     const clearFilters = () => {
         setTeamFilter('');
         setPositionFilter('');
+        setSearchName('');
     };
 
-    const hasActiveFilters = teamFilter || positionFilter;
+    const hasActiveFilters = teamFilter || positionFilter || searchName;
 
     const fetchSyncStatus = async () => {
         try {
@@ -392,6 +396,18 @@ export default function PlayersSyncTab() {
                                 <span>Filtros:</span>
                             </div>
 
+                            {/* Search by name */}
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar por nombre..."
+                                    value={searchName}
+                                    onChange={(e) => setSearchName(e.target.value)}
+                                    className="pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent w-48"
+                                />
+                            </div>
+
                             {/* Team Filter */}
                             <select
                                 value={teamFilter}
@@ -438,20 +454,19 @@ export default function PlayersSyncTab() {
                                 <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Nombre</th>
                                 <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Posición</th>
                                 <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Equipo</th>
-                                <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Dorsal</th>
                                 <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Nacionalidad</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                             {syncedPlayers.length === 0 ? (
                                 <tr>
-                                    <td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">
+                                    <td colSpan="4" className="p-8 text-center text-gray-500 dark:text-gray-400">
                                         No hay jugadores sincronizados. Haz clic en "Sincronizar Ahora" para comenzar.
                                     </td>
                                 </tr>
                             ) : filteredPlayers.length === 0 ? (
                                 <tr>
-                                    <td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">
+                                    <td colSpan="4" className="p-8 text-center text-gray-500 dark:text-gray-400">
                                         No hay jugadores que coincidan con los filtros seleccionados.
                                     </td>
                                 </tr>
@@ -466,9 +481,6 @@ export default function PlayersSyncTab() {
                                         </td>
                                         <td className="p-4 text-gray-600 dark:text-gray-400">
                                             {player.team}
-                                        </td>
-                                        <td className="p-4 text-gray-600 dark:text-gray-400">
-                                            {player.shirtNumber || '-'}
                                         </td>
                                         <td className="p-4 text-gray-600 dark:text-gray-400">
                                             {player.nationality || '-'}
