@@ -3,7 +3,7 @@ import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/fires
 import { getAuth } from 'firebase/auth';
 import { app, db } from '../config/firebase';
 import toast from 'react-hot-toast';
-import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search } from 'lucide-react';
+import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 const POSITION_MAP_DISPLAY = {
     'POR': 'Portero',
@@ -24,7 +24,11 @@ export default function PlayersSyncTab() {
     const [syncedPlayers, setSyncedPlayers] = useState([]);
     const [teamFilter, setTeamFilter] = useState('');
     const [positionFilter, setPositionFilter] = useState('');
+    const [nationalityFilter, setNationalityFilter] = useState('');
     const [searchName, setSearchName] = useState('');
+    const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
+    const [currentPage, setCurrentPage] = useState(1);
+    const ITEMS_PER_PAGE = 20;
 
     // Fetch sync status on mount
     useEffect(() => {
@@ -43,25 +47,73 @@ export default function PlayersSyncTab() {
         return positions.sort();
     }, [syncedPlayers]);
 
-    // Filtered players
+    const uniqueNationalities = useMemo(() => {
+        const nationalities = [...new Set(syncedPlayers.map(p => p.nationality).filter(Boolean))];
+        return nationalities.sort();
+    }, [syncedPlayers]);
+
+    // Filtered & Sorted players
     const filteredPlayers = useMemo(() => {
-        return syncedPlayers.filter(player => {
+        setCurrentPage(1); // Reset to first page on filter change
+
+        let result = syncedPlayers.filter(player => {
             const matchesTeam = !teamFilter || player.team === teamFilter;
             const matchesPosition = !positionFilter || player.position === positionFilter;
+            const matchesNationality = !nationalityFilter || player.nationality === nationalityFilter;
             const matchesSearch = !searchName ||
                 player.name?.toLowerCase().includes(searchName.toLowerCase());
-            return matchesTeam && matchesPosition && matchesSearch;
+            return matchesTeam && matchesPosition && matchesNationality && matchesSearch;
         });
-    }, [syncedPlayers, teamFilter, positionFilter, searchName]);
+
+        // Apply sorting
+        if (sortConfig.key) {
+            result.sort((a, b) => {
+                let aValue = a[sortConfig.key] || '';
+                let bValue = b[sortConfig.key] || '';
+
+                if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        return result;
+    }, [syncedPlayers, teamFilter, positionFilter, nationalityFilter, searchName, sortConfig]);
+
+    // Pagination
+    const totalPages = Math.ceil(filteredPlayers.length / ITEMS_PER_PAGE);
+    const paginatedPlayers = useMemo(() => {
+        const start = (currentPage - 1) * ITEMS_PER_PAGE;
+        return filteredPlayers.slice(start, start + ITEMS_PER_PAGE);
+    }, [filteredPlayers, currentPage]);
+
+    // Handle sort
+    const handleSort = (key) => {
+        setSortConfig(current => ({
+            key,
+            direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+        }));
+    };
 
     // Clear filters
     const clearFilters = () => {
         setTeamFilter('');
         setPositionFilter('');
+        setNationalityFilter('');
         setSearchName('');
+        setSortConfig({ key: 'name', direction: 'asc' });
+        setCurrentPage(1);
     };
 
-    const hasActiveFilters = teamFilter || positionFilter || searchName;
+    const hasActiveFilters = teamFilter || positionFilter || nationalityFilter || searchName;
+
+    // Helper to render sort icon
+    const SortIcon = ({ columnKey }) => {
+        if (sortConfig.key !== columnKey) return <ArrowUpDown className="w-4 h-4 text-gray-400 opacity-50" />;
+        return sortConfig.direction === 'asc'
+            ? <ArrowUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            : <ArrowDown className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />;
+    };
 
     const fetchSyncStatus = async () => {
         try {
@@ -305,13 +357,12 @@ export default function PlayersSyncTab() {
 
                 {/* Progress Message */}
                 {syncProgress && (
-                    <div className={`mt-4 p-4 rounded-lg ${
-                        syncProgress.stage === 'error'
-                            ? 'bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-300'
-                            : syncProgress.stage === 'complete'
-                                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300'
-                                : 'bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'
-                    }`}>
+                    <div className={`mt-4 p-4 rounded-lg ${syncProgress.stage === 'error'
+                        ? 'bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-300'
+                        : syncProgress.stage === 'complete'
+                            ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300'
+                            : 'bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'
+                        }`}>
                         <p className="text-sm font-medium">{syncProgress.message}</p>
                     </div>
                 )}
@@ -390,60 +441,74 @@ export default function PlayersSyncTab() {
                         </h3>
 
                         {/* Filters */}
-                        <div className="flex flex-wrap items-center gap-3">
-                            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                                <Filter className="w-4 h-4" />
-                                <span>Filtros:</span>
-                            </div>
+                        <div className="flex flex-col gap-4 w-full sm:w-auto">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                    <Filter className="w-4 h-4" />
+                                    <span>Filtros:</span>
+                                </div>
 
-                            {/* Search by name */}
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar por nombre..."
-                                    value={searchName}
-                                    onChange={(e) => setSearchName(e.target.value)}
-                                    className="pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent w-48"
-                                />
-                            </div>
+                                {/* Search by name */}
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar por nombre..."
+                                        value={searchName}
+                                        onChange={(e) => setSearchName(e.target.value)}
+                                        className="pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent w-full sm:w-48"
+                                    />
+                                </div>
 
-                            {/* Team Filter */}
-                            <select
-                                value={teamFilter}
-                                onChange={(e) => setTeamFilter(e.target.value)}
-                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                            >
-                                <option value="">Todos los equipos</option>
-                                {uniqueTeams.map(team => (
-                                    <option key={team} value={team}>{team}</option>
-                                ))}
-                            </select>
-
-                            {/* Position Filter */}
-                            <select
-                                value={positionFilter}
-                                onChange={(e) => setPositionFilter(e.target.value)}
-                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                            >
-                                <option value="">Todas las posiciones</option>
-                                {uniquePositions.map(position => (
-                                    <option key={position} value={position}>
-                                        {POSITION_MAP_DISPLAY[position] || position}
-                                    </option>
-                                ))}
-                            </select>
-
-                            {/* Clear Filters Button */}
-                            {hasActiveFilters && (
-                                <button
-                                    onClick={clearFilters}
-                                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                {/* Team Filter */}
+                                <select
+                                    value={teamFilter}
+                                    onChange={(e) => setTeamFilter(e.target.value)}
+                                    className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                                 >
-                                    <X className="w-4 h-4" />
-                                    Limpiar
-                                </button>
-                            )}
+                                    <option value="">Todos los equipos</option>
+                                    {uniqueTeams.map(team => (
+                                        <option key={team} value={team}>{team}</option>
+                                    ))}
+                                </select>
+
+                                {/* Position Filter */}
+                                <select
+                                    value={positionFilter}
+                                    onChange={(e) => setPositionFilter(e.target.value)}
+                                    className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                >
+                                    <option value="">Todas las posiciones</option>
+                                    {uniquePositions.map(position => (
+                                        <option key={position} value={position}>
+                                            {POSITION_MAP_DISPLAY[position] || position}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                {/* Nationality Filter */}
+                                <select
+                                    value={nationalityFilter}
+                                    onChange={(e) => setNationalityFilter(e.target.value)}
+                                    className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                >
+                                    <option value="">Todas las nacionalidades</option>
+                                    {uniqueNationalities.map(nat => (
+                                        <option key={nat} value={nat}>{nat}</option>
+                                    ))}
+                                </select>
+
+                                {/* Clear Filters Button */}
+                                {hasActiveFilters && (
+                                    <button
+                                        onClick={clearFilters}
+                                        className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                    >
+                                        <X className="w-4 h-4" />
+                                        Limpiar
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -451,10 +516,38 @@ export default function PlayersSyncTab() {
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800">
                             <tr>
-                                <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Nombre</th>
-                                <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Posición</th>
-                                <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Equipo</th>
-                                <th className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300">Nacionalidad</th>
+                                <th
+                                    className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                    onClick={() => handleSort('name')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        Nombre <SortIcon columnKey="name" />
+                                    </div>
+                                </th>
+                                <th
+                                    className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                    onClick={() => handleSort('position')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        Posición <SortIcon columnKey="position" />
+                                    </div>
+                                </th>
+                                <th
+                                    className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                    onClick={() => handleSort('team')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        Equipo <SortIcon columnKey="team" />
+                                    </div>
+                                </th>
+                                <th
+                                    className="p-4 text-left font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                    onClick={() => handleSort('nationality')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        Nacionalidad <SortIcon columnKey="nationality" />
+                                    </div>
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -471,7 +564,7 @@ export default function PlayersSyncTab() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredPlayers.map(player => (
+                                paginatedPlayers.map(player => (
                                     <tr key={player.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td className="p-4 font-medium text-gray-800 dark:text-gray-200">
                                             {player.name}
@@ -491,6 +584,34 @@ export default function PlayersSyncTab() {
                         </tbody>
                     </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {filteredPlayers.length > 0 && (
+                    <div className="flex items-center justify-between p-4 border-t dark:border-gray-700">
+                        <div className="text-sm text-gray-500 dark:text-gray-400">
+                            Mostrando {((currentPage - 1) * ITEMS_PER_PAGE) + 1} a {Math.min(currentPage * ITEMS_PER_PAGE, filteredPlayers.length)} de {filteredPlayers.length} jugadores
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600 dark:text-gray-400"
+                            >
+                                <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Página {currentPage} de {totalPages}
+                            </span>
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600 dark:text-gray-400"
+                            >
+                                <ChevronRight className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
