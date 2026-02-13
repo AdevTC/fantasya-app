@@ -31,30 +31,11 @@ export default function PlayersSyncTab() {
 
     const fetchSyncStatus = async () => {
         try {
-            // Try the Cloud Function first
             const auth = getAuth(app);
             const token = await auth.currentUser?.getIdToken();
 
+            // Try the status Cloud Function first
             if (token) {
-                try {
-                    const response = await fetch('https://synclaligaplayers-6co4rpvhqa-uc.a.run.app', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify({ action: 'getStatus' })
-                    });
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        // This is the sync function, need to call status endpoint
-                    }
-                } catch (funcError) {
-                    console.log("Cloud Function not available, using Firestore data");
-                }
-
-                // Try the status endpoint
                 try {
                     const statusResponse = await fetch('https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app', {
                         method: 'POST',
@@ -70,7 +51,7 @@ export default function PlayersSyncTab() {
                         return;
                     }
                 } catch (funcError) {
-                    console.log("Status Cloud Function not available");
+                    console.log("Status Cloud Function not available, using Firestore");
                 }
             }
 
@@ -92,17 +73,6 @@ export default function PlayersSyncTab() {
                     playersCount: 0,
                     lastError: null
                 });
-            }
-
-            // Also try the Cloud Function if available
-            try {
-                const functions = getFunctions(app, 'us-central1');
-                const getStatus = httpsCallable(functions, 'getLaLigaSyncStatus');
-                const result = await getStatus();
-                setSyncStatus(result.data);
-            } catch (funcError) {
-                // Cloud Function call failed, but we have Firestore data
-                console.log("Cloud Function not available, using Firestore data");
             }
         } catch (error) {
             console.error("Error fetching sync status:", error);
