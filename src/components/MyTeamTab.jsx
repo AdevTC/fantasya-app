@@ -135,8 +135,32 @@ export default function MyTeamTab({ league, season, roundsData }) {
     };
 
     const handleSlotClick = (slotId) => { if (isEditableForLineup) { setEditingSlot(slotId); setIsSlotModalOpen(true); } };
-    const validateAndSaveLineup = useCallback(async (currentLineup) => { const lineupRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'lineups', `${selectedRound}-${viewedUserId}`); await setDoc(lineupRef, currentLineup, { merge: true }); toast.success(`Alineación de ${season.members[viewedUserId]?.teamName} guardada.`); }, [league.id, season, selectedRound, viewedUserId]);
-    const handleSaveSlot = useCallback(async (playerData) => { const updatedLineup = JSON.parse(JSON.stringify(lineup)); const slotType = editingSlot.split('-')[0]; const slotKey = editingSlot.split('-')[1]; if (playerData === null) { if (slotType === 'players') delete updatedLineup.players[editingSlot]; else if (slotType === 'bench') delete updatedLineup.bench[slotKey]; else if (slotType === 'coach') updatedLineup.coach = {}; } else { if (slotType === 'players') updatedLineup.players[editingSlot] = playerData; else if (slotType === 'bench') updatedLineup.bench[slotKey] = playerData; else if (slotType === 'coach') updatedLineup.coach = playerData; } setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [lineup, editingSlot, validateAndSaveLineup]);
+    const validateAndSaveLineup = useCallback(async (currentLineup) => {
+        const lineupRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'lineups', `${selectedRound}-${viewedUserId}`);
+        try {
+            await setDoc(lineupRef, { ...currentLineup, lastUpdated: serverTimestamp() }, { merge: true });
+            toast.success(`Alineación de ${season.members[viewedUserId]?.teamName} guardada.`);
+        } catch (error) {
+            console.error('Error guardando alineación:', error);
+            toast.error('Error al guardar la alineación: ' + error.message);
+        }
+    }, [league.id, season, selectedRound, viewedUserId]);
+    const handleSaveSlot = useCallback(async (playerData) => {
+        const updatedLineup = JSON.parse(JSON.stringify(lineup));
+        const slotType = editingSlot.split('-')[0];
+        const slotKey = editingSlot.split('-')[1];
+        if (playerData === null) {
+            if (slotType === 'players') delete updatedLineup.players[editingSlot];
+            else if (slotType === 'bench') delete updatedLineup.bench[slotKey];
+            else if (slotType === 'coach') updatedLineup.coach = {};
+        } else {
+            if (slotType === 'players') updatedLineup.players[editingSlot] = playerData;
+            else if (slotType === 'bench') updatedLineup.bench[slotKey] = playerData;
+            else if (slotType === 'coach') updatedLineup.coach = playerData;
+        }
+        setLineup(updatedLineup);
+        await validateAndSaveLineup(updatedLineup);
+    }, [lineup, editingSlot, validateAndSaveLineup]);
     const handleSetCaptain = useCallback(async (slotId) => { if (!isEditableForLineup) return; const newCaptainSlot = lineup.captainSlot === slotId ? null : slotId; const updatedLineup = { ...lineup, captainSlot: newCaptainSlot }; setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [isEditableForLineup, lineup, validateAndSaveLineup]);
     const handleToggleActive = useCallback(async (slotId) => { if (!isEditableForLineup) return; const [slotType, slotKey] = slotId.split('-'); const updatedLineup = JSON.parse(JSON.stringify(lineup)); let playerToUpdate; if (slotType === 'bench') { playerToUpdate = updatedLineup.bench[slotKey]; } if (!playerToUpdate || !playerToUpdate.playerId) { toast.error("Primero debes añadir un jugador a esta posición."); return; } playerToUpdate.active = !playerToUpdate.active; setLineup(updatedLineup); await validateAndSaveLineup(updatedLineup); }, [isEditableForLineup, lineup, validateAndSaveLineup]);
     const lineupPoints = useMemo(() => { const officialRoundData = roundsData.find(r => r.roundNumber === selectedRound); const officialScore = officialRoundData?.scores?.[viewedUserId]; let startersScore = 0, benchScore = 0; const inactivePositions = { DF: 0, MF: 0, FW: 0, GK: 0 }; Object.entries(lineup.players || {}).forEach(([slotId, player]) => { if (player.status === 'playing') { let points = player.points || 0; if (slotId === lineup.captainSlot) { points *= 2; } startersScore += points; } else if (player.status === 'did_not_play' || player.status === 'not_called_up') { const positionType = slotId.split('-')[1]; if (inactivePositions[positionType] !== undefined) { inactivePositions[positionType]++; } } }); const benchOrder = ['GK', 'DF', 'MF', 'FW']; benchOrder.forEach(pos => { const player = lineup.bench?.[pos]; if (player?.active && player.status === 'playing' && inactivePositions[pos] > 0) { let points = player.points || 0; if (`bench-${pos}` === lineup.captainSlot) { points *= 2; } benchScore += points; inactivePositions[pos]--; } }); const coach = lineup.coach; const coachScore = (coach?.status === 'playing') ? (coach.points || 0) * (lineup.captainSlot === 'coach-COACH' ? 2 : 1) : 0; const totalScore = startersScore + benchScore + coachScore; return { startersScore, benchScore, coachScore, totalScore, officialScore }; }, [lineup, roundsData, selectedRound, viewedUserId]);

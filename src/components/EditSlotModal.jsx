@@ -9,7 +9,7 @@ const LA_LIGA_TEAMS = [
     'Sevilla', 'Valencia', 'Villarreal'
 ];
 
-const POSITIONS = ['Portero', 'Defensa', 'Centrocampista', 'Delantero'];
+const POSITIONS = ['Portero', 'Defensa', 'Centrocampista', 'Delantero', 'Entrenador'];
 
 export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) {
     const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -49,11 +49,11 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
 
     const handleSave = () => {
         if (!selectedPlayer) { toast.error("Debes seleccionar un jugador de la lista."); return; }
-        if (!selectedTeam) { toast.error("Debes seleccionar el equipo del jugador para esta jornada."); return; }
+        if (!selectedTeam || !selectedPosition) { toast.error("Debes seleccionar el equipo y la posición del jugador."); return; }
         
         onSave({
             playerId: selectedPlayer.id, name: selectedPlayer.name,
-            teamHistory: selectedPlayer.teamHistory, positionHistory: selectedPlayer.positionHistory,
+            teamHistory: selectedPlayer.teamHistory || [], positionHistory: selectedPlayer.positionHistory || [],
             teamAtTheTime: selectedTeam, positionAtTheTime: selectedPosition,
             points: Number(points) || 0,
             status: status,
@@ -75,7 +75,7 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
                     {selectedPlayer && (
                         <>
                             <div><label className="label">2. Equipo en esta jornada</label><select value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)} className="input"><option value="" disabled>Elige un equipo...</option>{LA_LIGA_TEAMS.map(team => (<option key={team} value={team}>{team}</option>))}</select></div>
-                            <div><label className="label">3. Posición en esta jornada <span style={{fontWeight:'normal',color:'#999',fontSize:'0.85em'}}>(opcional)</span></label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="">Sin especificar</option>{POSITIONS.map(pos => (<option key={pos} value={pos}>{pos}</option>))}</select></div>
+                            <div><label className="label">3. Posición en esta jornada</label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="" disabled>Elige una posición...</option>{POSITIONS.map(pos => (<option key={pos} value={pos}>{pos}</option>))}</select></div>
                             <div><label className="label">4. Puntos Obtenidos</label><input type="number" value={points} onChange={e => setPoints(e.target.value)} className="input" placeholder="0"/></div>
                             <div><label className="label">5. Estado del Jugador</label><select value={status} onChange={e => setStatus(e.target.value)} className="input"><option value="por_definir">Por definir</option><option value="playing">Jugando</option><option value="did_not_play">No jugó</option><option value="not_called_up">No convocado</option></select></div>
                         </>
