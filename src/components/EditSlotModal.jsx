@@ -39,7 +39,7 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
 
     const handleSave = () => {
         if (!selectedPlayer) { toast.error("Debes seleccionar un jugador de la lista."); return; }
-        if (!selectedTeam || !selectedPosition) { toast.error("Debes seleccionar el equipo y la posición del jugador para esta jornada."); return; }
+        if (!selectedTeam) { toast.error("Debes seleccionar el equipo del jugador para esta jornada."); return; }
         
         onSave({
             playerId: selectedPlayer.id, name: selectedPlayer.name,
@@ -65,7 +65,7 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
                     {selectedPlayer && (
                         <>
                             <div><label className="label">2. Equipo en esta jornada</label><select value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)} className="input"><option value="" disabled>Elige un equipo...</option>{selectedPlayer.teamHistory?.map((h, i) => (<option key={i} value={h.teamName}>{h.teamName}</option>))}</select></div>
-                            <div><label className="label">3. Posición en esta jornada</label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="" disabled>Elige una posición...</option>{selectedPlayer.positionHistory?.map((h, i) => (<option key={i} value={h.position}>{h.position}</option>))}</select></div>
+                            <div><label className="label">3. Posición en esta jornada <span style={{fontWeight:'normal',color:'#999',fontSize:'0.85em'}}>(opcional)</span></label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="">Sin especificar</option>{selectedPlayer.positionHistory?.map((h, i) => (<option key={i} value={h.position}>{h.position}</option>))}</select></div>
                             <div><label className="label">4. Puntos Obtenidos</label><input type="number" value={points} onChange={e => setPoints(e.target.value)} className="input" placeholder="0"/></div>
                             <div><label className="label">5. Estado del Jugador</label><select value={status} onChange={e => setStatus(e.target.value)} className="input"><option value="por_definir">Por definir</option><option value="playing">Jugando</option><option value="did_not_play">No jugó</option><option value="not_called_up">No convocado</option></select></div>
                         </>
