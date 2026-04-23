@@ -2,6 +2,15 @@ import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
 
+const LA_LIGA_TEAMS = [
+    'Alavés', 'Athletic Club', 'Barcelona', 'Celta', 'Club Atlético de Madrid',
+    'Elche', 'Espanyol', 'Getafe', 'Girona', 'Levante', 'Mallorca', 'Osasuna',
+    'Rayo Vallecano', 'Real Betis', 'Real Madrid', 'Real Oviedo', 'Real Sociedad',
+    'Sevilla', 'Valencia', 'Villarreal'
+];
+
+const POSITIONS = ['Portero', 'Defensa', 'Centrocampista', 'Delantero'];
+
 export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) {
     const [selectedPlayer, setSelectedPlayer] = useState(null);
     const [selectedTeam, setSelectedTeam] = useState('');
@@ -31,6 +40,7 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
 
     const handlePlayerSelected = (player) => {
         setSelectedPlayer(player);
+        // Pre-fill from player history if available, otherwise leave empty for manual selection
         const currentTeam = player.teamHistory?.find(h => h.endDate === null)?.teamName || player.teamHistory?.[0]?.teamName || '';
         const currentPosition = player.positionHistory?.find(h => h.endDate === null)?.position || player.positionHistory?.[0]?.position || '';
         setSelectedTeam(currentTeam);
@@ -46,7 +56,7 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
             teamHistory: selectedPlayer.teamHistory, positionHistory: selectedPlayer.positionHistory,
             teamAtTheTime: selectedTeam, positionAtTheTime: selectedPosition,
             points: Number(points) || 0,
-            status: status, // El estado ahora se guarda para todos
+            status: status,
             active: initialData?.active || false,
         });
         onClose();
@@ -64,8 +74,8 @@ export default function EditSlotModal({ isOpen, onClose, onSave, initialData }) 
                     <div><label className="label">1. Buscar Jugador</label><PlayerAutocomplete onPlayerSelect={handlePlayerSelected} initialValue={initialData?.name}/></div>
                     {selectedPlayer && (
                         <>
-                            <div><label className="label">2. Equipo en esta jornada</label><select value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)} className="input"><option value="" disabled>Elige un equipo...</option>{selectedPlayer.teamHistory?.map((h, i) => (<option key={i} value={h.teamName}>{h.teamName}</option>))}</select></div>
-                            <div><label className="label">3. Posición en esta jornada <span style={{fontWeight:'normal',color:'#999',fontSize:'0.85em'}}>(opcional)</span></label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="">Sin especificar</option>{selectedPlayer.positionHistory?.map((h, i) => (<option key={i} value={h.position}>{h.position}</option>))}</select></div>
+                            <div><label className="label">2. Equipo en esta jornada</label><select value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)} className="input"><option value="" disabled>Elige un equipo...</option>{LA_LIGA_TEAMS.map(team => (<option key={team} value={team}>{team}</option>))}</select></div>
+                            <div><label className="label">3. Posición en esta jornada <span style={{fontWeight:'normal',color:'#999',fontSize:'0.85em'}}>(opcional)</span></label><select value={selectedPosition} onChange={e => setSelectedPosition(e.target.value)} className="input"><option value="">Sin especificar</option>{POSITIONS.map(pos => (<option key={pos} value={pos}>{pos}</option>))}</select></div>
                             <div><label className="label">4. Puntos Obtenidos</label><input type="number" value={points} onChange={e => setPoints(e.target.value)} className="input" placeholder="0"/></div>
                             <div><label className="label">5. Estado del Jugador</label><select value={status} onChange={e => setStatus(e.target.value)} className="input"><option value="por_definir">Por definir</option><option value="playing">Jugando</option><option value="did_not_play">No jugó</option><option value="not_called_up">No convocado</option></select></div>
                         </>
