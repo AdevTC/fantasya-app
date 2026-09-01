@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, Link } from 'react-router-dom';
@@ -16,7 +16,7 @@ import AdBanner from '../components/AdBanner';
 import { Plus, Users, ShieldCheck, Info, BookOpen, Copy, CheckCircle, Flag, Send, Eye, Trophy } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, onShowMembers, isMember }) => {
+const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, onShowMembers, onArchive, onUnarchive, isMember, isOwner }) => {
     const navigate = useNavigate();
 
     const handleCopyCode = (e, code) => {
@@ -75,10 +75,21 @@ const LeagueCard = ({ league, onShowRules, onShowSummary, onShowRequest, onShowM
                         <span>{Object.keys(league.members).length} Participantes</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <button onClick={() => onShowSummary(league)} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-emerald-500 transition-colors" title="Ver Resumen">
+                        {isOwner && (
+                            league.archived ? (
+                                <button onClick={(e) => { e.stopPropagation(); onUnarchive && onUnarchive(league); }} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 transition-colors" title="Desarchivar Liga">
+                                    <CheckCircle size={16} />
+                                </button>
+                            ) : (
+                                <button onClick={(e) => { e.stopPropagation(); onArchive && onArchive(league); }} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-red-500 dark:text-red-400 hover:text-red-600 transition-colors" title="Archivar Liga">
+                                    <Flag size={16} />
+                                </button>
+                            )
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onShowSummary(league); }} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-emerald-500 transition-colors" title="Ver Resumen">
                             <Eye size={16} />
                         </button>
-                        <button onClick={() => onShowRules(league.name, league.rules)} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-emerald-500 transition-colors" title="Ver Reglas">
+                        <button onClick={(e) => { e.stopPropagation(); onShowRules(league.name, league.rules); }} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-emerald-500 transition-colors" title="Ver Reglas">
                             <BookOpen size={16} />
                         </button>
                     </div>
@@ -114,6 +125,19 @@ export default function DashboardPage() {
     const [summaryModal, setSummaryModal] = useState({ isOpen: false, league: null, season: null });
     const [membersModal, setMembersModal] = useState({ isOpen: false, members: null }); // NEW STATE
     const [activeView, setActiveView] = useState('myLeagues');
+    const [archivedLeagues, setArchivedLeagues] = useState([]);
+    const tabRefs = useRef([]);
+    const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+
+    useEffect(() => {
+        const index = ['myLeagues', 'otherLeagues', 'archived'].indexOf(activeView);
+        const activeTab = tabRefs.current[index];
+        if (!activeTab) return;
+
+        const activeLeft = activeTab.offsetLeft;
+        const activeWidth = activeTab.offsetWidth;
+        setIndicatorStyle({ left: activeLeft, width: activeWidth });
+    }, [activeView, myLeagues.length, otherLeagues.length, archivedLeagues.length]);
 
     const fetchLeagues = useCallback(() => {
         const user = auth.currentUser;
@@ -134,6 +158,7 @@ export default function DashboardPage() {
                 seasonsSnapshot.forEach(seasonDoc => {
                     const leagueData = leagueDoc.data();
                     const seasonData = seasonDoc.data();
+
                     allLeaguesAndSeasons.push({
                         id: leagueDoc.id,
                         name: leagueData.name,
@@ -148,11 +173,13 @@ export default function DashboardPage() {
                         prizes: seasonData.prizes || '',
                         members: seasonData.members || {},
                         inviteCode: seasonData.inviteCode,
+                        archived: seasonData.archived === true
                     });
                 });
             }
 
-            const myLeaguesData = allLeaguesAndSeasons.filter(l => l.members[user.uid]);
+            const myLeaguesData = allLeaguesAndSeasons.filter(l => l.members[user.uid] && !l.archived);
+            const archivedLeaguesData = allLeaguesAndSeasons.filter(l => l.members[user.uid] && l.archived);
 
             // LAZY REPAIR: Get REAL photo from Firestore and update if missing/different
             // We fetch the user profile once to ensure we have the latest custom photo
@@ -209,11 +236,12 @@ export default function DashboardPage() {
                 console.error("Error fetching real user profile for repair:", error);
             }
 
-            const otherLeaguesData = allLeaguesAndSeasons.filter(l => !l.members[user.uid]);
+            const otherLeaguesData = allLeaguesAndSeasons.filter(l => !l.members[user.uid] && !l.archived);
             const shuffledOtherLeagues = otherLeaguesData.sort(() => 0.5 - Math.random()).slice(0, 6);
 
             setMyLeagues(myLeaguesData);
             setOtherLeagues(shuffledOtherLeagues);
+            setArchivedLeagues(archivedLeaguesData);
             setLoading(false);
         }, (error) => {
             console.error("Error al obtener las ligas y temporadas:", error);
@@ -243,6 +271,39 @@ export default function DashboardPage() {
         };
         setSummaryModal({ isOpen: true, league, season });
     };
+
+    // Archive a season (hide it from dashboard)
+    const handleArchiveSeason = async (league) => {
+        if (!league || !league.id || !league.seasonId) return;
+        if (!window.confirm(`¿Archivar la temporada "${league.seasonName}" de la liga "${league.name}"? La liga dejará de aparecer en tu panel.`)) return;
+
+        const loadingToast = toast.loading('Archivando liga...');
+        try {
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', league.seasonId);
+            await updateDoc(seasonRef, { archived: true });
+            toast.success('Liga archivada', { id: loadingToast });
+        } catch (error) {
+            console.error('Error archiving season:', error);
+            toast.error('No se pudo archivar la liga.', { id: loadingToast });
+        }
+    };
+
+    // Unarchive a season (make it visible again)
+    const handleUnarchiveSeason = async (league) => {
+        if (!league || !league.id || !league.seasonId) return;
+        if (!window.confirm(`¿Desarchivar la temporada "${league.seasonName}" de la liga "${league.name}"? La liga volverá a aparecer en tu panel.`)) return;
+
+        const loadingToast = toast.loading('Desarchivando liga...');
+        try {
+            const seasonRef = doc(db, 'leagues', league.id, 'seasons', league.seasonId);
+            await updateDoc(seasonRef, { archived: false });
+            toast.success('Liga desarchivada', { id: loadingToast });
+        } catch (error) {
+            console.error('Error unarchiving season:', error);
+            toast.error('No se pudo desarchivar la liga.', { id: loadingToast });
+        }
+    };
+
 
     if (loading) {
         return <LoadingSpinner fullScreen text="Cargando tu panel..." />;
@@ -277,25 +338,33 @@ export default function DashboardPage() {
                 {/* ANIMATED TABS */}
                 <div className="relative flex border-b dark:border-gray-700 mb-8">
                     <button
+                        ref={el => tabRefs.current[0] = el}
                         onClick={() => setActiveView('myLeagues')}
                         className={`relative z-10 px-6 py-3 font-semibold transition-colors duration-300 ${activeView === 'myLeagues' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
                     >
                         Mis Ligas ({myLeagues.length})
                     </button>
                     <button
+                        ref={el => tabRefs.current[1] = el}
                         onClick={() => setActiveView('otherLeagues')}
                         className={`relative z-10 px-6 py-3 font-semibold transition-colors duration-300 ${activeView === 'otherLeagues' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
                     >
                         Otras Ligas
+                    </button>
+                    <button
+                        ref={el => tabRefs.current[2] = el}
+                        onClick={() => setActiveView('archived')}
+                        className={`relative z-10 px-6 py-3 font-semibold transition-colors duration-300 ${activeView === 'archived' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                    >
+                        Archivadas ({archivedLeagues.length})
                     </button>
 
                     {/* Sliding Bottom Border */}
                     <div
                         className="absolute bottom-0 h-0.5 bg-emerald-500 transition-all duration-300 ease-in-out"
                         style={{
-                            left: activeView === 'myLeagues' ? '0%' : '150px', // Approximate width, could be better with refs but simple is fine
-                            width: activeView === 'myLeagues' ? '150px' : '150px',
-                            transform: activeView === 'otherLeagues' ? 'translateX(10px)' : 'translateX(0)'
+                            left: `${indicatorStyle.left}px`,
+                            width: `${indicatorStyle.width}px`
                         }}
                     />
                 </div>
@@ -314,7 +383,10 @@ export default function DashboardPage() {
                                             onShowRules={handleShowRules}
                                             onShowSummary={handleShowSummary}
                                             onShowMembers={handleShowMembers}
+                                            onArchive={handleArchiveSeason}
+                                            onUnarchive={handleUnarchiveSeason}
                                             isMember={true}
+                                            isOwner={auth.currentUser && auth.currentUser.uid === league.ownerId}
                                         />
                                     ))}
                                 </div>
@@ -341,7 +413,10 @@ export default function DashboardPage() {
                                             onShowRequest={handleShowRequest}
                                             onShowSummary={handleShowSummary}
                                             onShowMembers={handleShowMembers}
+                                            onArchive={handleArchiveSeason}
+                                            onUnarchive={handleUnarchiveSeason}
                                             isMember={false}
+                                            isOwner={auth.currentUser && auth.currentUser.uid === league.ownerId}
                                         />
                                     ))}
                                 </div>
@@ -352,6 +427,31 @@ export default function DashboardPage() {
                                 </div>
                             )
                         )}
+
+                            {activeView === 'archived' && (
+                                archivedLeagues.length > 0 ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                        {archivedLeagues.map(league => (
+                                            <LeagueCard
+                                                key={`${league.id}-${league.seasonId}`}
+                                                league={league}
+                                                onShowRules={handleShowRules}
+                                                onShowSummary={handleShowSummary}
+                                                onShowMembers={handleShowMembers}
+                                                onArchive={handleArchiveSeason}
+                                                onUnarchive={handleUnarchiveSeason}
+                                                isMember={!!league.members && !!league.members[auth.currentUser?.uid]}
+                                                isOwner={auth.currentUser && auth.currentUser.uid === league.ownerId}
+                                            />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="bento-card text-center p-12">
+                                        <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No tienes ligas archivadas</h3>
+                                        <p className="text-gray-500 dark:text-gray-400 mt-2">Aquí aparecerán las ligas que hayas archivado.</p>
+                                    </div>
+                                )
+                            )}
                     </div>
                 )}
 
