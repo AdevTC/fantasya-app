@@ -69,39 +69,37 @@ service cloud.firestore {
     // ============================================================================
 
     match /users/{userId} {
-      // Users can read any profile (for social features like searching, viewing profiles)
+      // Users can read profiles when authenticated
       allow read: if isAuthenticated();
 
-      // Users can create their own profile (during registration via Cloud Function normally)
+      // A user can create their own profile document during signup
       allow create: if isOwner(userId);
 
-      // Users can update their own profile (except certain protected fields)
+      // A user can update only their own profile, excluding protected fields
       allow update: if isOwner(userId)
         && resource.data != null
         && !request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(['achievements', 'createdAt']);
+          .hasAny(['createdAt']);
 
-      // Allow authenticated users to update followers/following for social features
-      // This allows user A to add/remove themselves from user B's followers list
+      // Followers/following arrays can also be updated by authenticated users as part of social features
       allow update: if isAuthenticated()
         && resource.data != null
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['followers', 'following']);
 
       // Users can delete their own profile
-      allow delete: if isOwner(userId); // Protected fields
+      allow delete: if isOwner(userId);
 
       // Achievement subcollection
       match /achievements/{seasonId} {
-        allow read: if isAuthenticated(); // Public read for profile viewing
+        allow read: if isAuthenticated();
         allow write: if isOwner(userId);
       }
 
       // Feats subcollection (user accomplishments)
       match /feats/{featId} {
-        allow read: if isAuthenticated(); // Public read for profiles
-        // Allow write by owner OR any authenticated user (feat awarding is controlled by challenge system which requires admin)
-        allow write: if isAuthenticated();
+        allow read: if isAuthenticated();
+        allow write: if isOwner(userId);
       }
     }
 
@@ -335,11 +333,11 @@ service cloud.firestore {
     // ============================================================================
 
     match /players/{playerId} {
-      // Anyone can read player data (needed for league creation, transfers, etc.)
+      // Anyone can read player data
       allow read: if true;
-      // Only authenticated users can create players
+      // Authenticated users can add players to the manual database
       allow create: if isAuthenticated();
-      // Only superadmins can update/delete players
+      // Authenticated users can edit or delete players from the manual database
       allow update, delete: if isAuthenticated();
     }
 

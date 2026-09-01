@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 
 const positions = ['Portero', 'Defensa', 'Centrocampista', 'Delantero', 'Entrenador'];
-const teams = ['Athletic Club', 'Atlético de Madrid', 'CA Osasuna', 'Deportivo Alavés', 'Elche CF', 'FC Barcelona', 'Getafe CF', 'Girona FC', 'Levante UD', 'Rayo Vallecano', 'RC Celta de Vigo', 'RCD Espanyol', 'RCD Mallorca', 'Real Betis Balompié', 'Real Madrid', 'Real Oviedo', 'Real Sociedad', 'Sevilla FC', 'Valencia CF', 'Villarreal CF'].sort();
+const teams = ['Athletic Club', 'Atlético de Madrid', 'CA Osasuna', 'Deportivo Alavés', 'Deportivo La Coruña', 'Elche CF', 'FC Barcelona', 'Getafe CF', 'Levante UD', 'Málaga CF', 'Rayo Vallecano', 'RC Celta de Vigo', 'RCD Espanyol', 'Racing de Santander', 'Real Betis Balompié', 'Real Madrid', 'Real Sociedad', 'Sevilla FC', 'Valencia CF', 'Villarreal CF'].sort();
 
 export default function EditPlayerModal({ isOpen, onClose, player, onPlayerUpdated }) {
     const [newTeam, setNewTeam] = useState(teams[0]);
@@ -15,28 +15,38 @@ export default function EditPlayerModal({ isOpen, onClose, player, onPlayerUpdat
     if (!isOpen || !player) return null;
 
     const handleUpdateHistory = async (historyType, newValue) => {
+        const safePlayerId = String(player?.id ?? '').trim();
+        if (!safePlayerId) {
+            toast.error('No se pudo identificar el jugador a actualizar.');
+            return;
+        }
+
         setLoading(true);
         const loadingToast = toast.loading('Actualizando historial...');
 
         const historyField = historyType === 'team' ? 'teamHistory' : 'positionHistory';
-        const playerRef = doc(db, 'players', player.id);
+        const playerRef = doc(db, 'players', safePlayerId);
 
         try {
-            // Creamos una copia del historial para modificarla
-            const updatedHistory = [...player[historyField]];
-            
+            // Creamos una copia del historial para modificarla (asegurando que existe y es un array)
+            const currentHistory = Array.isArray(player[historyField]) ? player[historyField] : [];
+            const updatedHistory = [...currentHistory];
+
             // Encontramos la entrada actual (la que no tiene fecha de fin)
-            const currentIndex = updatedHistory.findIndex(h => h.endDate === null);
+            const currentIndex = updatedHistory.findIndex(h => h.endDate === null || h.endDate === undefined);
             if (currentIndex !== -1) {
                 // Le ponemos una fecha de fin a la entrada anterior
-                updatedHistory[currentIndex].endDate = new Date();
+                updatedHistory[currentIndex] = {
+                  ...updatedHistory[currentIndex],
+                  endDate: new Date()
+                };
             }
 
             // Añadimos la nueva entrada
             const newEntry = historyType === 'team'
                 ? { teamName: newValue, startDate: new Date(), endDate: null }
                 : { position: newValue, startDate: new Date(), endDate: null };
-            
+
             updatedHistory.push(newEntry);
 
             await updateDoc(playerRef, {

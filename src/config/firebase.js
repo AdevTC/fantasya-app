@@ -5,7 +5,6 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
-// Lee las variables de entorno
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -16,12 +15,18 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-// Inicializar Firebase
 const app = initializeApp(firebaseConfig);
 
-// Inicializar servicios y exportarlos para usarlos en toda la app
-const analytics = getAnalytics(app);
+let analytics = null;
+try {
+  if (firebaseConfig.measurementId) {
+    analytics = getAnalytics(app);
+  }
+} catch (error) {
+  console.warn('Firebase Analytics no pudo inicializarse:', error?.message || error);
+}
+
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
-export { app };
+export { app, analytics };

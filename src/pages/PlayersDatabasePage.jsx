@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, addDoc, getDocs, orderBy, query, deleteDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, orderBy, query, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { ShieldPlus, UserPlus, Edit, Trash2, RefreshCw, Database } from 'lucide-react';
@@ -8,7 +8,7 @@ import EditPlayerModal from '../components/EditPlayerModal'; // <-- Importamos e
 import PlayersSyncTab from '../components/PlayersSyncTab'; // <-- Importamos la nueva pestaña de sincronización
 
 const positions = ['Portero', 'Defensa', 'Centrocampista', 'Delantero', 'Entrenador'];
-const teams = ['Athletic Club', 'Atlético de Madrid', 'CA Osasuna', 'Deportivo Alavés', 'Elche CF', 'FC Barcelona', 'Getafe CF', 'Girona FC', 'Levante UD', 'Rayo Vallecano', 'RC Celta de Vigo', 'RCD Espanyol', 'RCD Mallorca', 'Real Betis Balompié', 'Real Madrid', 'Real Oviedo', 'Real Sociedad', 'Sevilla FC', 'Valencia CF', 'Villarreal CF'].sort();
+const teams = ['Athletic Club', 'Atlético de Madrid', 'CA Osasuna', 'Deportivo Alavés', 'Deportivo La Coruña', 'Elche CF', 'FC Barcelona', 'Getafe CF', 'Levante UD', 'Málaga CF', 'Rayo Vallecano', 'RC Celta de Vigo', 'RCD Espanyol', 'Racing de Santander', 'Real Betis Balompié', 'Real Madrid', 'Real Sociedad', 'Sevilla FC', 'Valencia CF', 'Villarreal CF'].sort();
 
 export default function PlayersDatabasePage() {
     const [players, setPlayers] = useState([]);
@@ -27,7 +27,7 @@ export default function PlayersDatabasePage() {
         const playersRef = collection(db, "players");
         const q = query(playersRef, orderBy("name"));
         const querySnapshot = await getDocs(q);
-        setPlayers(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setPlayers(querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
         setLoading(false);
     }, []);
 
@@ -50,13 +50,35 @@ export default function PlayersDatabasePage() {
     };
 
     const handleDeletePlayer = async (playerId, playerName) => {
+        const safePlayerId = String(playerId ?? '').trim();
+        if (!safePlayerId) {
+            toast.error('No se pudo identificar el jugador a eliminar.');
+            return;
+        }
+
         if (!window.confirm(`¿Estás seguro de que quieres eliminar a ${playerName}? Esta acción no se puede deshacer.`)) return;
         
         const loadingToast = toast.loading('Eliminando jugador...');
         try {
-            await deleteDoc(doc(db, "players", playerId));
-            toast.success('Jugador eliminado.', { id: loadingToast });
-            fetchPlayers();
+            const playerRef = doc(db, "players", safePlayerId);
+            // DEBUG: Estado antes de borrar
+            const beforeSnap = await getDoc(playerRef);
+            console.log('DEBUG delete - before exists:', beforeSnap.exists(), 'id:', safePlayerId, 'data:', beforeSnap.exists() ? beforeSnap.data() : null);
+
+            await deleteDoc(playerRef);
+
+            // Verificación: comprobar si el documento sigue existiendo
+            const afterSnap = await getDoc(playerRef);
+            console.log('DEBUG delete - after exists:', afterSnap.exists(), 'id:', safePlayerId);
+
+            if (afterSnap.exists()) {
+                toast.error('No se pudo eliminar el jugador (verifica permisos / reglas).', { id: loadingToast });
+                console.warn(`Delete reported success but document still exists: ${safePlayerId}`);
+            } else {
+                toast.success('Jugador eliminado.', { id: loadingToast });
+                // Pequeña espera para evitar condiciones de carrera en la UI
+                setTimeout(() => fetchPlayers(), 300);
+            }
         } catch (error) {
             toast.error('No se pudo eliminar el jugador.', { id: loadingToast });
             console.error("Error al eliminar jugador: ", error);
