@@ -4,8 +4,8 @@ import PlayerAutocomplete from './PlayerAutocomplete';
 
 const LA_LIGA_TEAMS = [
     'Alavés', 'Athletic Club', 'Barcelona', 'Celta', 'Club Atlético de Madrid',
-    'Elche', 'Espanyol', 'Getafe', 'Girona', 'Levante', 'Mallorca', 'Osasuna',
-    'Rayo Vallecano', 'Real Betis', 'Real Madrid', 'Real Oviedo', 'Real Sociedad',
+    'Deportivo La Coruña', 'Elche', 'Espanyol', 'Getafe', 'Levante', 'Málaga CF', 'Osasuna',
+    'Rayo Vallecano', 'Racing de Santander', 'Real Betis', 'Real Madrid', 'Real Sociedad',
     'Sevilla', 'Valencia', 'Villarreal'
 ];
 
