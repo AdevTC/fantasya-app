@@ -27,13 +27,16 @@ import ChatListPage from './pages/ChatListPage';
 import NotFoundPage from './pages/NotFoundPage'; // Import NotFoundPage
 
 function InitialRoute() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return <LoadingSpinner fullScreen text="Cargando tu estrategia..." />;
   }
 
-  return user ? <Navigate to="/dashboard" /> : <LandingPage />;
+  if (!user) return <LandingPage />;
+  return profile
+    ? <Navigate to="/dashboard" />
+    : <Navigate to="/complete-profile" />;
 }
 
 const AppWithLayout = () => (

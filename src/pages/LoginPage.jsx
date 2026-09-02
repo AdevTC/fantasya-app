@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from 'firebase/auth'; // Added sendPasswordResetEmail
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, onAuthStateChanged } from 'firebase/auth'; // Added sendPasswordResetEmail
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db, functions } from '../config/firebase';
-import { httpsCallable } from 'firebase/functions';
+import { auth, db } from '../config/firebase';
 import { Mail, Lock, Eye, EyeOff, UserPlus, ArrowLeft } from 'lucide-react'; // Added ArrowLeft
 import toast from 'react-hot-toast';
+import { createProfile } from '../services/admin-api';
+import {
+    getUsernameValidationError,
+    normalizeUsername,
+} from '../config/username';
+import { finishRegistration } from '../config/registration-flow';
+import { requiresEmailVerification } from '../config/email-verification';
 
 export default function LoginPage() {
     const [isLogin, setIsLogin] = useState(true);
@@ -17,11 +23,18 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const [verificationPending, setVerificationPending] = useState(null);
     const navigate = useNavigate();
 
     useEffect(() => {
         setError('');
     }, [isLogin, isResetPassword]);
+
+    useEffect(() => onAuthStateChanged(auth, (currentUser) => {
+        setVerificationPending(
+            requiresEmailVerification(currentUser) ? currentUser : null,
+        );
+    }), []);
 
     const handleGoogleSignIn = async () => {
         setLoading(true);
@@ -72,6 +85,28 @@ export default function LoginPage() {
             setLoading(false);
         }
     };
+
+    const handleResendVerification = async () => {
+        const currentUser = verificationPending || auth.currentUser;
+        if (!currentUser) {
+            toast.error('Inicia sesión de nuevo para reenviar el correo.');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            await sendEmailVerification(currentUser);
+            toast.success('Correo de verificación reenviado. Revisa también spam.');
+            await auth.signOut();
+            setVerificationPending(null);
+            setIsLogin(true);
+        } catch (verificationError) {
+            console.error('Error al reenviar la verificación:', verificationError);
+            toast.error('No se pudo reenviar todavía. Puedes volver a intentarlo.');
+        } finally {
+            setLoading(false);
+        }
+    };
     
     const handleAuthSubmit = async (e) => {
         e.preventDefault();
@@ -84,21 +119,22 @@ export default function LoginPage() {
                 const userCredential = await signInWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
 
-                // --- LÓGICA DE FECHA DE CORTE RESTAURADA ---
-                const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
-                const userCreationDate = new Date(user.metadata.creationTime);
+                const profile = await getDoc(doc(db, 'users', user.uid));
+                if (!profile.exists() || !profile.data().username) {
+                    navigate('/complete-profile');
+                    return;
+                }
 
-                if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
-                    toast.error('Debes verificar tu correo electrónico para poder iniciar sesión.');
-                    await auth.signOut();
-                    setLoading(false);
+                if (requiresEmailVerification(user)) {
+                    setVerificationPending(user);
+                    toast.error('Verifica tu correo o solicita uno nuevo para continuar.');
                     return;
                 }
                 
                 toast.success('¡Bienvenido de vuelta!');
                 navigate('/dashboard');
 
-            } catch (err) {
+            } catch {
                 toast.error('Correo o contraseña incorrectos.');
             } finally {
                 setLoading(false);
@@ -112,17 +148,43 @@ export default function LoginPage() {
                 return;
             }
 
+            const validationError = getUsernameValidationError(username);
+            if (validationError) {
+                setError(validationError);
+                toast.error(validationError);
+                setLoading(false);
+                return;
+            }
+
             try {
-                // 1. Crear usuario en Auth (desde el cliente)
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
+                const normalizedUsername = normalizeUsername(username);
+                const result = await finishRegistration({
+                    createProfile,
+                    sendVerification: sendEmailVerification,
+                    user,
+                    username: normalizedUsername,
+                });
 
-                // 2. Llamar a la Cloud Function para crear los documentos en Firestore
-                const createProfileDocuments = httpsCallable(functions, 'createProfileDocuments');
-                await createProfileDocuments({ username });
-                
-                // 3. Enviar correo de verificación (desde el cliente)
-                await sendEmailVerification(user);
+                if (result.status === 'profile-incomplete') {
+                    toast.error(
+                        result.error?.code === 'functions/already-exists'
+                            ? 'Ese nombre ya está ocupado. Elige otro para completar tu perfil.'
+                            : 'La cuenta está creada; completa ahora tu perfil.',
+                    );
+                    navigate('/complete-profile');
+                    return;
+                }
+
+                if (result.status === 'verification-pending') {
+                    setVerificationPending(user);
+                    toast.error(
+                        'La cuenta y el perfil están creados, pero el correo no pudo ' +
+                        'enviarse. Puedes reintentarlo sin perder datos.',
+                    );
+                    return;
+                }
                 
                 toast.success('¡Registro completado!');
                 toast(
@@ -141,20 +203,8 @@ export default function LoginPage() {
                 setIsLogin(true);
                 
             } catch (err) {
-                // Borrar el usuario de Auth si la creación del perfil en Firestore falla (ej. nombre de usuario duplicado)
-                if (auth.currentUser) {
-                    try {
-                        await auth.currentUser.delete();
-                    } catch (deleteError) {
-                        console.error("No se pudo eliminar el usuario de Auth:", deleteError);
-                        // El usuario quedará huérfano, pero el flujo continúa
-                    }
-                }
-
                 if (err.code === 'auth/email-already-in-use') {
                     toast.error('Este correo electrónico ya está en uso.');
-                } else if (err.code === 'functions/already-exists' || err.message?.includes('already exists')) {
-                    toast.error('Este nombre de usuario ya está cogido.');
                 } else if (err.code === 'auth/user-token-expired') {
                     toast.error('La sesión expiró. Por favor, intenta registrarte de nuevo.');
                 } else {
@@ -220,7 +270,7 @@ export default function LoginPage() {
                                     type="text"
                                     placeholder="Nombre de usuario"
                                     value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
+                                    onChange={(e) => setUsername(e.target.value.toLowerCase())}
                                     required
                                     className="input pl-10"
                                 />
@@ -278,6 +328,22 @@ export default function LoginPage() {
                         )}
 
                         {error && <p className="text-sm text-red-500 text-center">{error}</p>}
+
+                        {verificationPending && (
+                            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                                <p className="mb-2">
+                                    Tu cuenta sigue intacta. Verifica el correo para continuar.
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={handleResendVerification}
+                                    disabled={loading}
+                                    className="w-full btn-secondary text-sm"
+                                >
+                                    Reenviar correo de verificación
+                                </button>
+                            </div>
+                        )}
 
                         <div>
                             <button type="submit" disabled={loading} className="w-full btn-primary">

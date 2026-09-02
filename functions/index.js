@@ -1,15 +1,10 @@
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
-const cors = require("cors")({ origin: true });
-const { initializeApp } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const logger = require("firebase-functions/logger");
-const admin = require("firebase-admin");
-
-if (admin.apps.length === 0) {
-    initializeApp();
-}
-const db = getFirestore();
+const { auth, db, FieldValue } = require('./lib/firebase');
+const {
+    createProfileDocumentsHandler,
+} = require('./handlers/profile');
 
 
 // --- INICIO DE LA NUEVA FUNCIÓN PARA CREAR DOCUMENTOS DE PERFIL ---
@@ -20,58 +15,9 @@ const db = getFirestore();
 exports.createProfileDocuments = onCall(
     { 
         region: "us-central1", 
-        cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"] 
+        cors: ["https://fantasya-app.vercel.app", "http://127.0.0.1:5173"]
     },
-    async (request) => {
-        const { username } = request.data;
-        const userId = request.auth?.uid;
-        const email = request.auth?.token.email;
-
-        if (!userId || !email) {
-            throw new HttpsError("unauthenticated", "El usuario debe estar autenticado para crear un perfil.");
-        }
-        if (!username) {
-            throw new HttpsError("invalid-argument", "El nombre de usuario es obligatorio.");
-        }
-
-        const usernameDocRef = db.doc(`usernames/${username.toLowerCase()}`);
-        const userDocRef = db.doc(`users/${userId}`);
-
-        try {
-            const usernameDoc = await usernameDocRef.get();
-            if (usernameDoc.exists) {
-                // Si el nombre de usuario ya existe, borramos el usuario de Auth para que pueda reintentar.
-                await admin.auth().deleteUser(userId);
-                throw new HttpsError("already-exists", "Este nombre de usuario ya está cogido. Por favor, elige otro.");
-            }
-
-            const batch = db.batch();
-            
-            batch.set(userDocRef, {
-                username: username.toLowerCase(),
-                email: email,
-                createdAt: FieldValue.serverTimestamp(),
-                photoURL: '',
-                bio: '',
-                xp: 0,
-                followers: [],
-                following: []
-            });
-
-            batch.set(usernameDocRef, { userId: userId });
-            
-            await batch.commit();
-
-            return { success: true, message: "Perfil creado correctamente." };
-
-        } catch (error) {
-            logger.error(`Error creating profile for user ${userId}:`, error);
-            if (error instanceof HttpsError) {
-                throw error;
-            }
-            throw new HttpsError("internal", "No se pudo crear el perfil en la base de datos.");
-        }
-    }
+    createProfileDocumentsHandler,
 );
 // --- FIN DE LA NUEVA FUNCIÓN ---
 
@@ -339,7 +285,7 @@ exports.syncLaLigaPlayers = onRequest(
 
         let userId;
         try {
-            const decoded = await admin.auth().verifyIdToken(token);
+            const decoded = await auth.verifyIdToken(token);
             userId = decoded.uid;
         } catch (error) {
             res.status(401).json({ error: 'Unauthorized' });
@@ -543,7 +489,7 @@ exports.getLaLigaSyncStatus = onRequest(
 
         let userId;
         try {
-            const decoded = await admin.auth().verifyIdToken(token);
+            const decoded = await auth.verifyIdToken(token);
             userId = decoded.uid;
         } catch (error) {
             res.status(401).json({ error: 'Unauthorized' });
