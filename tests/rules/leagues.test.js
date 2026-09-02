@@ -125,7 +125,7 @@ test('member may leave only by removing itself and owner membership is invariant
   ));
 });
 
-test('outsider cannot add itself directly and member cannot write transfers', async () => {
+test('outsider cannot add itself directly', async () => {
   const outsiderDb = env.authenticatedContext(IDS.outsider).firestore();
   const seasonRef = doc(
     outsiderDb,
@@ -141,21 +141,43 @@ test('outsider cannot add itself directly and member cannot write transfers', as
       role: 'admin',
     },
   }));
+});
 
-  const memberDb = env.authenticatedContext(IDS.member).firestore();
-  await assertFails(setDoc(doc(
-    memberDb,
-    'leagues',
-    IDS.league,
-    'seasons',
-    IDS.season,
-    'transfers',
-    'forged',
-  ), {
+test('direct transfer creates stay denied for members and every admin role', async () => {
+  const validTransfer = {
+    playerId: 'dev-player',
+    playerName: 'Jugador Local',
     buyerId: IDS.member,
+    buyerName: 'Members FC',
     sellerId: 'market',
-    price: 1,
-  }));
+    sellerName: 'Mercado',
+    type: 'puja',
+    price: 10,
+    timestamp: new Date(),
+  };
+  for (const actor of [
+    { id: 'member', uid: IDS.member },
+    { id: 'delegated-admin', uid: IDS.superadmin },
+    { id: 'league-owner', uid: IDS.admin },
+  ]) {
+    const db = env.authenticatedContext(actor.uid).firestore();
+    const transferCollection = [
+      'leagues',
+      IDS.league,
+      'seasons',
+      IDS.season,
+      'transfers',
+    ];
+    await assertFails(setDoc(
+      doc(db, ...transferCollection, `${actor.id}-direct-create`),
+      validTransfer,
+    ));
+    await assertFails(setDoc(
+      doc(db, ...transferCollection, `${actor.id}-merge-create`),
+      validTransfer,
+      { merge: true },
+    ));
+  }
 });
 
 test('admin keeps operational access and ownerId controls deletion', async () => {
@@ -170,19 +192,6 @@ test('admin keeps operational access and ownerId controls deletion', async () =>
     doc(delegatedAdminDb, 'leagues', IDS.league, 'seasons', IDS.season),
     { archived: true },
   ));
-  await assertFails(setDoc(doc(
-    delegatedAdminDb,
-    'leagues',
-    IDS.league,
-    'seasons',
-    IDS.season,
-    'transfers',
-    'valid',
-  ), {
-    buyerId: IDS.member,
-    sellerId: 'market',
-    price: 10,
-  }));
   const transferRef = doc(
     delegatedAdminDb,
     'leagues',

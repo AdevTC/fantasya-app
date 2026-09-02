@@ -244,18 +244,36 @@ test('achievement, feat and career mirrors are server-only', async () => {
   ), { POSTS_CREATED_50: { current: 999 } }));
 });
 
-test('post creation is server-owned while author edits and reactions preserve ownership', async () => {
+test('direct post creates stay denied for authors and superadmins', async () => {
+  for (const actor of [
+    { id: 'member', uid: IDS.member, username: 'member' },
+    { id: 'superadmin', uid: IDS.superadmin, username: 'superadmin' },
+  ]) {
+    const db = env.authenticatedContext(actor.uid).firestore();
+    const validPost = {
+      authorId: actor.uid,
+      authorUsername: actor.username,
+      authorPhotoURL: null,
+      content: 'Nuevo',
+      imageURL: null,
+      tags: [],
+      likes: [],
+      createdAt: new Date(),
+    };
+    await assertFails(setDoc(
+      doc(db, 'posts', `${actor.id}-direct-create`),
+      validPost,
+    ));
+    await assertFails(setDoc(
+      doc(db, 'posts', `${actor.id}-merge-create`),
+      validPost,
+      { merge: true },
+    ));
+  }
+});
+
+test('post author edits and reactions preserve ownership', async () => {
   const memberDb = env.authenticatedContext(IDS.member).firestore();
-  await assertFails(setDoc(doc(memberDb, 'posts', 'member-post'), {
-    authorId: IDS.member,
-    authorUsername: 'member',
-    authorPhotoURL: null,
-    content: 'Nuevo',
-    imageURL: null,
-    tags: [],
-    likes: [],
-    createdAt: new Date(),
-  }));
   await assertFails(setDoc(doc(memberDb, 'posts', 'spoofed-post'), {
     authorId: IDS.admin,
     content: 'Suplantado',
@@ -294,6 +312,14 @@ test('post creation is server-owned while author edits and reactions preserve ow
   await assertFails(updateDoc(doc(adminDb, 'posts', POST_ID), {
     authorId: IDS.member,
   }));
+});
+
+test('post reads stay public and authors can delete their own posts', async () => {
+  const publicDb = env.unauthenticatedContext().firestore();
+  await assertSucceeds(getDoc(doc(publicDb, 'posts', POST_ID)));
+
+  const authorDb = env.authenticatedContext(IDS.admin).firestore();
+  await assertSucceeds(deleteDoc(doc(authorDb, 'posts', POST_ID)));
 });
 
 test('social payloads reject oversized or malformed client data', async () => {
