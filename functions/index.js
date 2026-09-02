@@ -5,6 +5,8 @@ const { auth, db, FieldValue } = require('./lib/firebase');
 const {
     createProfileDocumentsHandler,
 } = require('./handlers/profile');
+const { setUserAppRoleHandler } = require('./handlers/roles');
+const { unlinkUserFromTeamHandler } = require('./handlers/teams');
 
 
 // --- INICIO DE LA NUEVA FUNCIÓN PARA CREAR DOCUMENTOS DE PERFIL ---
@@ -90,77 +92,18 @@ exports.onSeasonJoin = onDocumentUpdated("leagues/{leagueId}/seasons/{seasonId}"
     }
 });
 
-exports.unlinkUserFromTeam = onCall({ region: "us-central1", cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"] }, async (request) => {
-    const adminUid = request.auth?.uid;
-    if (!adminUid) throw new HttpsError("unauthenticated", "La función debe ser llamada por un usuario autenticado.");
-    const { leagueId, seasonId, userIdToUnlink } = request.data;
-    if (!leagueId || !seasonId || !userIdToUnlink) throw new HttpsError("invalid-argument", "Faltan parámetros (leagueId, seasonId, userIdToUnlink).");
-    const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
-    try {
-        const seasonDoc = await seasonRef.get();
-        if (!seasonDoc.exists) throw new HttpsError("not-found", "La temporada no existe.");
-        const seasonData = seasonDoc.data();
-        const adminUser = seasonData.members[adminUid];
-        const leagueOwnerId = seasonData.ownerId;
-        if (!adminUser || (adminUser.role !== 'admin' && adminUid !== leagueOwnerId)) throw new HttpsError("permission-denied", "Debes ser administrador o propietario para realizar esta acción.");
-        if (userIdToUnlink === leagueOwnerId) throw new HttpsError("permission-denied", "No se puede desvincular al propietario de la liga.");
-        const userToUnlink = seasonData.members[userIdToUnlink];
-        if (!userToUnlink) throw new HttpsError("not-found", "El usuario a desvincular no se encuentra en esta liga.");
-        logger.info(`UNLINK START: Admin ${adminUid} is unlinking user ${userIdToUnlink}.`);
-        const batch = db.batch();
-        const placeholderId = `placeholder_${userIdToUnlink}`;
-        const teamNameToPreserve = userToUnlink.teamName;
-        const pointsToPreserve = userToUnlink.totalPoints || 0;
-        const playersToPreserve = userToUnlink.players || [];
-        const placeholderData = { teamName: teamNameToPreserve, totalPoints: pointsToPreserve, players: playersToPreserve, isPlaceholder: true };
-        const userAchievementRef = db.doc(`users/${userIdToUnlink}/achievements/${seasonId}`);
-        const placeholderAchievementRef = seasonRef.collection("achievements").doc(placeholderId);
-        const userAchievementDoc = await userAchievementRef.get();
-        if (userAchievementDoc.exists) {
-            batch.set(placeholderAchievementRef, userAchievementDoc.data());
-            batch.delete(userAchievementRef);
-        }
-        const transfersRef = seasonRef.collection("transfers");
-        const buyerQuery = transfersRef.where('buyerId', '==', userIdToUnlink);
-        const sellerQuery = transfersRef.where('sellerId', '==', userIdToUnlink);
-        const [buyerSnapshot, sellerSnapshot] = await Promise.all([buyerQuery.get(), sellerQuery.get()]);
-        buyerSnapshot.forEach(doc => batch.update(doc.ref, { buyerId: placeholderId, buyerName: teamNameToPreserve }));
-        sellerSnapshot.forEach(doc => batch.update(doc.ref, { sellerId: placeholderId, sellerName: teamNameToPreserve }));
-        const roundsRef = seasonRef.collection("rounds");
-        const roundsSnapshot = await roundsRef.get();
-        roundsSnapshot.forEach(roundDoc => {
-            const roundData = roundDoc.data();
-            if (roundData.scores && roundData.scores[userIdToUnlink] !== undefined) {
-                batch.update(roundDoc.ref, {
-                    [`scores.${placeholderId}`]: roundData.scores[userIdToUnlink],
-                    [`scores.${userIdToUnlink}`]: FieldValue.delete()
-                });
-            }
-        });
-        const lineupsRef = seasonRef.collection("lineups");
-        const allLineupsSnapshot = await lineupsRef.get();
-        allLineupsSnapshot.forEach(lineupDoc => {
-            if (lineupDoc.id.endsWith(`-${userIdToUnlink}`)) {
-                const roundId = lineupDoc.id.substring(0, lineupDoc.id.lastIndexOf('-'));
-                const newLineupId = `${roundId}-${placeholderId}`;
-                const newLineupRef = lineupsRef.doc(newLineupId);
-                batch.set(newLineupRef, lineupDoc.data());
-                batch.delete(lineupDoc.ref);
-            }
-        });
-        batch.update(seasonRef, {
-            [`members.${placeholderId}`]: placeholderData,
-            [`members.${userIdToUnlink}`]: FieldValue.delete()
-        });
-        await batch.commit();
-        logger.info(`UNLINK SUCCESS: User ${userIdToUnlink} is now a clean placeholder: ${placeholderId}.`);
-        return { success: true, message: "Usuario desvinculado y convertido en equipo fantasma correctamente." };
-    } catch (error) {
-        logger.error("Error in unlinkUserFromTeam:", error);
-        if (error instanceof HttpsError) throw error;
-        throw new HttpsError("internal", "Ha ocurrido un error interno al desvincular al usuario.");
-    }
-});
+exports.unlinkUserFromTeam = onCall(
+    {
+        region: "us-central1",
+        cors: ["https://fantasya-app.vercel.app", "http://127.0.0.1:5173"],
+    },
+    unlinkUserFromTeamHandler,
+);
+
+exports.setUserAppRole = onCall(
+    { region: "us-central1" },
+    setUserAppRoleHandler,
+);
 
 exports.createOrGetChat = onCall({ region: "us-central1", cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"] }, async (request) => {
     const authUserUid = request.auth?.uid;

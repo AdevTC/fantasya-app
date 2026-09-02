@@ -16,6 +16,18 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isSuperAdmin() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.appRole == 'superadmin';
+    }
+
+    function changesOnlyOwnUid(before, after) {
+      return after.size() == after.toSet().size()
+        && after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
+        && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    }
+
     // Check if user is a member of a season (members is a MAP field in season document)
     function isSeasonMember(seasonData) {
       return isAuthenticated() &&
@@ -69,26 +81,25 @@ service cloud.firestore {
     // ============================================================================
 
     match /users/{userId} {
-      // Users can read profiles when authenticated
       allow read: if isAuthenticated();
-
-      // A user can create their own profile document during signup
-      allow create: if isOwner(userId);
-
-      // A user can update only their own profile, excluding protected fields
-      allow update: if isOwner(userId)
-        && resource.data != null
-        && !request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(['createdAt']);
-
-      // Followers/following arrays can also be updated by authenticated users as part of social features
-      allow update: if isAuthenticated()
-        && resource.data != null
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['followers', 'following']);
-
-      // Users can delete their own profile
-      allow delete: if isOwner(userId);
+      allow create: if false;
+      allow update: if (
+          isOwner(userId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['bio', 'photoURL', 'pinnedTrophies', 'savedPosts', 'following'])
+        ) || (
+          isAuthenticated()
+          && request.auth.uid != userId
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['followers'])
+          && resource.data.followers is list
+          && request.resource.data.followers is list
+          && changesOnlyOwnUid(
+            resource.data.followers,
+            request.resource.data.followers
+          )
+        );
+      allow delete: if false;
 
       // Achievement subcollection
       match /achievements/{seasonId} {
@@ -333,12 +344,8 @@ service cloud.firestore {
     // ============================================================================
 
     match /players/{playerId} {
-      // Anyone can read player data
       allow read: if true;
-      // Authenticated users can add players to the manual database
-      allow create: if isAuthenticated();
-      // Authenticated users can edit or delete players from the manual database
-      allow update, delete: if isAuthenticated();
+      allow create, update, delete: if isSuperAdmin();
     }
 
     // ============================================================================
