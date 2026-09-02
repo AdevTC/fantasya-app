@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import {
   findOwnedDemoFirestoreProcesses,
+  resolveEmulatorCleanupError,
   stopNewOwnedDemoFirestoreProcesses,
   terminateWindowsProcessTree,
   waitForLocalPortsAvailable,
@@ -146,7 +147,7 @@ async function main() {
   process.once('SIGTERM', onTerminate);
 
   let result;
-  let cleanupError;
+  let cleanupStepError;
 
   try {
     result = await waitForChild(child);
@@ -164,15 +165,14 @@ async function main() {
       );
       await waitForLocalPortsAvailable(portsToRelease);
     } catch (error) {
-      cleanupError = treeTerminationError
-        ? new AggregateError(
-            [treeTerminationError, error],
-            'Firebase emulator process-tree cleanup failed.',
-          )
-        : error;
+      cleanupStepError = error;
     }
   }
 
+  const cleanupError = resolveEmulatorCleanupError(
+    treeTerminationError,
+    cleanupStepError,
+  );
   if (cleanupError) {
     throw cleanupError;
   }

@@ -64,6 +64,20 @@ export async function terminateWindowsProcessTree(
   }
 }
 
+export function resolveEmulatorCleanupError(
+  treeTerminationError,
+  cleanupStepError,
+) {
+  if (treeTerminationError && cleanupStepError) {
+    return new AggregateError(
+      [treeTerminationError, cleanupStepError],
+      'Firebase emulator process-tree cleanup failed.',
+    );
+  }
+
+  return treeTerminationError || cleanupStepError;
+}
+
 export function isOwnedDemoFirestoreProcess(processInfo, projectRoot) {
   const name = normalize(processInfo?.Name ?? processInfo?.name);
   const commandLine = normalize(

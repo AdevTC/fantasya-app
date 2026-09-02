@@ -5,6 +5,7 @@ import {
   buildWindowsTreeKillArguments,
   isOwnedFirebaseCliProcess,
   isOwnedDemoFirestoreProcess,
+  resolveEmulatorCleanupError,
   selectNewOwnedProcessIds,
   terminateWindowsProcessTree,
 } from '../../scripts/emulator-processes.mjs';
@@ -91,6 +92,18 @@ test('builds a Windows taskkill command for one exact child tree', async () => {
   assert.equal(invocation.file, 'taskkill.exe');
   assert.deepEqual(invocation.arguments_, ['/PID', '4321', '/T', '/F']);
   assert.equal(invocation.options.windowsHide, true);
+});
+
+test('never hides a process-tree termination failure', () => {
+  const treeError = new Error('taskkill failed');
+  const cleanupError = new Error('port cleanup failed');
+
+  assert.equal(resolveEmulatorCleanupError(treeError), treeError);
+  assert.equal(resolveEmulatorCleanupError(undefined, cleanupError), cleanupError);
+
+  const combined = resolveEmulatorCleanupError(treeError, cleanupError);
+  assert.ok(combined instanceof AggregateError);
+  assert.deepEqual(combined.errors, [treeError, cleanupError]);
 });
 
 test('matches only the Firebase CLI child owned by this wrapper and checkout', () => {
