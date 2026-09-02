@@ -20,6 +20,12 @@ winget install --exact --id Schniz.fnm --accept-source-agreements --accept-packa
 
 Después hay que abrir una PowerShell nueva.
 
+En esa PowerShell, instala una versión Node 22 oficial una sola vez:
+
+```powershell
+fnm install 22
+```
+
 ## Instalación
 
 Desde la raíz del repositorio:
@@ -33,7 +39,8 @@ if (-not (Test-Path -LiteralPath functions\.secret.local)) {
 }
 ```
 
-El script comprueba que la sesión está usando Node.js 22. Los archivos
+El script localiza la instalación oficial firmada, fija también su `npm` y
+comprueba que la sesión está usando Node.js 22. Los archivos
 `.nvmrc` y `.node-version` contienen la misma versión para otros gestores
 compatibles.
 

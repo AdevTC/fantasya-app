@@ -13,7 +13,8 @@ pueden cambiar y deben volver a comprobarse antes de una release.
 Requisitos:
 
 - Windows 11 y PowerShell.
-- `fnm` disponible en una PowerShell nueva.
+- Node 22 instalado previamente con `fnm install 22` desde una PowerShell
+  normal.
 - Java 21 o superior.
 - Acceso Git al repositorio para clonar o actualizar el código.
 
@@ -31,11 +32,14 @@ if (-not (Test-Path -LiteralPath functions\.secret.local)) {
 npm run dev
 ```
 
-El script activa Node 22 sólo en la PowerShell actual. Node 24 puede permanecer
-instalado globalmente, pero no se usa en Fantasya: que una versión sea posterior
-no garantiza compatibilidad total con Firebase Functions, dependencias nativas
-o CI. El repositorio y las Functions declaran Node 22 y rechazan otra versión
-para mantener el mismo runtime en local, pruebas y despliegue.
+El script activa Node 22 sólo en la PowerShell actual. Acepta únicamente un
+`node.exe` oficial firmado por OpenJS Foundation, reutiliza el caché canónico de
+`fnm` cuando Codex no puede ver su alias de WinGet y fija el `npm` de esa misma
+instalación. Node 24 puede permanecer instalado globalmente, pero no se usa en
+Fantasya: que una versión sea posterior no garantiza compatibilidad total con
+Firebase Functions, dependencias nativas o CI. El repositorio y las Functions
+declaran Node 22 y rechazan otra versión para mantener el mismo runtime en
+local, pruebas y despliegue.
 
 La aplicación queda en <http://127.0.0.1:5173> y Emulator UI en
 <http://127.0.0.1:4000>. Debe aparecer el indicador
@@ -89,6 +93,26 @@ npm run verify
 
 La CI de GitHub ejecuta el mismo `verify` con Node 22 y Java 21, sin credenciales
 ni permisos de despliegue.
+
+### Auditoría de dependencias
+
+Estado comprobado el 2 de septiembre de 2026 con `npm audit --omit=dev`:
+
+- La aplicación web tiene 0 vulnerabilidades conocidas en dependencias de
+  producción.
+- Functions no tiene avisos altos ni críticos. npm informa de 7 avisos
+  moderados que corresponden a una única vulnerabilidad transitiva de `uuid`
+  incluida por la ruta de Cloud Storage de la versión más reciente de
+  `firebase-admin`. El código de Functions de Fantasya no usa ese cliente de
+  Storage.
+- npm sólo ofrece resolverlos con `--force`, bajando a
+  `firebase-admin@10.3.0`. No se aplica: introduciría una versión antigua y un
+  cambio incompatible. Debe reevaluarse cuando Google publique una cadena de
+  dependencias corregida.
+
+La auditoría completa puede mostrar además avisos en herramientas sólo de
+desarrollo, principalmente Firebase CLI. No forman parte del artefacto web ni
+del runtime desplegado; se mantienen actualizadas y se revisan por separado.
 
 ## Matriz de accesos
 
