@@ -278,7 +278,8 @@ service cloud.firestore {
 
         match /transfers/{transferId} {
           allow read: if isLeagueMember(leagueId, seasonId);
-          allow write: if isLeagueAdmin(leagueId, seasonId);
+          allow create: if false;
+          allow update, delete: if isLeagueAdmin(leagueId, seasonId);
         }
 
         match /achievements/{userId} {
@@ -369,31 +370,7 @@ service cloud.firestore {
 
     match /posts/{postId} {
       allow read: if true;
-      allow create: if isAuthenticated()
-        && request.resource.data.authorId == request.auth.uid
-        && request.resource.data.keys()
-          .hasAll([
-            'authorId',
-            'authorUsername',
-            'authorPhotoURL',
-            'content',
-            'imageURL',
-            'tags',
-            'createdAt',
-            'likes'
-          ])
-        && request.resource.data.keys().hasOnly([
-          'authorId',
-          'authorUsername',
-          'authorPhotoURL',
-          'content',
-          'imageURL',
-          'tags',
-          'createdAt',
-          'likes'
-        ])
-        && isValidPostData(request.resource.data)
-        && request.resource.data.likes.size() == 0;
+      allow create: if false;
       allow update: if isAuthenticated()
         && resource.data.authorId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys()

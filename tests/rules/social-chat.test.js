@@ -244,9 +244,9 @@ test('achievement, feat and career mirrors are server-only', async () => {
   ), { POSTS_CREATED_50: { current: 999 } }));
 });
 
-test('post creation, author edits and reactions preserve ownership', async () => {
+test('post creation is server-owned while author edits and reactions preserve ownership', async () => {
   const memberDb = env.authenticatedContext(IDS.member).firestore();
-  await assertSucceeds(setDoc(doc(memberDb, 'posts', 'member-post'), {
+  await assertFails(setDoc(doc(memberDb, 'posts', 'member-post'), {
     authorId: IDS.member,
     authorUsername: 'member',
     authorPhotoURL: null,

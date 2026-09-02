@@ -7,6 +7,7 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   writeBatch,
@@ -18,6 +19,7 @@ import {
 } from './test-env.js';
 
 let env;
+const TRANSFER_ID = 'existing-transfer';
 
 before(async () => {
   env = await createRulesEnvironment();
@@ -26,6 +28,22 @@ before(async () => {
 beforeEach(async () => {
   await env.clearFirestore();
   await seedLeagueFixture(env);
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(
+      db,
+      'leagues',
+      IDS.league,
+      'seasons',
+      IDS.season,
+      'transfers',
+      TRANSFER_ID,
+    ), {
+      buyerId: IDS.member,
+      sellerId: 'market',
+      price: 10,
+    });
+  });
 });
 
 after(async () => env.cleanup());
@@ -152,7 +170,7 @@ test('admin keeps operational access and ownerId controls deletion', async () =>
     doc(delegatedAdminDb, 'leagues', IDS.league, 'seasons', IDS.season),
     { archived: true },
   ));
-  await assertSucceeds(setDoc(doc(
+  await assertFails(setDoc(doc(
     delegatedAdminDb,
     'leagues',
     IDS.league,
@@ -165,6 +183,26 @@ test('admin keeps operational access and ownerId controls deletion', async () =>
     sellerId: 'market',
     price: 10,
   }));
+  const transferRef = doc(
+    delegatedAdminDb,
+    'leagues',
+    IDS.league,
+    'seasons',
+    IDS.season,
+    'transfers',
+    TRANSFER_ID,
+  );
+  await assertSucceeds(getDoc(doc(
+    memberDb,
+    'leagues',
+    IDS.league,
+    'seasons',
+    IDS.season,
+    'transfers',
+    TRANSFER_ID,
+  )));
+  await assertSucceeds(updateDoc(transferRef, { price: 12 }));
+  await assertSucceeds(deleteDoc(transferRef));
   await assertFails(deleteDoc(doc(memberDb, 'leagues', IDS.league)));
   await assertSucceeds(deleteDoc(doc(adminDb, 'leagues', IDS.league)));
 });
