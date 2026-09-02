@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { assertNodeVersion } from './check-node-version.mjs';
 import {
   EXPECTED_PRODUCTION,
+  assertNoFirebaseFunctionsDotenv,
+  findFirebaseFunctionsDotenvFiles,
   inspectFirebaseIdentity,
+  refreshOriginBranches,
 } from './production-preflight.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -317,6 +320,14 @@ export function evaluatePremergeState(state) {
   if (!firebaseProjectIds.includes(EXPECTED_PRODUCTION.firebaseProject)) {
     errors.push('production Firebase project is not visible');
   }
+  if (
+    Array.isArray(state?.firebaseFunctionsDotenvFiles)
+    && state.firebaseFunctionsDotenvFiles.length > 0
+  ) {
+    errors.push(
+      'A Firebase Functions environment file that can be loaded in production is present.',
+    );
+  }
 
   const pullRequests = Array.isArray(state?.pullRequests)
     ? state.pullRequests
@@ -416,7 +427,12 @@ function readLocalState(cwd) {
     commit,
     originUrl,
     upstream,
+    firebaseFunctionsDotenvFiles: findFirebaseFunctionsDotenvFiles(cwd),
   };
+}
+
+export function refreshPremergeOriginBranches(cwd, branch) {
+  refreshOriginBranches(cwd, [EXPECTED_PRODUCTION.branch, branch]);
 }
 
 function parseHeadUpstreamDivergence(output) {
@@ -486,11 +502,26 @@ export function inspectPremergeState({ cwd = projectRoot } = {}) {
       warnings: ['Remote and Firebase checks were skipped for a noncanonical origin.'],
     };
   }
+  if (localState.firebaseFunctionsDotenvFiles.length > 0) {
+    return {
+      state: {
+        ...localState,
+        ahead: null,
+        behind: null,
+        activeFirebaseAccount: null,
+        firebaseProjectIds: [],
+        pullRequests: [],
+      },
+      errors: [
+        'A Firebase Functions environment file that can be loaded in production is present.',
+      ],
+      warnings: [
+        'Remote and Firebase checks were skipped until local release state is valid.',
+      ],
+    };
+  }
 
-  runCaptured('git', ['fetch', '--quiet', 'origin', 'main', branch], {
-    cwd,
-    label: 'Git origin refresh',
-  });
+  refreshPremergeOriginBranches(cwd, branch);
   const refreshedLocalState = readLocalState(cwd);
   const divergence = refreshedLocalState.upstream
     ? parseHeadUpstreamDivergence(runCaptured(
@@ -536,6 +567,7 @@ export function assertPremergeStateUnchanged(
     throw new Error('Expected premerge state is not eligible.');
   }
 
+  assertNoFirebaseFunctionsDotenv(cwd);
   const report = inspect({ cwd });
   const currentPullRequest = report?.state?.pullRequests?.[0];
   const expectedPullRequest = expectedState.pullRequests[0];

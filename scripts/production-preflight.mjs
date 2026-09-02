@@ -17,6 +17,28 @@ export const EXPECTED_PRODUCTION = Object.freeze({
   footballSecret: 'FOOTBALL_DATA_API_KEY',
 });
 
+const FIREBASE_FUNCTIONS_DOTENV_FILES = Object.freeze([
+  '.env',
+  `.env.${EXPECTED_PRODUCTION.firebaseProject}`,
+  '.env.production',
+]);
+const SAFE_REMOTE_BRANCH_PATTERN
+  = /^(?!-)(?!.*\.\.)(?!.*@\{)[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const FIREBASE_FUNCTIONS_DOTENV_ERROR
+  = 'A Firebase Functions environment file that can be loaded in production is present.';
+
+export function findFirebaseFunctionsDotenvFiles(cwd = projectRoot) {
+  return FIREBASE_FUNCTIONS_DOTENV_FILES.filter((filename) => (
+    existsSync(resolve(cwd, 'functions', filename))
+  ));
+}
+
+export function assertNoFirebaseFunctionsDotenv(cwd = projectRoot) {
+  if (findFirebaseFunctionsDotenvFiles(cwd).length > 0) {
+    throw new Error(FIREBASE_FUNCTIONS_DOTENV_ERROR);
+  }
+}
+
 export function evaluateProductionState(state) {
   const errors = [];
   if (state.branch !== EXPECTED_PRODUCTION.branch) {
@@ -45,6 +67,12 @@ export function evaluateProductionState(state) {
     : [];
   if (!projectIds.includes(EXPECTED_PRODUCTION.firebaseProject)) {
     errors.push('production Firebase project is not visible');
+  }
+  if (
+    Array.isArray(state.firebaseFunctionsDotenvFiles)
+    && state.firebaseFunctionsDotenvFiles.length > 0
+  ) {
+    errors.push(FIREBASE_FUNCTIONS_DOTENV_ERROR);
   }
   return errors;
 }
@@ -89,6 +117,7 @@ function runCaptured(command, args, { cwd, label }) {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
+    shell: false,
   });
   if (result.error) {
     throw new Error(`${label} could not start.`, { cause: result.error });
@@ -97,6 +126,30 @@ function runCaptured(command, args, { cwd, label }) {
     throw new Error(`${label} failed.`);
   }
   return String(result.stdout || '');
+}
+
+export function refreshOriginBranches(cwd, branches) {
+  if (
+    !Array.isArray(branches)
+    || branches.length === 0
+    || branches.some((branch) => (
+      typeof branch !== 'string'
+      || !SAFE_REMOTE_BRANCH_PATTERN.test(branch)
+      || branch.endsWith('/')
+      || branch.endsWith('.')
+      || branch.endsWith('.lock')
+      || branch.includes('//')
+    ))
+  ) {
+    throw new Error('Git origin refresh received an invalid branch.');
+  }
+  const refspecs = branches.map(
+    (branch) => `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+  );
+  runCaptured('git', ['fetch', '--quiet', 'origin', ...refspecs], {
+    cwd,
+    label: 'Git origin refresh',
+  });
 }
 
 export function resolveFirebaseEntrypoint(cwd = projectRoot) {
@@ -170,6 +223,7 @@ function readLocalReleaseState(cwd) {
     clean: status.trim() === '',
     commit,
     originUrl,
+    firebaseFunctionsDotenvFiles: findFirebaseFunctionsDotenvFiles(cwd),
   };
 }
 
@@ -249,6 +303,9 @@ export async function inspectProductionState({
   if (localState.originUrl !== EXPECTED_PRODUCTION.gitOrigin) {
     localErrors.push('origin must point to the canonical Fantasya repository');
   }
+  if (localState.firebaseFunctionsDotenvFiles.length > 0) {
+    localErrors.push(FIREBASE_FUNCTIONS_DOTENV_ERROR);
+  }
 
   const uncheckedState = {
     ...localState,
@@ -268,10 +325,7 @@ export async function inspectProductionState({
     };
   }
 
-  runCaptured('git', ['fetch', '--quiet', 'origin', 'main'], {
-    cwd,
-    label: 'Git origin/main refresh',
-  });
+  refreshOriginBranches(cwd, [EXPECTED_PRODUCTION.branch]);
   const divergence = parseGitDivergence(runCaptured(
     'git',
     ['rev-list', '--left-right', '--count', 'origin/main...main'],
@@ -358,10 +412,8 @@ export function assertProductionStateUnchanged(
   expectedState,
   { cwd = projectRoot } = {},
 ) {
-  runCaptured('git', ['fetch', '--quiet', 'origin', 'main'], {
-    cwd,
-    label: 'Final Git origin/main refresh',
-  });
+  assertNoFirebaseFunctionsDotenv(cwd);
+  refreshOriginBranches(cwd, [EXPECTED_PRODUCTION.branch]);
   const current = readLocalReleaseState(cwd);
   const divergence = parseGitDivergence(runCaptured(
     'git',

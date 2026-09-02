@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +25,7 @@ import {
   inspectPremergeState,
   parsePullRequests,
   printPremergeReport,
+  refreshPremergeOriginBranches,
 } from '../../scripts/premerge-functions-preflight.mjs';
 
 const SHA = '1234567890abcdef1234567890abcdef12345678';
@@ -84,6 +91,7 @@ const safe = (overrides = {}) => ({
   behind: 0,
   activeFirebaseAccount: 'jordisumba@gmail.com',
   firebaseProjectIds: ['tictaktools'],
+  firebaseFunctionsDotenvFiles: [],
   pullRequests: [pullRequest()],
   ...overrides,
 });
@@ -92,12 +100,140 @@ function joinedErrors(state) {
   return evaluatePremergeState(state).join('\n');
 }
 
+function runGit(cwd, args, { allowFailure = false } = {}) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
+  });
+  if (!allowFailure) {
+    assert.equal(
+      result.status,
+      0,
+      `git ${args.join(' ')} failed: ${result.stderr}`,
+    );
+  }
+  return String(result.stdout || '').trim();
+}
+
+function createPremergeGitFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'fantasya-premerge-fetch-'));
+  const remote = join(root, 'remote.git');
+  const seed = join(root, 'seed');
+  const client = join(root, 'client');
+  const branch = 'codex/firebase-safe-development';
+  mkdirSync(seed);
+  runGit(root, ['init', '--bare', remote]);
+  runGit(seed, ['init']);
+  runGit(seed, ['config', 'user.name', 'Release Guard Test']);
+  runGit(seed, ['config', 'user.email', 'release-guard@example.invalid']);
+  writeFileSync(join(seed, 'release.txt'), 'main-initial\n');
+  runGit(seed, ['add', 'release.txt']);
+  runGit(seed, ['commit', '-m', 'main initial']);
+  runGit(seed, ['branch', '-M', 'main']);
+  runGit(seed, ['remote', 'add', 'origin', remote]);
+  runGit(seed, ['push', '-u', 'origin', 'main']);
+  runGit(seed, ['switch', '-c', branch]);
+  writeFileSync(join(seed, 'branch.txt'), 'branch-initial\n');
+  runGit(seed, ['add', 'branch.txt']);
+  runGit(seed, ['commit', '-m', 'branch initial']);
+  runGit(seed, ['push', '-u', 'origin', branch]);
+  runGit(root, ['clone', '--branch', branch, remote, client]);
+  runGit(client, [
+    'fetch',
+    'origin',
+    'main:refs/remotes/origin/main',
+  ]);
+  return { root, seed, client, branch };
+}
+
+function advanceBranch(seed, branch, filename, marker) {
+  runGit(seed, ['switch', branch]);
+  writeFileSync(join(seed, filename), `${marker}\n`);
+  runGit(seed, ['add', filename]);
+  runGit(seed, ['commit', '-m', marker]);
+  runGit(seed, ['push', 'origin', branch]);
+  return runGit(seed, ['rev-parse', branch]);
+}
+
 test('parses the exact GitHub PR array shape without coercion', () => {
   const parsed = parsePullRequests(JSON.stringify([rawPullRequest()]));
 
   assert.deepEqual(parsed, [pullRequest()]);
   assert.deepEqual(evaluatePremergeState(safe()), []);
 });
+
+test('rejects Firebase Functions dotenv files in premerge state', () => {
+  for (const filename of ['.env', '.env.tictaktools', '.env.production']) {
+    assert.match(
+      joinedErrors(safe({ firebaseFunctionsDotenvFiles: [filename] })),
+      /Functions environment file/i,
+    );
+  }
+});
+
+for (const [name, configureFetch] of [
+  [
+    'remote.origin.fetch is absent',
+    (client) => runGit(client, ['config', '--unset-all', 'remote.origin.fetch'], {
+      allowFailure: true,
+    }),
+  ],
+  [
+    'remote.origin.fetch is remapped',
+    (client) => {
+      runGit(client, ['config', '--unset-all', 'remote.origin.fetch']);
+      runGit(client, [
+        'config',
+        '--add',
+        'remote.origin.fetch',
+        '+refs/heads/*:refs/remotes/remapped/*',
+      ]);
+    },
+  ],
+]) {
+  test(`premerge refresh updates main and PR refs when ${name}`, () => {
+    const fixture = createPremergeGitFixture();
+    try {
+      const mainBefore = runGit(fixture.client, ['rev-parse', 'origin/main']);
+      const branchBefore = runGit(
+        fixture.client,
+        ['rev-parse', `origin/${fixture.branch}`],
+      );
+      const mainAfter = advanceBranch(
+        fixture.seed,
+        'main',
+        'release.txt',
+        `main-${name}`,
+      );
+      const branchAfter = advanceBranch(
+        fixture.seed,
+        fixture.branch,
+        'branch.txt',
+        `branch-${name}`,
+      );
+      assert.notEqual(mainBefore, mainAfter);
+      assert.notEqual(branchBefore, branchAfter);
+      configureFetch(fixture.client);
+
+      refreshPremergeOriginBranches(fixture.client, fixture.branch);
+
+      assert.equal(runGit(fixture.client, ['rev-parse', 'origin/main']), mainAfter);
+      assert.equal(
+        runGit(fixture.client, ['rev-parse', `origin/${fixture.branch}`]),
+        branchAfter,
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('rejects malformed JSON and every non-array top-level shape', () => {
   for (const value of ['', '{', '{}', 'null', '"[]"', '3']) {
@@ -544,6 +680,36 @@ test('unchanged-state assertion rejects malformed expected state before commands
   );
 });
 
+test('premerge unchanged-state recheck fails closed on a newly-created dotenv', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fantasya-premerge-recheck-'));
+  const functionsDirectory = join(directory, 'functions');
+  mkdirSync(functionsDirectory);
+  let inspected = false;
+  try {
+    writeFileSync(join(functionsDirectory, '.env'), 'SECRET=never-print\n');
+    assert.throws(
+      () => assertPremergeStateUnchanged(
+        { state: safe(), errors: [], warnings: [] },
+        {
+          cwd: directory,
+          inspect: () => {
+            inspected = true;
+            return { state: safe(), errors: [], warnings: [] };
+          },
+        },
+      ),
+      (error) => {
+        assert.match(error.message, /Functions environment file/i);
+        assert.doesNotMatch(String(error), /SECRET|never-print/);
+        return true;
+      },
+    );
+    assert.equal(inspected, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('unchanged-state assertion requires the original clean report', () => {
   const inspect = () => ({ state: safe(), errors: [], warnings: [] });
 
@@ -661,7 +827,15 @@ test('inspection uses argument arrays and explicitly disables shell execution', 
   assert.match(source, /shell:\s*false/);
   assert.match(
     source,
-    /\['fetch', '--quiet', 'origin', 'main', branch\]/,
+    /refreshOriginBranches\(cwd, \[EXPECTED_PRODUCTION\.branch, branch\]\)/,
+  );
+  const productionSource = readFileSync(
+    new URL('../../scripts/production-preflight.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    productionSource,
+    /`\+refs\/heads\/\$\{branch\}:refs\/remotes\/origin\/\$\{branch\}`/,
   );
   assert.match(
     source,
@@ -768,6 +942,7 @@ test('orchestrates a deployment only after both exact-state checks', async () =>
       calls.push('recheck');
       return premergeReport;
     },
+    checkDotenv: () => calls.push('dotenv'),
     spawnFirebase: (args, options) => {
       assert.deepEqual(args, buildPremergeDeployArguments(target));
       assert.equal(options.stdio, 'inherit');
@@ -786,10 +961,37 @@ test('orchestrates a deployment only after both exact-state checks', async () =>
     'recheck',
     'inventory:baseline',
     'print-inventory:baseline',
+    'dotenv',
     'deploy',
     'inventory:core-v2',
     'print-inventory:core-v2',
   ]);
+});
+
+test('fails closed if a dotenv appears after the second inventory', async () => {
+  const green = { state: safe(), errors: [], warnings: [] };
+  const calls = [];
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    cwd: process.cwd(),
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    inspectPremerge: () => green,
+    printPremerge: () => {},
+    inspectFunctions: async ({ stage }) => ({ stage, items: [], errors: [] }),
+    printInventory: () => calls.push('inventory'),
+    askConfirmation: async (expected) => expected,
+    recheckPremerge: () => green,
+    checkDotenv: () => {
+      calls.push('dotenv');
+      throw new Error('Firebase Functions environment file is present.');
+    },
+    spawnFirebase: () => {
+      calls.push('deploy');
+      return { status: 0 };
+    },
+  }), /Functions environment file/i);
+
+  assert.deepEqual(calls, ['inventory', 'inventory', 'dotenv']);
 });
 
 test('fails before remote checks when either terminal stream is not a TTY', async () => {

@@ -1,14 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   EXPECTED_PRODUCTION,
+  assertNoFirebaseFunctionsDotenv,
+  assertProductionStateUnchanged,
   evaluateProductionState,
+  findFirebaseFunctionsDotenvFiles,
   parseActiveFirebaseAccount,
   parseFirebaseProjectIds,
   parseGitDivergence,
+  refreshOriginBranches,
   shouldInspectFootballSecret,
 } from '../../scripts/production-preflight.mjs';
 import {
@@ -29,7 +41,58 @@ const safe = {
   behind: 0,
   activeFirebaseAccount: 'jordisumba@gmail.com',
   firebaseProjectIds: ['demo-fantasya', 'tictaktools'],
+  firebaseFunctionsDotenvFiles: [],
 };
+
+function runGit(cwd, args, { allowFailure = false } = {}) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
+  });
+  if (!allowFailure) {
+    assert.equal(
+      result.status,
+      0,
+      `git ${args.join(' ')} failed: ${result.stderr}`,
+    );
+  }
+  return String(result.stdout || '').trim();
+}
+
+function createGitFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'fantasya-production-fetch-'));
+  const remote = join(root, 'remote.git');
+  const seed = join(root, 'seed');
+  const client = join(root, 'client');
+  mkdirSync(seed);
+  runGit(root, ['init', '--bare', remote]);
+  runGit(seed, ['init']);
+  runGit(seed, ['config', 'user.name', 'Release Guard Test']);
+  runGit(seed, ['config', 'user.email', 'release-guard@example.invalid']);
+  writeFileSync(join(seed, 'release.txt'), 'initial\n');
+  runGit(seed, ['add', 'release.txt']);
+  runGit(seed, ['commit', '-m', 'initial']);
+  runGit(seed, ['branch', '-M', 'main']);
+  runGit(seed, ['remote', 'add', 'origin', remote]);
+  runGit(seed, ['push', '-u', 'origin', 'main']);
+  runGit(root, ['clone', '--branch', 'main', remote, client]);
+  return { root, remote, seed, client };
+}
+
+function advanceMain(seed, marker) {
+  writeFileSync(join(seed, 'release.txt'), `${marker}\n`);
+  runGit(seed, ['add', 'release.txt']);
+  runGit(seed, ['commit', '-m', marker]);
+  runGit(seed, ['push', 'origin', 'main']);
+  return runGit(seed, ['rev-parse', 'main']);
+}
 
 const developmentGuide = readFileSync(
   new URL('../../docs/development.md', import.meta.url),
@@ -106,6 +169,112 @@ test('rejects dirty, divergent, wrong-account and missing-project state', () => 
   assert.match(errors.join('\n'), /Firebase account/);
   assert.match(errors.join('\n'), /Firebase project/);
 });
+
+test('rejects Firebase Functions dotenv files that Firebase Tools can load', () => {
+  for (const filename of ['.env', '.env.tictaktools', '.env.production']) {
+    const errors = evaluateProductionState({
+      ...safe,
+      firebaseFunctionsDotenvFiles: [filename],
+    });
+    assert.match(errors.join('\n'), /Functions environment file/i);
+  }
+});
+
+test('dotenv inspection rejects only production-loaded files and never reads values', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fantasya-production-dotenv-'));
+  const functionsDirectory = join(directory, 'functions');
+  mkdirSync(functionsDirectory);
+  try {
+    writeFileSync(join(functionsDirectory, '.env.local'), 'SECRET=allowed-local\n');
+    writeFileSync(join(functionsDirectory, '.secret.local'), 'SECRET=allowed-local\n');
+    assert.deepEqual(findFirebaseFunctionsDotenvFiles(directory), []);
+    assert.doesNotThrow(() => assertNoFirebaseFunctionsDotenv(directory));
+
+    writeFileSync(join(functionsDirectory, '.env.tictaktools'), 'SECRET=never-print\n');
+    assert.deepEqual(findFirebaseFunctionsDotenvFiles(directory), [
+      '.env.tictaktools',
+    ]);
+    assert.throws(
+      () => assertNoFirebaseFunctionsDotenv(directory),
+      (error) => {
+        assert.match(error.message, /Functions environment file/i);
+        assert.doesNotMatch(String(error), /SECRET|never-print|allowed-local/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('production unchanged-state recheck fails closed on a newly-created dotenv', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fantasya-production-recheck-'));
+  const functionsDirectory = join(directory, 'functions');
+  mkdirSync(functionsDirectory);
+  try {
+    writeFileSync(join(functionsDirectory, '.env.production'), 'SECRET=never-print\n');
+    assert.throws(
+      () => assertProductionStateUnchanged(safe, { cwd: directory }),
+      (error) => {
+        assert.match(error.message, /Functions environment file/i);
+        assert.doesNotMatch(String(error), /SECRET|never-print/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('firebase.json excludes every dotenv file from the Functions package', () => {
+  const firebase = JSON.parse(readFileSync(
+    new URL('../../firebase.json', import.meta.url),
+    'utf8',
+  ));
+  const ignore = firebase.functions[0].ignore;
+  assert.ok(ignore.includes('.env'));
+  assert.ok(ignore.includes('.env.*'));
+});
+
+for (const [name, configureFetch] of [
+  [
+    'remote.origin.fetch is absent',
+    (client) => runGit(client, ['config', '--unset-all', 'remote.origin.fetch'], {
+      allowFailure: true,
+    }),
+  ],
+  [
+    'remote.origin.fetch is remapped',
+    (client) => {
+      runGit(client, ['config', '--unset-all', 'remote.origin.fetch']);
+      runGit(client, [
+        'config',
+        '--add',
+        'remote.origin.fetch',
+        '+refs/heads/*:refs/remotes/remapped/*',
+      ]);
+    },
+  ],
+]) {
+  test(`production refresh updates origin/main when ${name}`, () => {
+    const fixture = createGitFixture();
+    try {
+      const stale = runGit(fixture.client, ['rev-parse', 'origin/main']);
+      const current = advanceMain(fixture.seed, `advance-${name}`);
+      assert.notEqual(stale, current);
+      configureFetch(fixture.client);
+
+      refreshOriginBranches(fixture.client, ['main']);
+
+      assert.equal(
+        runGit(fixture.client, ['rev-parse', 'origin/main']),
+        current,
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('parses only sanitized Firebase and Git preflight output', () => {
   assert.equal(

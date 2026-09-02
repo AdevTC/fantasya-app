@@ -12,6 +12,7 @@ import {
 } from './premerge-functions-preflight.mjs';
 import {
   EXPECTED_PRODUCTION,
+  assertNoFirebaseFunctionsDotenv,
   spawnFirebaseCli,
 } from './production-preflight.mjs';
 
@@ -152,6 +153,7 @@ export async function runPremergeDeploy(target, {
   inspectFunctions = inspectProductionFunctions,
   askConfirmation = askForLiteralConfirmation,
   recheckPremerge = assertPremergeStateUnchanged,
+  checkDotenv = assertNoFirebaseFunctionsDotenv,
   spawnFirebase = spawnFirebaseCli,
   printInventory = printSanitizedPremergeInventory,
 } = {}) {
@@ -185,6 +187,7 @@ export async function runPremergeDeploy(target, {
   );
   printInventory(recheckedInventory);
 
+  checkDotenv(cwd);
   const child = spawnFirebase(buildPremergeDeployArguments(target), {
     cwd,
     stdio: 'inherit',
