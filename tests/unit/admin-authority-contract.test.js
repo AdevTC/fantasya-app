@@ -7,6 +7,7 @@ const superAdminSource = fs.readFileSync(
   'utf8',
 );
 const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+const compactFunctionsSource = functionsSource.replace(/\s+/g, '');
 
 test('role changes use the protected callable instead of client writes', () => {
   assert.match(superAdminSource, /setUserAppRole/);
@@ -14,17 +15,22 @@ test('role changes use the protected callable instead of client writes', () => {
 });
 
 test('production-safe callable aliases delegate to reviewed handlers', () => {
-  assert.match(
-    functionsSource,
-    /exports\.createProfileDocumentsV2\s*=\s*onCall/,
+  assert.ok(
+    compactFunctionsSource.includes(
+      "exports.createProfileDocumentsV2=onCall({region:'us-central1',cors:browserOrigins},createProfileDocumentsHandler,);",
+    ),
+    'createProfileDocumentsV2 must delegate to createProfileDocumentsHandler',
   );
-  assert.match(functionsSource, /unlinkUserFromTeamHandler/);
-  assert.match(
-    functionsSource,
-    /exports\.unlinkUserFromTeamV2\s*=\s*onCall/,
+  assert.ok(
+    compactFunctionsSource.includes(
+      "exports.unlinkUserFromTeamV2=onCall({region:'us-central1',cors:browserOrigins},unlinkUserFromTeamHandler,);",
+    ),
+    'unlinkUserFromTeamV2 must delegate to unlinkUserFromTeamHandler',
   );
-  assert.match(
-    functionsSource,
-    /exports\.createOrGetChatV2\s*=\s*onCall/,
+  assert.ok(
+    compactFunctionsSource.includes(
+      "exports.createOrGetChatV2=onCall({region:'us-central1',cors:browserOrigins},(request)=>createOrGetChatHandler({uid:requireAuth(request),data:request.data,}),);",
+    ),
+    'createOrGetChatV2 must authenticate and adapt request data for its handler',
   );
 });

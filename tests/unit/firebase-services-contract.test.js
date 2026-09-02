@@ -6,6 +6,10 @@ function source(path) {
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
 
+function compact(value) {
+  return value.replace(/\s+/g, '');
+}
+
 test('the shared Firebase module owns every service and emulator connection', () => {
   const firebaseSource = source('src/config/firebase.js');
 
@@ -32,7 +36,31 @@ test('callable consumers route protected operations through shared services', ()
   assert.match(adminApiSource, /call\('createProfileDocumentsV2'/);
   assert.match(adminApiSource, /call\('unlinkUserFromTeamV2'/);
   assert.match(adminApiSource, /call\('createOrGetChatV2'/);
+
+  const compactAdminTabSource = compact(adminTabSource);
+  assert.ok(
+    compactAdminTabSource.includes(
+      "import{unlinkUserFromTeam}from'../services/admin-api';",
+    ),
+    'AdminTab must import the unlinkUserFromTeam service wrapper',
+  );
+  assert.ok(
+    compactAdminTabSource.includes('awaitunlinkUserFromTeam({'),
+    'AdminTab must invoke the unlinkUserFromTeam service wrapper',
+  );
   assert.doesNotMatch(adminTabSource, /httpsCallable|\bfunctions\b/);
+
+  const compactProfileSource = compact(profileSource);
+  assert.ok(
+    compactProfileSource.includes(
+      "import{createOrGetChat}from'../services/admin-api';",
+    ),
+    'UserProfilePage must import the createOrGetChat service wrapper',
+  );
+  assert.ok(
+    compactProfileSource.includes('awaitcreateOrGetChat(profile.id)'),
+    'UserProfilePage must invoke the createOrGetChat service wrapper',
+  );
   assert.doesNotMatch(profileSource, /httpsCallable|\bfunctions\b/);
 });
 
