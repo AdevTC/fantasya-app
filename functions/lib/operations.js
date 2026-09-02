@@ -17,6 +17,18 @@ function isArrayIndex(key, length) {
   return Number.isSafeInteger(index) && index < length;
 }
 
+function requireDataProperty(value, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (
+    !descriptor
+    || !descriptor.enumerable
+    || !Object.hasOwn(descriptor, 'value')
+  ) {
+    invalidPayload();
+  }
+  return descriptor.value;
+}
+
 function canonicalValue(value, ancestors = new Set()) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return value;
@@ -37,21 +49,29 @@ function canonicalValue(value, ancestors = new Set()) {
       ))) {
         invalidPayload();
       }
-      return value.map((item, index) => {
-        if (!Object.hasOwn(value, index)) invalidPayload();
-        return canonicalValue(item, ancestors);
-      });
+      const normalized = [];
+      for (let index = 0; index < value.length; index += 1) {
+        normalized.push(canonicalValue(
+          requireDataProperty(value, String(index)),
+          ancestors,
+        ));
+      }
+      return normalized;
     }
 
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) invalidPayload();
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) {
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== 'string')) {
       invalidPayload();
     }
 
     const normalized = Object.create(null);
-    for (const key of Object.keys(value).sort()) {
-      normalized[key] = canonicalValue(value[key], ancestors);
+    for (const key of keys.sort()) {
+      normalized[key] = canonicalValue(
+        requireDataProperty(value, key),
+        ancestors,
+      );
     }
     return normalized;
   } catch (error) {
@@ -70,15 +90,23 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function requireExactDocumentId(value, name) {
+  const safe = requireDocumentId(value, name);
+  if (typeof value !== 'string' || value !== safe) {
+    throw new HttpsError('invalid-argument', `${name} no es válido.`);
+  }
+  return safe;
+}
+
 function describeOperation({ uid, operationType, operationId, payload }) {
-  const safeUid = requireDocumentId(uid, 'uid');
-  const safeId = requireDocumentId(operationId, 'operationId');
+  const safeUid = requireExactDocumentId(uid, 'uid');
+  const safeId = requireExactDocumentId(operationId, 'operationId');
   if (!OPERATION_TYPES.has(operationType)) {
     throw new HttpsError('invalid-argument', 'operationType no es válido.');
   }
   const canonicalPayload = canonicalJson(payload);
   return {
-    key: sha256(`${safeUid}\0${operationType}\0${safeId}`),
+    key: sha256(JSON.stringify([safeUid, operationType, safeId])),
     operationId: safeId,
     operationType,
     payloadHash: sha256(canonicalPayload),

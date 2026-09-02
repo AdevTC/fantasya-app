@@ -54,6 +54,36 @@ test('operation keys isolate users, types, and client operation IDs', () => {
   );
 });
 
+test('operation identity rejects identifiers that would be silently normalized', () => {
+  for (const overrides of [
+    { uid: ' dev-user ' },
+    { operationId: ' op-one ' },
+    { uid: 42 },
+    { operationId: 42 },
+  ]) {
+    assert.throws(
+      () => describeOperation(postOperation(overrides)),
+      (error) => error.code === 'invalid-argument',
+    );
+  }
+
+  assert.doesNotThrow(() => describeOperation(postOperation()));
+});
+
+test('operation key framing distinguishes tuples containing NUL characters', () => {
+  const post = describeOperation(postOperation({
+    uid: 'dev-user',
+    operationId: 'op-one\0transfer.create.v2\0tail',
+  }));
+  const transfer = describeOperation(postOperation({
+    uid: 'dev-user\0post.create.v2\0op-one',
+    operationType: 'transfer.create.v2',
+    operationId: 'tail',
+  }));
+
+  assert.notEqual(post.key, transfer.key);
+});
+
 test('stored operation identity must match every descriptor field', () => {
   const descriptor = describeOperation(postOperation());
   const stored = {
@@ -117,6 +147,54 @@ test('operation descriptors reject values that are not JSON-safe', () => {
       (error) => error.code === 'invalid-argument',
     );
   }
+});
+
+test('canonical payloads reject non-enumerable own properties', () => {
+  const objectPayload = { content: 'hola' };
+  Object.defineProperty(objectPayload, 'hidden', {
+    value: 'ignored-by-json',
+    enumerable: false,
+  });
+  const arrayPayload = ['local'];
+  Object.defineProperty(arrayPayload, '0', {
+    value: 'local',
+    enumerable: false,
+  });
+
+  for (const payload of [objectPayload, arrayPayload]) {
+    assert.throws(
+      () => describeOperation(postOperation({ payload })),
+      (error) => error.code === 'invalid-argument',
+    );
+  }
+});
+
+test('canonical payloads reject own accessors without invoking them', () => {
+  let invocationCount = 0;
+  const objectPayload = { content: 'hola' };
+  Object.defineProperty(objectPayload, 'computed', {
+    enumerable: true,
+    get() {
+      invocationCount += 1;
+      return 'ignored-by-json';
+    },
+  });
+  const arrayPayload = [];
+  Object.defineProperty(arrayPayload, '0', {
+    enumerable: true,
+    get() {
+      invocationCount += 1;
+      return 'local';
+    },
+  });
+
+  for (const payload of [objectPayload, arrayPayload]) {
+    assert.throws(
+      () => describeOperation(postOperation({ payload })),
+      (error) => error.code === 'invalid-argument',
+    );
+  }
+  assert.equal(invocationCount, 0);
 });
 
 test('canonical payload hashing preserves prototype-looking JSON keys', () => {
