@@ -33,9 +33,25 @@ test('each unresolved creation keeps a UUID in a ref', () => {
 test('post upload retries retain the same operation before a callable payload exists', () => {
   assert.match(
     postSource,
-    /pendingAttemptRef\.current = \{ fingerprint, payload: null \}/,
+    /createPostAttempt\(\{[\s\S]*?operationId: operationIdRef\.current[\s\S]*?\}\)/,
   );
+  assert.match(postSource, /ref\(storage, pendingAttemptRef\.current\.uploadPath\)/);
   assert.match(postSource, /pendingAttemptRef\.current\.payload = payload/);
+  assert.doesNotMatch(postSource, /Date\.now\(\).*image\.name/);
+});
+
+test('transfer retries are scoped by stable modal identity and one parsed price', () => {
+  assert.match(transferSource, /getTransferSessionIdentity/);
+  assert.match(transferSource, /sessionIdentityRef\.current === nextIdentity/);
+  assert.match(transferSource, /const parsedPrice = parseSpanishPrice\(price\)/);
+  assert.equal(transferSource.match(/price: parsedPrice/g)?.length, 2);
+  assert.match(transferSource, /if \(parsedPrice === null\) \{[\s\S]*?toast\.error[\s\S]*?return;/);
+  assert.doesNotMatch(transferSource, /parseFloat|Number\.parseFloat|\|\| 0/);
+});
+
+test('post preview installs blob-only cleanup', () => {
+  assert.match(postSource, /revokeBlobUrl/);
+  assert.match(postSource, /useEffect\(\(\) => \(\) => revokeBlobUrl\(imagePreview\), \[imagePreview\]\)/);
 });
 
 test('callable creation payloads exclude server-owned identity and XP fields', () => {

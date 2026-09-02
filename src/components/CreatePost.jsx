@@ -1,9 +1,13 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { storage } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { createPost } from '../services/content-api';
+import {
+    createPostAttempt,
+    revokeBlobUrl,
+} from '../services/content-client-helpers';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, X, Tag } from 'lucide-react';
 
@@ -18,6 +22,8 @@ export default function CreatePost() {
     const operationIdRef = useRef(null);
     const pendingAttemptRef = useRef(null);
     const submissionInFlightRef = useRef(false);
+
+    useEffect(() => () => revokeBlobUrl(imagePreview), [imagePreview]);
 
     const handleImageChange = (e) => {
         if (e.target.files[0]) {
@@ -59,9 +65,13 @@ export default function CreatePost() {
         });
         if (!pendingAttemptRef.current || pendingAttemptRef.current.fingerprint !== fingerprint) {
             operationIdRef.current = uuidv4();
-            pendingAttemptRef.current = { fingerprint, payload: null };
+            pendingAttemptRef.current = createPostAttempt({
+                fingerprint,
+                operationId: operationIdRef.current,
+                uid: user.uid,
+            });
         }
-        operationIdRef.current ||= uuidv4();
+        operationIdRef.current = pendingAttemptRef.current.operationId;
         submissionInFlightRef.current = true;
         setLoading(true);
         const loadingToast = toast.loading('Publicando...');
@@ -71,7 +81,7 @@ export default function CreatePost() {
             if (!payload) {
                 let imageURL = null;
                 if (image) {
-                    const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}_${image.name}`);
+                    const imageRef = ref(storage, pendingAttemptRef.current.uploadPath);
                     await uploadBytes(imageRef, image);
                     imageURL = await getDownloadURL(imageRef);
                 }

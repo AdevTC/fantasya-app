@@ -6,6 +6,10 @@ import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
 import { useAuth } from '../hooks/useAuth';
 import { createTransfer } from '../services/content-api';
+import {
+    getTransferSessionIdentity,
+    parseSpanishPrice,
+} from '../services/content-client-helpers';
 
 export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
     const { user } = useAuth();
@@ -20,12 +24,26 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
     const operationIdRef = useRef(null);
     const pendingAttemptRef = useRef(null);
     const submissionInFlightRef = useRef(false);
+    const sessionIdentityRef = useRef(null);
 
     useEffect(() => {
-        // Solo ejecutar si el modal está abierto y tenemos datos de la temporada
-        if (!isOpen || !season?.members) {
+        const nextIdentity = getTransferSessionIdentity({
+            isOpen,
+            league,
+            season,
+            existingTransfer,
+            user,
+        });
+        if (nextIdentity === null) {
+            sessionIdentityRef.current = null;
+            operationIdRef.current = null;
+            pendingAttemptRef.current = null;
             return;
         }
+        if (!season?.members || !league?.id || !season?.id || !user?.uid) return;
+        if (sessionIdentityRef.current === nextIdentity) return;
+
+        sessionIdentityRef.current = nextIdentity;
 
         if (existingTransfer) {
             // MODO EDICIÓN: Cargar datos del fichaje existente
@@ -45,7 +63,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             setPlayer(null);
             setPrice('');
             // **CORRECCIÓN CLAVE**: El comprador por defecto es el usuario actual, no el primero de la lista.
-            setBuyerId(user.uid); 
+            setBuyerId(user.uid);
             setSellerId('market');
             setTransferType('puja');
             setDate(now.toISOString().split('T')[0]);
@@ -53,7 +71,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
         }
         operationIdRef.current = null;
         pendingAttemptRef.current = null;
-    }, [isOpen, existingTransfer, season, user]); // Añadimos 'user' a las dependencias
+    }, [isOpen, league, existingTransfer, season, user]);
 
     // Esta lógica de negocio se mantiene como la tenías
     useEffect(() => {
@@ -76,6 +94,11 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             toast.error("El comprador y el vendedor no pueden ser el mismo.");
             return;
         }
+        const parsedPrice = parseSpanishPrice(price);
+        if (parsedPrice === null) {
+            toast.error("El precio debe ser un número válido y no negativo.");
+            return;
+        }
 
         const combinedDateTime = new Date(`${date}T${time}`);
         if (isNaN(combinedDateTime.getTime())) {
@@ -86,7 +109,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
         const transferData = {
             playerId: player.id,
             playerName: player.name,
-            price: parseFloat(String(price).replace(',', '.')) || 0,
+            price: parsedPrice,
             buyerId,
             buyerName: buyerId === 'market' ? 'Mercado' : season.members[buyerId]?.teamName,
             sellerId,
@@ -101,7 +124,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 seasonId: season.id,
                 playerId: player.id,
                 playerName: player.name,
-                price: Number.parseFloat(String(price).replace(',', '.')) || 0,
+                price: parsedPrice,
                 buyerId,
                 sellerId,
                 type: transferType,
@@ -149,6 +172,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
 
     const handleClose = () => {
         if (submissionInFlightRef.current) return;
+        sessionIdentityRef.current = null;
         operationIdRef.current = null;
         pendingAttemptRef.current = null;
         onClose();
