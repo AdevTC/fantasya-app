@@ -314,6 +314,19 @@ test('post author edits and reactions preserve ownership', async () => {
   }));
 });
 
+test('post authors cannot replace the server-owned image URL', async () => {
+  const adminDb = env.authenticatedContext(IDS.admin).firestore();
+  const post = doc(adminDb, 'posts', POST_ID);
+
+  await assertFails(updateDoc(post, {
+    imageURL: 'https://attacker.example/forged-image.png',
+  }));
+  await assertSucceeds(updateDoc(post, {
+    content: 'Contenido editado por el autor',
+    tags: ['editado', 'seguro'],
+  }));
+});
+
 test('post reads stay public and authors can delete their own posts', async () => {
   const publicDb = env.unauthenticatedContext().firestore();
   await assertSucceeds(getDoc(doc(publicDb, 'posts', POST_ID)));

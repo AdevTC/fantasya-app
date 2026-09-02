@@ -374,7 +374,7 @@ service cloud.firestore {
       allow update: if isAuthenticated()
         && resource.data.authorId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['content', 'imageURL', 'tags'])
+          .hasOnly(['content', 'tags'])
         && isValidPostData(request.resource.data);
       allow update: if isAuthenticated()
         && request.resource.data.diff(resource.data).affectedKeys()
