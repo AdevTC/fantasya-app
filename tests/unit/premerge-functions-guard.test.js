@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ADDITIVE_GROUPS } from '../../scripts/production-functions-inventory.mjs';
+import {
+  PREMERGE_TRANSITIONS,
+  buildPremergeDeployArguments,
+  confirmationForPremergeTarget,
+  runPremergeDeploy,
+} from '../../scripts/deploy-premerge-functions.mjs';
 import {
   assertPremergeStateUnchanged,
   evaluateChecks,
@@ -661,4 +670,324 @@ test('inspection uses argument arrays and explicitly disables shell execution', 
   assert.match(source, /'gh',\s*\[\s*'pr',\s*'list'/);
   assert.match(source, /'--head',\s*branch/);
   assert.doesNotMatch(source, /functions:list|FOOTBALL_DATA_API_KEY/);
+});
+
+test('defines only the three ordered additive premerge transitions', () => {
+  assert.deepEqual(Object.keys(PREMERGE_TRANSITIONS), [
+    'functions-core-v2',
+    'functions-league',
+    'functions-content-v2',
+  ]);
+  assert.deepEqual(PREMERGE_TRANSITIONS['functions-core-v2'], {
+    from: 'baseline',
+    to: 'core-v2',
+  });
+  assert.deepEqual(PREMERGE_TRANSITIONS['functions-league'], {
+    from: 'core-v2',
+    to: 'league',
+  });
+  assert.deepEqual(PREMERGE_TRANSITIONS['functions-content-v2'], {
+    from: 'league',
+    to: 'content-v2',
+  });
+});
+
+test('binds confirmations and Firebase arguments to one exact target and SHA', () => {
+  assert.equal(
+    confirmationForPremergeTarget('functions-core-v2', SHA),
+    `deploy tictaktools functions-core-v2 ${SHA}`,
+  );
+  for (const target of Object.keys(PREMERGE_TRANSITIONS)) {
+    assert.deepEqual(buildPremergeDeployArguments(target), [
+      'deploy',
+      '--project',
+      'tictaktools',
+      '--account',
+      'jordisumba@gmail.com',
+      '--only',
+      ADDITIVE_GROUPS[target].map((name) => `functions:${name}`).join(','),
+    ]);
+  }
+  assert.throws(
+    () => buildPremergeDeployArguments('functions-sync'),
+    /Unknown pre-merge target/,
+  );
+  assert.throws(
+    () => confirmationForPremergeTarget('functions-core-v2', 'short'),
+    /full commit SHA/,
+  );
+});
+
+test('rejects non-string deployment targets without coercing or exposing them', () => {
+  const target = {
+    toString() {
+      throw new Error('SECRET=never-print');
+    },
+  };
+  for (const invoke of [
+    () => buildPremergeDeployArguments(target),
+    () => confirmationForPremergeTarget(target, SHA),
+  ]) {
+    assert.throws(invoke, (error) => {
+      assert.equal(error.message, 'Unknown pre-merge target.');
+      assert.doesNotMatch(String(error), /SECRET|never-print/);
+      return true;
+    });
+  }
+});
+
+test('orchestrates a deployment only after both exact-state checks', async () => {
+  const calls = [];
+  const premergeReport = { state: safe(), errors: [], warnings: [] };
+  const inventory = (stage) => ({
+    stage,
+    items: [],
+    errors: [],
+  });
+  const target = 'functions-core-v2';
+  const expectedConfirmation = confirmationForPremergeTarget(target, SHA);
+
+  await runPremergeDeploy(target, {
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    inspectPremerge: () => {
+      calls.push('preflight');
+      return premergeReport;
+    },
+    printPremerge: () => calls.push('print-preflight'),
+    inspectFunctions: async ({ stage }) => {
+      calls.push(`inventory:${stage}`);
+      return inventory(stage);
+    },
+    askConfirmation: async (expected) => {
+      calls.push(`confirm:${expected}`);
+      return expectedConfirmation;
+    },
+    recheckPremerge: (expected) => {
+      assert.equal(expected, premergeReport);
+      calls.push('recheck');
+      return premergeReport;
+    },
+    spawnFirebase: (args, options) => {
+      assert.deepEqual(args, buildPremergeDeployArguments(target));
+      assert.equal(options.stdio, 'inherit');
+      calls.push('deploy');
+      return { status: 0, signal: null, error: undefined };
+    },
+    printInventory: (report) => calls.push(`print-inventory:${report.stage}`),
+  });
+
+  assert.deepEqual(calls, [
+    'preflight',
+    'print-preflight',
+    'inventory:baseline',
+    'print-inventory:baseline',
+    `confirm:${expectedConfirmation}`,
+    'recheck',
+    'inventory:baseline',
+    'print-inventory:baseline',
+    'deploy',
+    'inventory:core-v2',
+    'print-inventory:core-v2',
+  ]);
+});
+
+test('fails before remote checks when either terminal stream is not a TTY', async () => {
+  let remoteCalls = 0;
+  const remote = () => {
+    remoteCalls += 1;
+    throw new Error('remote must not run');
+  };
+
+  await assert.rejects(
+    runPremergeDeploy('functions-core-v2', {
+      stdin: { isTTY: false },
+      stdout: { isTTY: true },
+      inspectPremerge: remote,
+      inspectFunctions: remote,
+      spawnFirebase: remote,
+    }),
+    /interactive terminal/,
+  );
+  await assert.rejects(
+    runPremergeDeploy('functions-core-v2', {
+      stdin: { isTTY: true },
+      stdout: { isTTY: false },
+      inspectPremerge: remote,
+      inspectFunctions: remote,
+      spawnFirebase: remote,
+    }),
+    /interactive terminal/,
+  );
+  assert.equal(remoteCalls, 0);
+});
+
+test('does not deploy after a failed preflight, confirmation, recheck or inventory', async () => {
+  const green = { state: safe(), errors: [], warnings: [] };
+  let deployed = false;
+  const common = {
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    printPremerge: () => {},
+    printInventory: () => {},
+    spawnFirebase: () => {
+      deployed = true;
+      return { status: 0 };
+    },
+  };
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    inspectPremerge: () => ({ ...green, errors: ['not green'] }),
+  }), /preflight failed/i);
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    inspectPremerge: () => green,
+    inspectFunctions: async ({ stage }) => ({
+      stage,
+      items: [],
+      errors: [],
+    }),
+    askConfirmation: async () => 'wrong',
+  }), /Confirmation did not match/);
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    inspectPremerge: () => green,
+    inspectFunctions: async ({ stage }) => ({
+      stage,
+      items: [],
+      errors: [],
+    }),
+    askConfirmation: async (expected) => expected,
+    recheckPremerge: () => {
+      throw new Error('Premerge state changed after confirmation; start again.');
+    },
+  }), /Premerge state changed/);
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    inspectPremerge: () => green,
+    inspectFunctions: async ({ stage }) => ({
+      stage,
+      items: [],
+      errors: ['inventory mismatch'],
+    }),
+  }), /inventory does not match/i);
+
+  assert.equal(deployed, false);
+});
+
+test('requires a fully green preflight with no warnings before inventory calls', async () => {
+  let inventoryCalls = 0;
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    inspectPremerge: () => ({
+      state: safe(),
+      errors: [],
+      warnings: ['not fully green'],
+    }),
+    printPremerge: () => {},
+    inspectFunctions: async () => {
+      inventoryCalls += 1;
+      return { stage: 'baseline', items: [], errors: [] };
+    },
+  }), /preflight failed/i);
+  assert.equal(inventoryCalls, 0);
+});
+
+test('requires a successful Firebase exit and the exact post-deploy stage', async () => {
+  const green = { state: safe(), errors: [], warnings: [] };
+  const reports = [
+    { stage: 'baseline', items: [], errors: [] },
+    { stage: 'baseline', items: [], errors: [] },
+    { stage: 'core-v2', items: [], errors: [] },
+  ];
+  const common = {
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    inspectPremerge: () => green,
+    printPremerge: () => {},
+    inspectFunctions: async () => reports.shift(),
+    printInventory: () => {},
+    askConfirmation: async (expected) => expected,
+    recheckPremerge: () => green,
+  };
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    inspectFunctions: async ({ stage }) => ({ stage, items: [], errors: [] }),
+    spawnFirebase: () => ({ status: 1 }),
+  }), /Firebase deployment failed/);
+
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    ...common,
+    spawnFirebase: () => ({ status: 0 }),
+    inspectFunctions: async ({ stage }) => {
+      if (stage === 'core-v2') {
+        return { stage, items: [], errors: ['missing Functions'] };
+      }
+      return { stage, items: [], errors: [] };
+    },
+  }), /inventory does not match/i);
+});
+
+test('the CLI fails closed without TTY before GitHub, Firebase or inventory calls', () => {
+  const script = fileURLToPath(new URL(
+    '../../scripts/deploy-premerge-functions.mjs',
+    import.meta.url,
+  ));
+  const result = spawnSync(
+    process.execPath,
+    [script, 'functions-core-v2'],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: '' },
+    },
+  );
+  const output = `${result.stdout}${result.stderr}`;
+
+  assert.equal(result.status, 1);
+  assert.match(output, /interactive terminal/);
+  assert.doesNotMatch(output, /Git|GitHub|Firebase account|inventory request/i);
+});
+
+test('package exposes bounded premerge commands and removes immediate core/sync paths', () => {
+  const rootPackage = JSON.parse(readFileSync(
+    new URL('../../package.json', import.meta.url),
+    'utf8',
+  ));
+
+  assert.equal(
+    rootPackage.scripts['production:preflight:pr'],
+    'node scripts/premerge-functions-preflight.mjs',
+  );
+  assert.equal(
+    rootPackage.scripts['deploy:prod:pr:functions:core-v2'],
+    'node scripts/deploy-premerge-functions.mjs functions-core-v2',
+  );
+  assert.equal(
+    rootPackage.scripts['deploy:prod:pr:functions:league'],
+    'node scripts/deploy-premerge-functions.mjs functions-league',
+  );
+  assert.equal(
+    rootPackage.scripts['deploy:prod:pr:functions:content-v2'],
+    'node scripts/deploy-premerge-functions.mjs functions-content-v2',
+  );
+  assert.equal(rootPackage.scripts['deploy:prod:functions:core'], undefined);
+  assert.equal(rootPackage.scripts['deploy:prod:functions:sync'], undefined);
+  assert.equal(
+    rootPackage.scripts['deploy:prod:indexes'],
+    'node scripts/deploy-production.mjs indexes',
+  );
+  assert.equal(
+    rootPackage.scripts['deploy:prod:firestore'],
+    'node scripts/deploy-production.mjs firestore',
+  );
+  assert.equal(
+    rootPackage.scripts['deploy:prod:storage'],
+    'node scripts/deploy-production.mjs storage',
+  );
 });

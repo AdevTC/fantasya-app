@@ -205,8 +205,6 @@ test('package scripts expose no direct production deployment escape hatch', () =
   assert.equal(rootPackage.scripts['firebase:deploy:firestore'], undefined);
   assert.equal(rootPackage.scripts['firebase:deploy:functions'], undefined);
   assert.equal(rootPackage.scripts['firebase:deploy:all'], undefined);
-  assert.match(
-    rootPackage.scripts['deploy:prod:functions:core'],
-    /deploy-production\.mjs functions-core/,
-  );
+  assert.equal(rootPackage.scripts['deploy:prod:functions:core'], undefined);
+  assert.equal(rootPackage.scripts['deploy:prod:functions:sync'], undefined);
 });
