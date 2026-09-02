@@ -29,8 +29,11 @@ CLAUDE.md
 docs/
 
 # Firebase debug
-firestore-debug.log
-firestore.indexes.json
+.firebase/
+firebase-debug.log*
+*-debug.log
+functions/.env.local
+functions/.secret.local
 
 # IDEs
 .vscode/

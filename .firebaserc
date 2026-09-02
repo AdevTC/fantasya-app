@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "tictaktools"
+    "default": "demo-fantasya",
+    "production": "tictaktools"
   }
 }
