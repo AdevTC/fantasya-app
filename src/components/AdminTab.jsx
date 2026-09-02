@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, where } from 'firebase/firestore';
-import { db, functions } from '../config/firebase';
-import { httpsCallable } from 'firebase/functions';
+import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
 import { Calendar, List, Award, UserCheck } from 'lucide-react';
 import JoinRequestCard from './JoinRequestCard';
 import { reviewJoinRequest } from '../services/league-api';
+import { unlinkUserFromTeam } from '../services/admin-api';
 import { TROPHY_DEFINITIONS } from '../constants/trophies';
 
 export default function AdminTab({ league, season }) {
@@ -232,8 +232,7 @@ export default function AdminTab({ league, season }) {
         if (window.confirm(confirmationMessage)) {
             const loadingToast = toast.loading(`Desvinculando a ${teamName}...`);
             try {
-                const unlinkUser = httpsCallable(functions, 'unlinkUserFromTeam');
-                await unlinkUser({
+                await unlinkUserFromTeam({
                     leagueId: league.id,
                     seasonId: season.id,
                     userIdToUnlink: targetUid

@@ -1,29 +1,26 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
 
-const call = (name, options) => httpsCallable(functions, name, options);
+const call = (name, data, options) =>
+  httpsCallable(functions, name, options)(data)
+    .then(({ data: result }) => result);
 
-export async function createProfile(username) {
-  const result = await call('createProfileDocuments')({ username });
-  return result.data;
-}
+export const createProfile = (username) =>
+  call('createProfileDocumentsV2', { username });
 
-export async function setUserAppRole(userId, appRole) {
-  const result = await call('setUserAppRole')({ userId, appRole });
-  return result.data;
-}
+export const unlinkUserFromTeam = (input) =>
+  call('unlinkUserFromTeamV2', input);
 
-export async function recalculateXp() {
-  const result = await call('recalculateXp')();
-  return result.data;
-}
+export const createOrGetChat = (otherUserUid) =>
+  call('createOrGetChatV2', { otherUserUid });
 
-export async function syncLaLigaPlayers() {
-  const result = await call('syncLaLigaPlayersV2', { timeout: 540000 })();
-  return result.data;
-}
+export const setUserAppRole = (userId, appRole) =>
+  call('setUserAppRole', { userId, appRole });
 
-export async function getLaLigaSyncStatus() {
-  const result = await call('getLaLigaSyncStatusV2')();
-  return result.data;
-}
+export const recalculateXp = () => call('recalculateXp');
+
+export const syncLaLigaPlayers = () =>
+  call('syncLaLigaPlayersV2', undefined, { timeout: 540000 });
+
+export const getLaLigaSyncStatus = () =>
+  call('getLaLigaSyncStatusV2');

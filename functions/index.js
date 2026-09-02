@@ -59,7 +59,17 @@ exports.createProfileDocuments = onCall(
   createProfileDocumentsHandler,
 );
 
+exports.createProfileDocumentsV2 = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  createProfileDocumentsHandler,
+);
+
 exports.unlinkUserFromTeam = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  unlinkUserFromTeamHandler,
+);
+
+exports.unlinkUserFromTeamV2 = onCall(
   { region: 'us-central1', cors: browserOrigins },
   unlinkUserFromTeamHandler,
 );
@@ -153,6 +163,14 @@ exports.recalculateXp = onCall(
 );
 
 exports.createOrGetChat = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => createOrGetChatHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.createOrGetChatV2 = onCall(
   { region: 'us-central1', cors: browserOrigins },
   (request) => createOrGetChatHandler({
     uid: requireAuth(request),

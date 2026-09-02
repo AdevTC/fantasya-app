@@ -13,10 +13,18 @@ test('role changes use the protected callable instead of client writes', () => {
   assert.doesNotMatch(superAdminSource, /updateDoc\([^)]*appRole/);
 });
 
-test('unlink callable delegates to the reviewed authorization handler', () => {
+test('production-safe callable aliases delegate to reviewed handlers', () => {
+  assert.match(
+    functionsSource,
+    /exports\.createProfileDocumentsV2\s*=\s*onCall/,
+  );
   assert.match(functionsSource, /unlinkUserFromTeamHandler/);
   assert.match(
     functionsSource,
-    /exports\.unlinkUserFromTeam\s*=\s*onCall/,
+    /exports\.unlinkUserFromTeamV2\s*=\s*onCall/,
+  );
+  assert.match(
+    functionsSource,
+    /exports\.createOrGetChatV2\s*=\s*onCall/,
   );
 });

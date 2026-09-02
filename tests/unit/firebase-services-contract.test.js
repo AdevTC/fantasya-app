@@ -19,17 +19,21 @@ test('the shared Firebase module owns every service and emulator connection', ()
   assert.match(firebaseSource, /export const isUsingEmulators/);
 });
 
-test('callable consumers reuse the shared Functions instance', () => {
-  for (const path of [
-    'src/pages/LoginPage.jsx',
-    'src/pages/UserProfilePage.jsx',
-    'src/components/AdminTab.jsx',
-  ]) {
-    const fileSource = source(path);
-    assert.doesNotMatch(fileSource, /\bgetFunctions\b/);
-    assert.match(fileSource, /config\/firebase/);
-    assert.match(fileSource, /\bfunctions\b/);
-  }
+test('callable consumers route protected operations through shared services', () => {
+  const loginSource = source('src/pages/LoginPage.jsx');
+  const adminApiSource = source('src/services/admin-api.js');
+  const adminTabSource = source('src/components/AdminTab.jsx');
+  const profileSource = source('src/pages/UserProfilePage.jsx');
+
+  assert.doesNotMatch(loginSource, /\bgetFunctions\b/);
+  assert.match(loginSource, /config\/firebase/);
+  assert.match(loginSource, /\bfunctions\b/);
+
+  assert.match(adminApiSource, /call\('createProfileDocumentsV2'/);
+  assert.match(adminApiSource, /call\('unlinkUserFromTeamV2'/);
+  assert.match(adminApiSource, /call\('createOrGetChatV2'/);
+  assert.doesNotMatch(adminTabSource, /httpsCallable|\bfunctions\b/);
+  assert.doesNotMatch(profileSource, /httpsCallable|\bfunctions\b/);
 });
 
 test('the application renders the local environment banner', () => {
