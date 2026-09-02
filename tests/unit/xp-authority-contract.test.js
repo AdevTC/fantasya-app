@@ -22,9 +22,11 @@ test('client contains no XP mutation helper or call site', () => {
   assert.match(source, /recalculateXp/);
 });
 
-test('Functions export idempotent XP triggers and protected recalc', () => {
+test('Functions export atomic content callables and protected recalc without XP triggers', () => {
   const source = fs.readFileSync('functions/index.js', 'utf8');
-  assert.match(source, /exports\.onPostCreatedAwardXp/);
-  assert.match(source, /exports\.onTransferCreatedAwardXp/);
+  assert.doesNotMatch(source, /exports\.onPostCreatedAwardXp/);
+  assert.doesNotMatch(source, /exports\.onTransferCreatedAwardXp/);
+  assert.match(source, /exports\.createPostV2/);
+  assert.match(source, /exports\.createTransferV2/);
   assert.match(source, /exports\.recalculateXp/);
 });

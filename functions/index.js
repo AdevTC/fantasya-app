@@ -1,7 +1,4 @@
 const {
-  onDocumentCreated,
-} = require('firebase-functions/v2/firestore');
-const {
   onCall,
   onRequest,
 } = require('firebase-functions/v2/https');
@@ -12,11 +9,11 @@ const {
 } = require('./handlers/profile');
 const { setUserAppRoleHandler } = require('./handlers/roles');
 const { unlinkUserFromTeamHandler } = require('./handlers/teams');
+const { recalculateXpHandler } = require('./handlers/xp');
 const {
-  onPostCreatedAwardXpHandler,
-  onTransferCreatedAwardXpHandler,
-  recalculateXpHandler,
-} = require('./handlers/xp');
+  createPostV2Handler,
+  createTransferV2Handler,
+} = require('./handlers/content');
 const {
   getLaLigaSyncStatusLegacyHandler,
   getLaLigaSyncStatusV2Handler,
@@ -143,18 +140,20 @@ exports.refreshCareerAchievements = onCall(
   }),
 );
 
-exports.onPostCreatedAwardXp = onDocumentCreated(
-  { document: 'posts/{postId}', region: 'us-central1' },
-  onPostCreatedAwardXpHandler,
+exports.createPostV2 = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => createPostV2Handler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
 );
 
-exports.onTransferCreatedAwardXp = onDocumentCreated(
-  {
-    document:
-      'leagues/{leagueId}/seasons/{seasonId}/transfers/{transferId}',
-    region: 'us-central1',
-  },
-  onTransferCreatedAwardXpHandler,
+exports.createTransferV2 = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => createTransferV2Handler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
 );
 
 exports.recalculateXp = onCall(

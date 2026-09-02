@@ -11,10 +11,9 @@ const {
   recalculateAllXp,
 } = require('../lib/xp');
 const {
-  onPostCreatedAwardXpHandler,
-  onTransferCreatedAwardXpHandler,
   recalculateXpHandler,
 } = require('../handlers/xp');
+const xpHandlers = require('../handlers/xp');
 
 test.beforeEach(async () => {
   await resetTestEmulators();
@@ -40,32 +39,8 @@ test('the same event awards xp exactly once', async () => {
   assert.equal((await db.doc('users/dev-user').get()).data().xp, 10);
 });
 
-test('post and transfer handlers use stable idempotency keys', async () => {
-  await db.doc('users/dev-user').update({ xp: 0 });
-  const postEvent = {
-    data: { data: () => ({ authorId: 'dev-user', imageURL: 'local://image' }) },
-    params: { postId: 'post-one' },
-  };
-  await onPostCreatedAwardXpHandler(postEvent);
-  await onPostCreatedAwardXpHandler(postEvent);
-  await onTransferCreatedAwardXpHandler({
-    data: { data: () => ({ buyerId: 'dev-user' }) },
-    params: {
-      leagueId: 'league-one',
-      seasonId: 'season-one',
-      transferId: 'transfer-one',
-    },
-  });
-  await onTransferCreatedAwardXpHandler({
-    data: { data: () => ({ buyerId: 'market' }) },
-    params: {
-      leagueId: 'league-one',
-      seasonId: 'season-one',
-      transferId: 'ignored',
-    },
-  });
-
-  assert.equal((await db.doc('users/dev-user').get()).data().xp, 20);
+test('the XP handler module exposes only protected recalculation', () => {
+  assert.deepEqual(Object.keys(xpHandlers), ['recalculateXpHandler']);
 });
 
 test('historical calculation preserves the existing scoring model', async () => {
