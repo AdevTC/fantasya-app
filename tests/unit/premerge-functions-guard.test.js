@@ -23,6 +23,14 @@ const githubAction = (overrides = {}) => ({
   ...overrides,
 });
 
+const rawCheckRun = (overrides = {}) => ({
+  ...githubAction(),
+  completedAt: '2026-09-02T09:07:48Z',
+  detailsUrl: 'https://github.com/AdevTC/fantasya-app/actions/runs/1',
+  startedAt: '2026-09-02T09:05:17Z',
+  ...overrides,
+});
+
 const vercelCheck = (overrides = {}) => ({
   __typename: 'StatusContext',
   context: 'Vercel',
@@ -30,9 +38,15 @@ const vercelCheck = (overrides = {}) => ({
   ...overrides,
 });
 
+const rawStatusContext = (overrides = {}) => ({
+  ...vercelCheck(),
+  startedAt: '2026-09-02T09:05:28Z',
+  targetUrl: 'https://vercel.com/example/deployment',
+  ...overrides,
+});
+
 const pullRequest = (overrides = {}) => ({
   number: 3,
-  url: 'https://github.com/AdevTC/fantasya-app/pull/3',
   state: 'OPEN',
   isDraft: false,
   baseRefName: 'main',
@@ -41,6 +55,13 @@ const pullRequest = (overrides = {}) => ({
   mergeable: 'MERGEABLE',
   mergeStateStatus: 'CLEAN',
   statusCheckRollup: [githubAction(), vercelCheck()],
+  ...overrides,
+});
+
+const rawPullRequest = (overrides = {}) => ({
+  ...pullRequest(),
+  url: 'https://github.com/AdevTC/fantasya-app/pull/3',
+  statusCheckRollup: [rawCheckRun(), rawStatusContext()],
   ...overrides,
 });
 
@@ -63,7 +84,7 @@ function joinedErrors(state) {
 }
 
 test('parses the exact GitHub PR array shape without coercion', () => {
-  const parsed = parsePullRequests(JSON.stringify([pullRequest()]));
+  const parsed = parsePullRequests(JSON.stringify([rawPullRequest()]));
 
   assert.deepEqual(parsed, [pullRequest()]);
   assert.deepEqual(evaluatePremergeState(safe()), []);
@@ -80,21 +101,21 @@ test('rejects malformed JSON and every non-array top-level shape', () => {
 
 test('rejects malformed PR and status-check shapes without leaking input', () => {
   const malformed = [
-    { ...pullRequest(), number: '3' },
-    { ...pullRequest(), isDraft: 'false' },
-    { ...pullRequest(), headRefOid: 'short' },
-    { ...pullRequest(), statusCheckRollup: null },
+    { ...rawPullRequest(), number: '3' },
+    { ...rawPullRequest(), isDraft: 'false' },
+    { ...rawPullRequest(), headRefOid: 'short' },
+    { ...rawPullRequest(), statusCheckRollup: null },
     {
-      ...pullRequest(),
+      ...rawPullRequest(),
       statusCheckRollup: [{ __typename: 'Mystery', secret: 'never-print' }],
     },
     {
-      ...pullRequest(),
-      statusCheckRollup: [{ ...githubAction(), status: null }],
+      ...rawPullRequest(),
+      statusCheckRollup: [{ ...rawCheckRun(), status: null }],
     },
     {
-      ...pullRequest(),
-      statusCheckRollup: [{ ...vercelCheck(), state: null }],
+      ...rawPullRequest(),
+      statusCheckRollup: [{ ...rawStatusContext(), state: null }],
     },
   ];
 
@@ -113,13 +134,58 @@ test('rejects malformed PR and status-check shapes without leaking input', () =>
   }
 });
 
+test('rejects non-string input, toString injection and unexpected keys', () => {
+  const injected = {
+    toString() {
+      return JSON.stringify([rawPullRequest()]);
+    },
+  };
+  const extraPullRequestKey = rawPullRequest({ secret: 'never-print' });
+  const extraCheckRunKey = rawPullRequest({
+    statusCheckRollup: [rawCheckRun({ secret: 'never-print' })],
+  });
+  const extraStatusContextKey = rawPullRequest({
+    statusCheckRollup: [rawStatusContext({ secret: 'never-print' })],
+  });
+
+  for (const value of [
+    [JSON.stringify([rawPullRequest()])],
+    new String(JSON.stringify([rawPullRequest()])),
+    injected,
+    JSON.stringify([extraPullRequestKey]),
+    JSON.stringify([extraCheckRunKey]),
+    JSON.stringify([extraStatusContextKey]),
+  ]) {
+    assert.throws(
+      () => parsePullRequests(value),
+      /GitHub PR query returned an invalid response/,
+    );
+  }
+});
+
+test('retains only fields needed by the release decision', () => {
+  const parsed = parsePullRequests(JSON.stringify([rawPullRequest()]));
+  const serialized = JSON.stringify(parsed);
+
+  assert.doesNotMatch(
+    serialized,
+    /url|completedAt|detailsUrl|startedAt|targetUrl|github\.com|vercel\.com/,
+  );
+  assert.deepEqual(parsed, [pullRequest()]);
+});
+
 test('accepts nullable workflow names without coercing them into GitHub Actions', () => {
   const checks = [
     { ...githubAction(), workflowName: null },
     vercelCheck(),
   ];
   const parsed = parsePullRequests(JSON.stringify([
-    pullRequest({ statusCheckRollup: checks }),
+    rawPullRequest({
+      statusCheckRollup: [
+        rawCheckRun({ workflowName: null }),
+        rawStatusContext(),
+      ],
+    }),
   ]));
 
   assert.equal(parsed[0].statusCheckRollup[0].workflowName, null);
@@ -142,7 +208,16 @@ test('accepts the empty workflow name returned by Vercel Preview Comments', () =
     },
   ];
   const parsed = parsePullRequests(JSON.stringify([
-    pullRequest({ statusCheckRollup: checks }),
+    rawPullRequest({
+      statusCheckRollup: [
+        rawCheckRun(),
+        rawStatusContext(),
+        rawCheckRun({
+          name: 'Vercel Preview Comments',
+          workflowName: '',
+        }),
+      ],
+    }),
   ]));
 
   assert.equal(parsed[0].statusCheckRollup[2].workflowName, '');
@@ -156,14 +231,14 @@ test('accepts successful GitHub Actions and Vercel checks in both supported shap
     {
       __typename: 'CheckRun',
       name: 'Vercel',
-      workflowName: 'Vercel',
+      workflowName: '',
       status: 'COMPLETED',
       conclusion: 'SUCCESS',
     },
   ]), []);
 });
 
-test('does not count a Vercel CheckRun as the required GitHub Actions provider', () => {
+test('a nonempty workflow name makes a CheckRun GitHub Actions only', () => {
   const errors = evaluateChecks([{
     __typename: 'CheckRun',
     name: 'Vercel',
@@ -173,8 +248,43 @@ test('does not count a Vercel CheckRun as the required GitHub Actions provider',
   }]);
 
   assert.deepEqual(errors, [
+    'at least one successful Vercel deployment check is required',
+  ]);
+});
+
+test('an exact external Vercel CheckRun does not also count as GitHub Actions', () => {
+  const errors = evaluateChecks([{
+    __typename: 'CheckRun',
+    name: 'Vercel',
+    workflowName: '',
+    status: 'COMPLETED',
+    conclusion: 'SUCCESS',
+  }]);
+
+  assert.deepEqual(errors, [
     'at least one successful GitHub Actions CheckRun is required',
   ]);
+});
+
+test('does not accept comments, similarly named workflows or casing as Vercel deployment', () => {
+  const falseProviders = [
+    {
+      __typename: 'CheckRun',
+      name: 'Vercel Preview Comments',
+      workflowName: '',
+      status: 'COMPLETED',
+      conclusion: 'SUCCESS',
+    },
+    githubAction({ name: 'Vercel smoke' }),
+    vercelCheck({ context: 'vercel' }),
+  ];
+
+  for (const candidate of falseProviders) {
+    assert.match(
+      evaluateChecks([githubAction(), candidate]).join('\n'),
+      /successful Vercel deployment check/,
+    );
+  }
 });
 
 test('allows known neutral or skipped terminal checks without counting them as success providers', () => {
@@ -251,7 +361,7 @@ for (const [name, checks, pattern] of [
   [
     'missing Vercel provider',
     [githubAction()],
-    /successful Vercel/,
+    /successful Vercel deployment check/,
   ],
 ]) {
   test(`rejects ${name}`, () => {
@@ -336,9 +446,42 @@ for (const [name, state, pattern] of [
     /Firebase account/,
   ],
   [
+    'a boxed Firebase account string',
+    safe({ activeFirebaseAccount: new String('jordisumba@gmail.com') }),
+    /Firebase account/,
+  ],
+  [
+    'a Firebase account toString injection',
+    safe({
+      activeFirebaseAccount: {
+        toString: () => 'jordisumba@gmail.com',
+      },
+    }),
+    /Firebase account/,
+  ],
+  [
     'a missing Firebase project',
     safe({ firebaseProjectIds: [] }),
     /Firebase project/,
+  ],
+  [
+    'a commit toString injection',
+    safe({ commit: { toString: () => SHA } }),
+    /HEAD must be a full commit SHA/,
+  ],
+  [
+    'extra retained pull-request data',
+    safe({ pullRequests: [pullRequest({ secret: 'never-print' })] }),
+    /pull request data is invalid/,
+  ],
+  [
+    'extra retained check data',
+    safe({
+      pullRequests: [pullRequest({
+        statusCheckRollup: [githubAction({ secret: 'never-print' }), vercelCheck()],
+      })],
+    }),
+    /pull request data is invalid/,
   ],
 ]) {
   test(`rejects ${name}`, () => {
@@ -388,7 +531,63 @@ test('inspection fails closed on command errors without exposing command output'
 test('unchanged-state assertion rejects malformed expected state before commands', () => {
   assert.throws(
     () => assertPremergeStateUnchanged({}, { cwd: process.cwd() }),
-    /Expected premerge state is invalid/,
+    /Expected premerge report is invalid/,
+  );
+});
+
+test('unchanged-state assertion requires the original clean report', () => {
+  const inspect = () => ({ state: safe(), errors: [], warnings: [] });
+
+  assert.throws(
+    () => assertPremergeStateUnchanged(safe(), { inspect }),
+    /Expected premerge report is invalid/,
+  );
+  assert.throws(
+    () => assertPremergeStateUnchanged({
+      state: safe(),
+      errors: ['not eligible'],
+      warnings: [],
+    }, { inspect }),
+    /Expected premerge report is invalid/,
+  );
+  assert.throws(
+    () => assertPremergeStateUnchanged({
+      state: safe({ clean: false }),
+      errors: [],
+      warnings: [],
+    }, { inspect }),
+    /Expected premerge state is not eligible/,
+  );
+});
+
+test('unchanged-state assertion rejects a different eligible PR number', () => {
+  const expected = { state: safe(), errors: [], warnings: [] };
+  const current = {
+    state: safe({ pullRequests: [pullRequest({ number: 4 })] }),
+    errors: [],
+    warnings: [],
+  };
+
+  assert.throws(
+    () => assertPremergeStateUnchanged(expected, { inspect: () => current }),
+    /Premerge state changed after confirmation/,
+  );
+});
+
+test('unchanged-state assertion rejects a different eligible branch identity', () => {
+  const expected = { state: safe(), errors: [], warnings: [] };
+  const branch = 'codex/other-safe-branch';
+  const currentState = safe({
+    branch,
+    upstream: `origin/${branch}`,
+    pullRequests: [pullRequest({ headRefName: branch })],
+  });
+  const current = { state: currentState, errors: [], warnings: [] };
+
+  assert.deepEqual(evaluatePremergeState(currentState), []);
+  assert.throws(
+    () => assertPremergeStateUnchanged(expected, { inspect: () => current }),
+    /Premerge state changed after confirmation/,
   );
 });
 
@@ -405,7 +604,11 @@ test('printed reports never echo malformed local or identity values', () => {
   try {
     printPremergeReport({
       state: {
-        branch: 'SECRET=never-print',
+        branch: {
+          toString() {
+            throw new Error('SECRET=never-print');
+          },
+        },
         clean: false,
         commit: 'SECRET=never-print',
         originUrl: 'SECRET=never-print',
@@ -417,7 +620,11 @@ test('printed reports never echo malformed local or identity values', () => {
           headRefOid: 'SECRET=never-print',
         }],
         activeFirebaseAccount: 'SECRET=never-print',
-        firebaseProjectIds: [],
+        firebaseProjectIds: {
+          includes() {
+            throw new Error('SECRET=never-print');
+          },
+        },
       },
       warnings: [],
       errors: [],

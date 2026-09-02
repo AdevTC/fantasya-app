@@ -30,6 +30,37 @@ const PR_FIELDS = [
   'statusCheckRollup',
 ].join(',');
 const INVALID_PR_RESPONSE = 'GitHub PR query returned an invalid response.';
+const RAW_PR_KEYS = Object.freeze(PR_FIELDS.split(','));
+const RAW_CHECKRUN_KEYS = Object.freeze([
+  '__typename',
+  'completedAt',
+  'conclusion',
+  'detailsUrl',
+  'name',
+  'startedAt',
+  'status',
+  'workflowName',
+]);
+const RAW_STATUS_CONTEXT_KEYS = Object.freeze([
+  '__typename',
+  'context',
+  'startedAt',
+  'state',
+  'targetUrl',
+]);
+const PR_DTO_KEYS = Object.freeze(RAW_PR_KEYS.filter((key) => key !== 'url'));
+const CHECKRUN_DTO_KEYS = Object.freeze([
+  '__typename',
+  'conclusion',
+  'name',
+  'status',
+  'workflowName',
+]);
+const STATUS_CONTEXT_DTO_KEYS = Object.freeze([
+  '__typename',
+  'context',
+  'state',
+]);
 
 function invalidPullRequestResponse() {
   return new Error(INVALID_PR_RESPONSE);
@@ -39,8 +70,30 @@ function isNonemptyString(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
+function isNullableString(value) {
+  return value === null || typeof value === 'string';
+}
+
+function isPlainObject(value) {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+  return actualKeys.length === sortedExpectedKeys.length
+    && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+}
+
 function isSafeBranch(branch) {
-  return SAFE_BRANCH_PATTERN.test(branch)
+  return typeof branch === 'string'
+    && SAFE_BRANCH_PATTERN.test(branch)
     && !branch.endsWith('/')
     && !branch.endsWith('.')
     && !branch.endsWith('.lock')
@@ -48,7 +101,8 @@ function isSafeBranch(branch) {
 }
 
 function isCheckRun(item) {
-  return item?.__typename === 'CheckRun'
+  return hasExactKeys(item, CHECKRUN_DTO_KEYS)
+    && item.__typename === 'CheckRun'
     && isNonemptyString(item.name)
     && (item.workflowName === null || typeof item.workflowName === 'string')
     && isNonemptyString(item.status)
@@ -56,21 +110,21 @@ function isCheckRun(item) {
 }
 
 function isStatusContext(item) {
-  return item?.__typename === 'StatusContext'
+  return hasExactKeys(item, STATUS_CONTEXT_DTO_KEYS)
+    && item.__typename === 'StatusContext'
     && isNonemptyString(item.context)
     && isNonemptyString(item.state);
 }
 
 function isPullRequest(item) {
-  return item !== null
-    && typeof item === 'object'
+  return hasExactKeys(item, PR_DTO_KEYS)
     && Number.isSafeInteger(item.number)
     && item.number > 0
-    && isNonemptyString(item.url)
     && isNonemptyString(item.state)
     && typeof item.isDraft === 'boolean'
     && isNonemptyString(item.baseRefName)
     && isNonemptyString(item.headRefName)
+    && typeof item.headRefOid === 'string'
     && SHA_PATTERN.test(item.headRefOid)
     && isNonemptyString(item.mergeable)
     && isNonemptyString(item.mergeStateStatus)
@@ -80,26 +134,90 @@ function isPullRequest(item) {
     ));
 }
 
+function isRawCheckRun(item) {
+  return hasExactKeys(item, RAW_CHECKRUN_KEYS)
+    && item.__typename === 'CheckRun'
+    && isNullableString(item.completedAt)
+    && (item.conclusion === null || isNonemptyString(item.conclusion))
+    && isNullableString(item.detailsUrl)
+    && isNonemptyString(item.name)
+    && isNullableString(item.startedAt)
+    && isNonemptyString(item.status)
+    && isNullableString(item.workflowName);
+}
+
+function isRawStatusContext(item) {
+  return hasExactKeys(item, RAW_STATUS_CONTEXT_KEYS)
+    && item.__typename === 'StatusContext'
+    && isNonemptyString(item.context)
+    && isNullableString(item.startedAt)
+    && isNonemptyString(item.state)
+    && isNullableString(item.targetUrl);
+}
+
+function isRawPullRequest(item) {
+  return hasExactKeys(item, RAW_PR_KEYS)
+    && Number.isSafeInteger(item.number)
+    && item.number > 0
+    && item.url === `https://github.com/${GITHUB_REPOSITORY}/pull/${item.number}`
+    && isNonemptyString(item.state)
+    && typeof item.isDraft === 'boolean'
+    && isNonemptyString(item.baseRefName)
+    && isNonemptyString(item.headRefName)
+    && typeof item.headRefOid === 'string'
+    && SHA_PATTERN.test(item.headRefOid)
+    && isNonemptyString(item.mergeable)
+    && isNonemptyString(item.mergeStateStatus)
+    && Array.isArray(item.statusCheckRollup)
+    && item.statusCheckRollup.every((check) => (
+      isRawCheckRun(check) || isRawStatusContext(check)
+    ));
+}
+
+function sanitizeCheck(item) {
+  return item.__typename === 'CheckRun'
+    ? {
+      __typename: item.__typename,
+      name: item.name,
+      workflowName: item.workflowName,
+      status: item.status,
+      conclusion: item.conclusion,
+    }
+    : {
+      __typename: item.__typename,
+      context: item.context,
+      state: item.state,
+    };
+}
+
+function sanitizePullRequest(item) {
+  return {
+    number: item.number,
+    state: item.state,
+    isDraft: item.isDraft,
+    baseRefName: item.baseRefName,
+    headRefName: item.headRefName,
+    headRefOid: item.headRefOid,
+    mergeable: item.mergeable,
+    mergeStateStatus: item.mergeStateStatus,
+    statusCheckRollup: item.statusCheckRollup.map(sanitizeCheck),
+  };
+}
+
 export function parsePullRequests(output) {
+  if (typeof output !== 'string') {
+    throw invalidPullRequestResponse();
+  }
   let parsed;
   try {
-    parsed = JSON.parse(String(output));
+    parsed = JSON.parse(output);
   } catch {
     throw invalidPullRequestResponse();
   }
-  if (!Array.isArray(parsed) || !parsed.every(isPullRequest)) {
+  if (!Array.isArray(parsed) || !parsed.every(isRawPullRequest)) {
     throw invalidPullRequestResponse();
   }
-  return parsed;
-}
-
-function identifiesVercel(item) {
-  const candidates = item?.__typename === 'CheckRun'
-    ? [item.name, item.workflowName]
-    : [item?.context];
-  return candidates.some((value) => (
-    typeof value === 'string' && /vercel/i.test(value)
-  ));
+  return parsed.map(sanitizePullRequest);
 }
 
 export function evaluateChecks(items) {
@@ -125,11 +243,9 @@ export function evaluateChecks(items) {
         continue;
       }
       if (item.conclusion === 'SUCCESS') {
-        const isVercel = identifiesVercel(item);
-        if (isNonemptyString(item.workflowName) && !isVercel) {
+        if (isNonemptyString(item.workflowName)) {
           hasSuccessfulGithubActions = true;
-        }
-        if (isVercel) {
+        } else if (item.workflowName === '' && item.name === 'Vercel') {
           hasSuccessfulVercel = true;
         }
       }
@@ -141,7 +257,7 @@ export function evaluateChecks(items) {
         errors.push(`status context result ${resultNumber} is not successful`);
         continue;
       }
-      if (identifiesVercel(item)) {
+      if (item.context === 'Vercel') {
         hasSuccessfulVercel = true;
       }
       continue;
@@ -154,7 +270,7 @@ export function evaluateChecks(items) {
     errors.push('at least one successful GitHub Actions CheckRun is required');
   }
   if (!hasSuccessfulVercel) {
-    errors.push('at least one successful Vercel check is required');
+    errors.push('at least one successful Vercel deployment check is required');
   }
   return errors;
 }
@@ -171,7 +287,7 @@ export function evaluatePremergeState(state) {
   if (state?.clean !== true) {
     errors.push('working tree must be clean');
   }
-  if (!SHA_PATTERN.test(state?.commit || '')) {
+  if (typeof state?.commit !== 'string' || !SHA_PATTERN.test(state.commit)) {
     errors.push('HEAD must be a full commit SHA');
   }
   if (state?.originUrl !== EXPECTED_PRODUCTION.gitOrigin) {
@@ -189,7 +305,8 @@ export function evaluatePremergeState(state) {
     errors.push('branch must not be behind its upstream');
   }
   if (
-    String(state?.activeFirebaseAccount || '').toLowerCase()
+    typeof state?.activeFirebaseAccount !== 'string'
+    || state.activeFirebaseAccount.toLowerCase()
       !== EXPECTED_PRODUCTION.firebaseAccount
   ) {
     errors.push('required Firebase account is not active');
@@ -401,22 +518,41 @@ export function inspectPremergeState({ cwd = projectRoot } = {}) {
 
 export function assertPremergeStateUnchanged(
   expected,
-  { cwd = projectRoot } = {},
+  { cwd = projectRoot, inspect = inspectPremergeState } = {},
 ) {
-  const expectedState = expected?.state ?? expected;
   if (
-    !SHA_PATTERN.test(expectedState?.commit || '')
-    || !Number.isSafeInteger(expectedState?.pullRequests?.[0]?.number)
+    !isPlainObject(expected)
+    || !isPlainObject(expected.state)
+    || !Array.isArray(expected.errors)
+    || expected.errors.length !== 0
+    || !Array.isArray(expected.warnings)
   ) {
-    throw new Error('Expected premerge state is invalid.');
+    throw new Error('Expected premerge report is invalid.');
+  }
+  const expectedState = expected.state;
+  if (
+    evaluatePremergeState(expectedState).length !== 0
+  ) {
+    throw new Error('Expected premerge state is not eligible.');
   }
 
-  const report = inspectPremergeState({ cwd });
-  const currentPullRequest = report.state.pullRequests?.[0];
+  const report = inspect({ cwd });
+  const currentPullRequest = report?.state?.pullRequests?.[0];
+  const expectedPullRequest = expectedState.pullRequests[0];
   if (
-    report.errors.length > 0
+    !isPlainObject(report)
+    || !isPlainObject(report.state)
+    || !Array.isArray(report.errors)
+    || report.errors.length > 0
+    || evaluatePremergeState(report.state).length > 0
     || report.state.commit !== expectedState.commit
-    || currentPullRequest?.number !== expectedState.pullRequests[0].number
+    || report.state.branch !== expectedState.branch
+    || report.state.originUrl !== expectedState.originUrl
+    || report.state.upstream !== expectedState.upstream
+    || currentPullRequest?.number !== expectedPullRequest.number
+    || currentPullRequest?.headRefOid !== expectedPullRequest.headRefOid
+    || currentPullRequest?.headRefName !== expectedPullRequest.headRefName
+    || currentPullRequest?.baseRefName !== expectedPullRequest.baseRefName
   ) {
     throw new Error('Premerge state changed after confirmation; start again.');
   }
@@ -426,11 +562,13 @@ export function assertPremergeStateUnchanged(
 export function printPremergeReport(report) {
   const { state } = report;
   const branch = isSafeBranch(state.branch) ? state.branch : 'unknown';
-  const commit = SHA_PATTERN.test(state.commit) ? state.commit : 'unknown';
+  const commit = typeof state.commit === 'string' && SHA_PATTERN.test(state.commit)
+    ? state.commit
+    : 'unknown';
   const origin = state.originUrl === EXPECTED_PRODUCTION.gitOrigin
     ? 'canonical'
     : 'not confirmed';
-  const upstream = state.upstream === `origin/${state.branch}`
+  const upstream = branch !== 'unknown' && state.upstream === `origin/${branch}`
     ? 'matches branch'
     : 'not confirmed';
   const pullRequest = state.pullRequests?.length === 1
@@ -448,10 +586,10 @@ export function printPremergeReport(report) {
   console.log(`- pull request: ${pullRequest ? `#${pullRequest.number}` : 'not confirmed'}`);
   console.log(`- pull-request head: ${pullRequest?.headRefOid || 'not confirmed'}`);
   console.log(
-    `- Firebase account: ${String(state.activeFirebaseAccount || '').toLowerCase() === EXPECTED_PRODUCTION.firebaseAccount ? 'expected account active' : 'not confirmed'}`,
+    `- Firebase account: ${typeof state.activeFirebaseAccount === 'string' && state.activeFirebaseAccount.toLowerCase() === EXPECTED_PRODUCTION.firebaseAccount ? 'expected account active' : 'not confirmed'}`,
   );
   console.log(
-    `- tictaktools visible: ${state.firebaseProjectIds?.includes(EXPECTED_PRODUCTION.firebaseProject) ? 'yes' : 'not confirmed'}`,
+    `- tictaktools visible: ${Array.isArray(state.firebaseProjectIds) && state.firebaseProjectIds.includes(EXPECTED_PRODUCTION.firebaseProject) ? 'yes' : 'not confirmed'}`,
   );
   for (const warning of report.warnings) {
     console.warn(`WARNING: ${warning}`);
