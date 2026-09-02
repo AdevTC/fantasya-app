@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {
   ADDITIVE_GROUPS,
@@ -33,6 +34,8 @@ const sanitizedFunction = (name, overrides = {}) => ({
   ...overrides,
 });
 
+const require = createRequire(import.meta.url);
+
 test('sanitizes a Functions resource to the four allowed DTO fields', () => {
   const sanitized = sanitizeFunction(rawFunction('createProfileDocuments'));
 
@@ -46,6 +49,18 @@ test('sanitizes a Functions resource to the four allowed DTO fields', () => {
     JSON.stringify(sanitized),
     /never-print|SENSITIVE|SECRET|environmentVariables|serviceConfig/,
   );
+});
+
+test('rejects a complete baseline inventory returned under another project', () => {
+  const items = BASELINE_NAMES.map((name) => rawFunction(name, {
+    name: `projects/other-project/locations/us-central1/functions/${name}`,
+  }));
+
+  const report = evaluateInventory(items, 'baseline');
+
+  assert.notDeepEqual(report.errors, []);
+  assert.match(report.errors.join('\n'), /missing Functions/);
+  assert.equal(report.items.every((item) => item.name === ''), true);
 });
 
 test('defines exact cumulative inventories for every release stage', () => {
@@ -163,7 +178,10 @@ test('pages through the projected Gen2 API and sanitizes each page immediately',
       resBody: true,
     });
   }
-  assert.equal(calls[0].options.queryParams.pageToken, undefined);
+  assert.equal(
+    Object.hasOwn(calls[0].options.queryParams, 'pageToken'),
+    false,
+  );
   assert.equal(calls[1].options.queryParams.pageToken, 'page-2');
   assert.doesNotMatch(
     JSON.stringify(items),
@@ -252,4 +270,43 @@ test('package exposes only the projected read-only inventory entrypoint', () => 
     rootPackage.scripts['production:functions:inventory'],
     'node scripts/production-functions-inventory.mjs',
   );
+});
+
+test('pins the exact Firebase CLI version and loads required private symbols offline', () => {
+  const rootPackage = JSON.parse(readFileSync(
+    new URL('../../package.json', import.meta.url),
+    'utf8',
+  ));
+  const lock = JSON.parse(readFileSync(
+    new URL('../../package-lock.json', import.meta.url),
+    'utf8',
+  ));
+
+  assert.equal(rootPackage.devDependencies['firebase-tools'], '15.28.2');
+  assert.equal(
+    lock.packages[''].devDependencies['firebase-tools'],
+    '15.28.2',
+  );
+  assert.equal(
+    lock.packages['node_modules/firebase-tools'].version,
+    '15.28.2',
+  );
+
+  const auth = require(fileURLToPath(new URL(
+    '../../node_modules/firebase-tools/lib/auth.js',
+    import.meta.url,
+  )));
+  const apiv2 = require(fileURLToPath(new URL(
+    '../../node_modules/firebase-tools/lib/apiv2.js',
+    import.meta.url,
+  )));
+  const api = require(fileURLToPath(new URL(
+    '../../node_modules/firebase-tools/lib/api.js',
+    import.meta.url,
+  )));
+
+  assert.equal(typeof auth.findAccountByEmail, 'function');
+  assert.equal(typeof auth.setActiveAccount, 'function');
+  assert.equal(typeof apiv2.Client, 'function');
+  assert.equal(typeof api.functionsV2Origin, 'function');
 });

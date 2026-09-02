@@ -66,7 +66,7 @@ function nameParts(resourceName) {
   if (typeof resourceName !== 'string') {
     return { name: '', region: '' };
   }
-  const match = /^projects\/[^/]+\/locations\/([^/]+)\/functions\/([^/]+)$/.exec(
+  const match = /^projects\/tictaktools\/locations\/([^/]+)\/functions\/([^/]+)$/.exec(
     resourceName,
   );
   return match
@@ -184,14 +184,17 @@ export async function fetchSanitizedInventory({ client }) {
     let pageToken;
 
     while (true) {
+      const queryParams = {
+        filter: 'environment="GEN_2"',
+        fields: PROJECTED_FIELDS,
+      };
+      if (pageToken !== undefined) {
+        queryParams.pageToken = pageToken;
+      }
       const response = await client.get(
         `projects/${FIREBASE_PROJECT}/locations/-/functions`,
         {
-          queryParams: {
-            filter: 'environment="GEN_2"',
-            fields: PROJECTED_FIELDS,
-            pageToken,
-          },
+          queryParams,
           skipLog: {
             queryParams: true,
             resBody: true,
