@@ -6,6 +6,7 @@ import {
 import {
   deleteDoc,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
@@ -37,6 +38,7 @@ beforeEach(async () => {
       followers: [],
       following: [],
     });
+    await setDoc(doc(db, 'usernames/user'), { userId: 'user' });
   });
 });
 
@@ -64,6 +66,7 @@ test('profile creation and deletion are server-only', async () => {
   }));
   const userDb = env.authenticatedContext('user').firestore();
   await assertFails(deleteDoc(doc(userDb, 'users/user')));
+  await assertFails(deleteDoc(doc(userDb, 'usernames/user')));
 });
 
 test('a follower can change only their own membership in another profile', async () => {
@@ -86,4 +89,36 @@ test('normal user cannot write players and superadmin can', async () => {
   );
   await assertFails(setDoc(normalRef, { name: 'No permitido' }));
   await assertSucceeds(setDoc(adminRef, { name: 'Permitido' }));
+});
+
+test('published player snapshots are public read and server-only write', async () => {
+  await env.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'config/laLigaSync'), {
+      activeRunId: 'stable',
+      status: 'completed',
+    });
+    await setDoc(doc(
+      context.firestore(),
+      'laLigaSyncRuns/stable/players/one',
+    ), { name: 'Jugador visible' });
+    await setDoc(doc(
+      context.firestore(),
+      'laLigaSyncRuns/failed/players/one',
+    ), { name: 'Jugador incompleto' });
+  });
+  const publicRef = doc(
+    env.unauthenticatedContext().firestore(),
+    'laLigaSyncRuns/stable/players/one',
+  );
+  await assertSucceeds(getDoc(publicRef));
+  const unpublishedRef = doc(
+    env.unauthenticatedContext().firestore(),
+    'laLigaSyncRuns/failed/players/one',
+  );
+  await assertFails(getDoc(unpublishedRef));
+  const adminRef = doc(
+    env.authenticatedContext('admin').firestore(),
+    'laLigaSyncRuns/stable/players/two',
+  );
+  await assertFails(setDoc(adminRef, { name: 'No permitido' }));
 });

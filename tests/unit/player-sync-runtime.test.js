@@ -12,6 +12,8 @@ test('player sync client uses only the shared callable API', () => {
   assert.doesNotMatch(component, /resolvePlayerSyncRuntime|legacyRemoteEnabled/);
   assert.match(component, /getLaLigaSyncStatus/);
   assert.match(component, /syncLaLigaPlayers/);
+  assert.match(component, /activeRunId/);
+  assert.match(component, /laLigaSyncRuns/);
   assert.match(api, /call\('getLaLigaSyncStatusV2'/);
   assert.match(api, /call\('syncLaLigaPlayersV2'/);
   assert.match(api, /timeout:\s*540000/);
@@ -21,6 +23,8 @@ test('player sync client uses only the shared callable API', () => {
 test('both player sync generations use the same protected server handlers', () => {
   const index = read('functions/index.js');
   const handlers = read('functions/handlers/player-sync.js');
+  const service = read('functions/lib/player-sync.js');
+  const rules = read('firestore.rules');
 
   assert.match(index, /defineSecret\('FOOTBALL_DATA_API_KEY'\)/);
   assert.match(index, /exports\.syncLaLigaPlayersV2/);
@@ -32,4 +36,9 @@ test('both player sync generations use the same protected server handlers', () =
   assert.match(handlers, /syncLaLigaPlayersV2Handler/);
   assert.match(handlers, /syncLaLigaPlayersLegacyHandler/);
   assert.match(handlers, /getLaLigaSyncStatusLegacyHandler/);
+  assert.match(handlers, /activeRunId/);
+  assert.match(service, /SYNC_LEASE_MS/);
+  assert.match(service, /currentRunId/);
+  assert.match(service, /laLigaSyncRuns/);
+  assert.match(rules, /config\/laLigaSync\)\.data\.activeRunId == runId/);
 });

@@ -132,11 +132,8 @@ service cloud.firestore {
     match /usernames/{username} {
       // Anyone can read to check availability
       allow read: if true;
-      // Only the owner can delete their username
-      allow delete: if isUsernameOwner(username);
-      // Create is handled by Cloud Function
-      allow create: if false;
-      allow update: if false;
+      // The profile and its uniqueness index are changed together by Functions.
+      allow create, update, delete: if false;
     }
 
     // ============================================================================
@@ -356,6 +353,13 @@ service cloud.firestore {
       // Anyone can read player data (needed for league creation, transfers, etc.)
       allow read: if true;
       // Only Cloud Functions can write (sync managed by server)
+      allow write: if false;
+    }
+
+    match /laLigaSyncRuns/{runId}/players/{playerId} {
+      // A completed run becomes visible only after config/laLigaSync points to it.
+      allow read: if
+        get(/databases/$(database)/documents/config/laLigaSync).data.activeRunId == runId;
       allow write: if false;
     }
 

@@ -56,6 +56,7 @@ test('fixture sync writes normalized players without network or history churn', 
     },
     sleep: async () => {},
     now: () => new Date('2026-09-02T10:00:00Z'),
+    runId: 'fixture-run-one',
   };
 
   assert.deepEqual(await syncPlayers(options), {
@@ -63,13 +64,17 @@ test('fixture sync writes normalized players without network or history churn', 
     playersSynced: 3,
     teamsProcessed: 2,
     source: 'fixture',
+    activeRunId: 'fixture-run-one',
   });
   await syncPlayers({
     ...options,
     now: () => new Date('2026-09-02T11:00:00Z'),
+    runId: 'fixture-run-two',
   });
 
-  const player = await db.doc('laLigaPlayers/1').get();
+  const player = await db.doc(
+    'laLigaSyncRuns/fixture-run-two/players/1',
+  ).get();
   assert.equal(player.data().team, 'Real Madrid');
   assert.equal(player.data().position, 'DEL');
   assert.deepEqual(player.data().teamHistory, [{
@@ -111,6 +116,98 @@ test('a failed team retry aborts before every player write and records error', a
   const status = (await db.doc('config/laLigaSync').get()).data();
   assert.equal(status.status, 'error');
   assert.match(status.lastError, /team 81 returned 503 after retry/i);
+});
+
+test('a later staging batch failure keeps the previous visible snapshot intact', async () => {
+  await db.doc('config/laLigaSync').set({
+    activeRunId: 'stable-run',
+    status: 'completed',
+  }, { merge: true });
+  await db.doc('laLigaSyncRuns/stable-run/players/original').set({
+    id: 'original',
+    name: 'Visible Player',
+  });
+  const squad = Array.from({ length: 451 }, (_, index) => ({
+    id: 1000 + index,
+    name: 'Player ' + index,
+    position: 'Midfield',
+  }));
+  const responses = [
+    jsonResponse(200, { teams: [{ id: 86 }] }),
+    jsonResponse(200, { id: 86, name: 'Real Madrid CF', squad }),
+  ];
+  let commits = 0;
+
+  await assert.rejects(
+    syncPlayers({
+      requestedBy: 'dev-superadmin',
+      source: 'live',
+      apiKey: 'test-key',
+      fetchImpl: async () => responses.shift(),
+      runId: 'failed-run',
+      commitBatch: async (batch) => {
+        commits += 1;
+        if (commits === 2) throw new Error('Injected second batch failure.');
+        await batch.commit();
+      },
+    }),
+    /Injected second batch failure/,
+  );
+
+  const status = (await db.doc('config/laLigaSync').get()).data();
+  assert.equal(status.activeRunId, 'stable-run');
+  assert.equal(status.status, 'error');
+  assert.equal(
+    (await db.doc('laLigaSyncRuns/stable-run/players/original').get()).exists,
+    true,
+  );
+  assert.equal(
+    (await db.doc('laLigaSyncRuns/failed-run/players/1000').get()).exists,
+    true,
+  );
+});
+
+test('a live sync lease rejects a concurrent run until the owner publishes', async () => {
+  let releaseFirstBatch;
+  let markFirstBatchReached;
+  const firstBatchReached = new Promise((resolve) => {
+    markFirstBatchReached = resolve;
+  });
+  const firstBatchRelease = new Promise((resolve) => {
+    releaseFirstBatch = resolve;
+  });
+  const firstSync = syncPlayers({
+    requestedBy: 'dev-superadmin',
+    source: 'fixture',
+    now: () => new Date('2026-09-02T12:00:00Z'),
+    runId: 'lease-owner-run',
+    commitBatch: async (batch) => {
+      markFirstBatchReached();
+      await firstBatchRelease;
+      await batch.commit();
+    },
+  });
+
+  await firstBatchReached;
+  try {
+    await assert.rejects(
+      syncPlayers({
+        requestedBy: 'dev-superadmin',
+        source: 'fixture',
+        now: () => new Date('2026-09-02T12:01:00Z'),
+        runId: 'concurrent-run',
+      }),
+      (error) => error.code === 'already-exists',
+    );
+  } finally {
+    releaseFirstBatch();
+  }
+
+  const result = await firstSync;
+  assert.equal(result.activeRunId, 'lease-owner-run');
+  const status = (await db.doc('config/laLigaSync').get()).data();
+  assert.equal(status.activeRunId, 'lease-owner-run');
+  assert.equal(status.currentRunId, undefined);
 });
 
 test('callable sync requires superadmin and defaults to fixture in emulators', async () => {
@@ -250,6 +347,7 @@ test('both status generations require authentication and share one service', asy
     auth: { uid: 'dev-user' },
   });
   assert.equal(callable.status, 'never_synced');
+  assert.equal(callable.activeRunId, null);
 
   const unauthorized = responseRecorder();
   await getLaLigaSyncStatusLegacyHandler(

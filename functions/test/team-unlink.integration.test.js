@@ -52,3 +52,32 @@ test('league owner can unlink a member into a clean placeholder', async () => {
   assert.equal(season.members['placeholder_dev-user'].isPlaceholder, true);
   assert.equal(season.members['placeholder_dev-user'].teamName, 'Usuarios FC');
 });
+
+test('unlink revalidates ownership after a concurrent league change', async () => {
+  let ownerChanged = false;
+  await assert.rejects(
+    unlinkUserFromTeamHandler({
+      auth: { uid: 'dev-league-admin' },
+      data: {
+        leagueId: 'dev-league-active',
+        seasonId: 'season-1',
+        userIdToUnlink: 'dev-user',
+      },
+    }, {
+      afterReads: async () => {
+        if (ownerChanged) return;
+        ownerChanged = true;
+        await db.doc('leagues/dev-league-active').update({
+          ownerId: 'dev-user',
+        });
+      },
+    }),
+    (error) => error.code === 'permission-denied',
+  );
+
+  const season = (
+    await db.doc('leagues/dev-league-active/seasons/season-1').get()
+  ).data();
+  assert.ok(season.members['dev-user']);
+  assert.equal(season.members['placeholder_dev-user'], undefined);
+});

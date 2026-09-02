@@ -1,8 +1,11 @@
 const fixture = require('../fixtures/la-liga.json');
+const { HttpsError } = require('firebase-functions/v2/https');
+const { Timestamp } = require('firebase-admin/firestore');
 const { db, FieldValue } = require('./firebase');
 const { requireDocumentId } = require('./league-authz');
 
 const FOOTBALL_API_BASE = 'https://api.football-data.org/v4';
+const SYNC_LEASE_MS = 10 * 60 * 1000;
 
 const POSITION_MAP = Object.freeze({
   Goalkeeper: 'POR',
@@ -145,8 +148,10 @@ async function loadLiveTeams({ apiKey, fetchImpl = fetch, sleep }) {
   return teams;
 }
 
-async function buildNormalizedPlayers(teams, nowIso) {
-  const existing = await db.collection('laLigaPlayers').get();
+async function buildNormalizedPlayers(teams, nowIso, activeRunId) {
+  const existing = activeRunId
+    ? await db.collection(`laLigaSyncRuns/${activeRunId}/players`).get()
+    : await db.collection('laLigaPlayers').get();
   const existingById = new Map(
     existing.docs.map((snapshot) => [snapshot.id, snapshot.data()]),
   );
@@ -179,63 +184,104 @@ async function syncPlayers({
   fetchImpl = fetch,
   sleep,
   now = () => new Date(),
+  runId = db.collection('laLigaSyncRuns').doc().id,
+  commitBatch = (batch) => batch.commit(),
 }) {
   const safeRequestedBy = requireDocumentId(requestedBy, 'requestedBy');
+  const safeRunId = requireDocumentId(runId, 'runId');
+  if (source !== 'fixture' && source !== 'live') {
+    throw new Error('Player sync source must be fixture or live.');
+  }
+  const nowValue = now();
+  if (!(nowValue instanceof Date) || Number.isNaN(nowValue.getTime())) {
+    throw new Error('Player sync clock returned an invalid date.');
+  }
   const statusRef = db.doc('config/laLigaSync');
-  await statusRef.set({
-    status: 'in_progress',
-    startedBy: safeRequestedBy,
-    startedAt: FieldValue.serverTimestamp(),
-    source,
-    lastError: FieldValue.delete(),
-  }, { merge: true });
+  const { activeRunId: previousActiveRunId } = await db.runTransaction(
+    async (transaction) => {
+      const status = await transaction.get(statusRef);
+      const data = status.exists ? status.data() : {};
+      const leaseUntil = data.leaseUntil?.toMillis?.() || 0;
+      if (data.status === 'in_progress' && leaseUntil > nowValue.getTime()) {
+        throw new HttpsError(
+          'already-exists',
+          'Ya hay una sincronización de jugadores en curso.',
+        );
+      }
+      transaction.set(statusRef, {
+        status: 'in_progress',
+        currentRunId: safeRunId,
+        leaseUntil: Timestamp.fromMillis(nowValue.getTime() + SYNC_LEASE_MS),
+        startedBy: safeRequestedBy,
+        startedAt: FieldValue.serverTimestamp(),
+        source,
+        lastError: FieldValue.delete(),
+      }, { merge: true });
+      return { activeRunId: data.activeRunId || null };
+    },
+  );
 
   try {
-    if (source !== 'fixture' && source !== 'live') {
-      throw new Error('Player sync source must be fixture or live.');
-    }
     const teams = source === 'fixture'
       ? fixture.teams
       : await loadLiveTeams({ apiKey, fetchImpl, sleep });
-    const nowValue = now();
-    if (!(nowValue instanceof Date) || Number.isNaN(nowValue.getTime())) {
-      throw new Error('Player sync clock returned an invalid date.');
-    }
-    const players = await buildNormalizedPlayers(teams, nowValue.toISOString());
+    const players = await buildNormalizedPlayers(
+      teams,
+      nowValue.toISOString(),
+      previousActiveRunId,
+    );
+    const stagingPlayers = db.collection(
+      `laLigaSyncRuns/${safeRunId}/players`,
+    );
 
     for (let offset = 0; offset < players.length; offset += 450) {
       const batch = db.batch();
       for (const player of players.slice(offset, offset + 450)) {
-        batch.set(
-          db.doc('laLigaPlayers/' + player.id),
-          player,
-          { merge: true },
-        );
+        batch.set(stagingPlayers.doc(String(player.id)), player);
       }
-      await batch.commit();
+      await commitBatch(batch);
     }
 
-    await statusRef.set({
-      status: 'completed',
-      lastSync: FieldValue.serverTimestamp(),
-      playersCount: players.length,
-      syncedBy: safeRequestedBy,
-      source,
-      lastError: FieldValue.delete(),
-    }, { merge: true });
+    await db.runTransaction(async (transaction) => {
+      const status = await transaction.get(statusRef);
+      if (status.data()?.currentRunId !== safeRunId) {
+        throw new HttpsError(
+          'aborted',
+          'La sincronización perdió su lease antes de publicarse.',
+        );
+      }
+      transaction.set(statusRef, {
+        status: 'completed',
+        activeRunId: safeRunId,
+        currentRunId: FieldValue.delete(),
+        leaseUntil: FieldValue.delete(),
+        lastSync: FieldValue.serverTimestamp(),
+        playersCount: players.length,
+        syncedBy: safeRequestedBy,
+        source,
+        lastError: FieldValue.delete(),
+      }, { merge: true });
+    });
     return {
       success: true,
       playersSynced: players.length,
       teamsProcessed: teams.length,
       source,
+      activeRunId: safeRunId,
     };
   } catch (error) {
-    await statusRef.set({
-      status: 'error',
-      lastError: error.message || 'Unknown player sync error.',
-      failedAt: FieldValue.serverTimestamp(),
-      source,
-    }, { merge: true });
+    await db.runTransaction(async (transaction) => {
+      const status = await transaction.get(statusRef);
+      if (status.data()?.currentRunId !== safeRunId) return;
+      transaction.set(statusRef, {
+        status: 'error',
+        currentRunId: FieldValue.delete(),
+        leaseUntil: FieldValue.delete(),
+        lastError: error.message || 'Unknown player sync error.',
+        failedAt: FieldValue.serverTimestamp(),
+        source,
+      }, { merge: true });
+    });
     throw error;
   }
 }

@@ -43,7 +43,12 @@ async function getLaLigaSyncStatusV2Handler(request) {
   requireAuth(request);
   const snapshot = await db.doc('config/laLigaSync').get();
   if (!snapshot.exists) {
-    return { status: 'never_synced', lastSync: null, playersCount: 0 };
+    return {
+      status: 'never_synced',
+      lastSync: null,
+      playersCount: 0,
+      activeRunId: null,
+    };
   }
   const data = snapshot.data();
   return {
@@ -52,6 +57,7 @@ async function getLaLigaSyncStatusV2Handler(request) {
     playersCount: data.playersCount || 0,
     lastError: data.lastError || null,
     source: data.source || null,
+    activeRunId: data.activeRunId || null,
   };
 }
 
@@ -76,6 +82,8 @@ async function callableRequestFromHttp(request, verifyIdToken) {
 const HTTP_STATUS = Object.freeze({
   unauthenticated: 401,
   'permission-denied': 403,
+  'already-exists': 409,
+  aborted: 409,
   'failed-precondition': 412,
   'invalid-argument': 400,
 });

@@ -20,7 +20,8 @@ export default function PlayersSyncTab() {
         status: 'loading',
         lastSync: null,
         playersCount: 0,
-        lastError: null
+        lastError: null,
+        activeRunId: null
     });
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncProgress, setSyncProgress] = useState(null);
@@ -35,8 +36,11 @@ export default function PlayersSyncTab() {
 
     // Fetch sync status on mount
     useEffect(() => {
-        fetchSyncStatus();
-        fetchSyncedPlayers();
+        const loadPlayerSnapshot = async () => {
+            const status = await fetchSyncStatus();
+            await fetchSyncedPlayers(status?.activeRunId);
+        };
+        loadPlayerSnapshot();
     }, []);
 
     // Get unique teams and positions for filters
@@ -119,21 +123,27 @@ export default function PlayersSyncTab() {
 
     const fetchSyncStatus = async () => {
         try {
-            setSyncStatus(await getLaLigaSyncStatus());
+            const status = await getLaLigaSyncStatus();
+            setSyncStatus(status);
+            return status;
         } catch (error) {
             console.error("Error fetching sync status:", error);
             setSyncStatus({
                 status: 'error',
                 lastSync: null,
                 playersCount: 0,
-                lastError: error.message
+                lastError: error.message,
+                activeRunId: null
             });
+            return null;
         }
     };
 
-    const fetchSyncedPlayers = async () => {
+    const fetchSyncedPlayers = async (activeRunId) => {
         try {
-            const playersRef = collection(db, "laLigaPlayers");
+            const playersRef = activeRunId
+                ? collection(db, 'laLigaSyncRuns', activeRunId, 'players')
+                : collection(db, 'laLigaPlayers');
             const q = query(playersRef, orderBy("name"));
             const querySnapshot = await getDocs(q);
             const players = querySnapshot.docs.map(doc => ({
@@ -161,8 +171,8 @@ export default function PlayersSyncTab() {
                     `Sincronización completada: ${result.playersSynced} jugadores actualizados.`;
                 toast.success(message);
                 setSyncProgress({ message, stage: 'complete' });
-                await fetchSyncStatus();
-                await fetchSyncedPlayers();
+                const status = await fetchSyncStatus();
+                await fetchSyncedPlayers(status?.activeRunId || result.activeRunId);
             } else {
                 throw new Error('La sincronización falló');
             }
@@ -340,7 +350,7 @@ export default function PlayersSyncTab() {
                                 <ul className="list-disc list-inside space-y-1">
                                     <li>La API de football-data.org tiene un límite de 10 solicitudes por minuto</li>
                                     <li>La sincronización puede tardar varios minutos</li>
-                                    <li>Los jugadores se almacenan en la colección <code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">laLigaPlayers</code></li>
+                                    <li>Solo se publica el último snapshot completo de jugadores</li>
                                     <li>El historial de equipos y posiciones se preserva automáticamente</li>
                                 </ul>
                             )}
