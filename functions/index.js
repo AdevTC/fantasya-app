@@ -1,4 +1,7 @@
-const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const {
+    onDocumentCreated,
+    onDocumentUpdated,
+} = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const { auth, db, FieldValue } = require('./lib/firebase');
@@ -7,6 +10,11 @@ const {
 } = require('./handlers/profile');
 const { setUserAppRoleHandler } = require('./handlers/roles');
 const { unlinkUserFromTeamHandler } = require('./handlers/teams');
+const {
+    onPostCreatedAwardXpHandler,
+    onTransferCreatedAwardXpHandler,
+    recalculateXpHandler,
+} = require('./handlers/xp');
 
 
 // --- INICIO DE LA NUEVA FUNCIÓN PARA CREAR DOCUMENTOS DE PERFIL ---
@@ -103,6 +111,30 @@ exports.unlinkUserFromTeam = onCall(
 exports.setUserAppRole = onCall(
     { region: "us-central1" },
     setUserAppRoleHandler,
+);
+
+exports.onPostCreatedAwardXp = onDocumentCreated(
+    {
+        document: "posts/{postId}",
+        region: "us-central1",
+    },
+    onPostCreatedAwardXpHandler,
+);
+
+exports.onTransferCreatedAwardXp = onDocumentCreated(
+    {
+        document: "leagues/{leagueId}/seasons/{seasonId}/transfers/{transferId}",
+        region: "us-central1",
+    },
+    onTransferCreatedAwardXpHandler,
+);
+
+exports.recalculateXp = onCall(
+    {
+        region: "us-central1",
+        timeoutSeconds: 540,
+    },
+    recalculateXpHandler,
 );
 
 exports.createOrGetChat = onCall({ region: "us-central1", cors: ["https://fantasya-app.vercel.app", "http://localhost:5173"] }, async (request) => {

@@ -3,7 +3,6 @@ import { db } from '../config/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
-import { grantXp } from '../utils/xp';
 import { useAuth } from '../hooks/useAuth';
 
 export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
@@ -99,9 +98,6 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 toast.success('Fichaje actualizado correctamente', { id: loadingToast });
             } else {
                 await addDoc(basePath, transferData);
-                if(buyerId !== 'market' && !season.members[buyerId]?.isPlaceholder){
-                    await grantXp(buyerId, 'TRANSFER');
-                }
                 toast.success('Fichaje registrado correctamente', { id: loadingToast });
             }
             onTransferRegistered();

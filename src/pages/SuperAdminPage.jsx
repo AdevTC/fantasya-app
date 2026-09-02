@@ -5,8 +5,7 @@ import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { UserCog, Search, ShieldCheck, ShieldOff, RefreshCw } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { calculateXpForAllUsers } from '../utils/xp';
-import { setUserAppRole } from '../services/admin-api';
+import { recalculateXp, setUserAppRole } from '../services/admin-api';
 
 export default function SuperAdminPage() {
     const [searchTerm, setSearchTerm] = useState('');
@@ -86,7 +85,7 @@ export default function SuperAdminPage() {
         setRecalculating(true);
         const loadingToast = toast.loading('Recalculando XP para todos los usuarios...');
         try {
-            await calculateXpForAllUsers();
+            await recalculateXp();
             toast.success('¡XP de todos los usuarios recalculada!', { id: loadingToast });
         } catch (error) {
             console.error("Error recalculando XP:", error);
