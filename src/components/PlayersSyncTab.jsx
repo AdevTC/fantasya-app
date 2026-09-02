@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
-import { db, isUsingEmulators } from '../config/firebase';
+import { db } from '../config/firebase';
+import { playerSyncEnabled } from '../config/capabilities';
 import {
     getLaLigaSyncStatus,
     syncLaLigaPlayers,
@@ -32,16 +33,10 @@ export default function PlayersSyncTab() {
     const [searchName, setSearchName] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [currentPage, setCurrentPage] = useState(1);
+    const mountedRef = useRef(false);
+    const progressTimeoutRef = useRef(null);
+    const syncInFlightRef = useRef(false);
     const ITEMS_PER_PAGE = 20;
-
-    // Fetch sync status on mount
-    useEffect(() => {
-        const loadPlayerSnapshot = async () => {
-            const status = await fetchSyncStatus();
-            await fetchSyncedPlayers(status?.activeRunId);
-        };
-        loadPlayerSnapshot();
-    }, []);
 
     // Get unique teams and positions for filters
     const uniqueTeams = useMemo(() => {
@@ -121,13 +116,15 @@ export default function PlayersSyncTab() {
             : <ArrowDown className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />;
     };
 
-    const fetchSyncStatus = async () => {
+    const fetchSyncStatus = useCallback(async (isCurrent = () => mountedRef.current) => {
         try {
             const status = await getLaLigaSyncStatus();
+            if (!isCurrent()) return null;
             setSyncStatus(status);
             return status;
         } catch (error) {
             console.error("Error fetching sync status:", error);
+            if (!isCurrent()) return null;
             setSyncStatus({
                 status: 'error',
                 lastSync: null,
@@ -137,9 +134,12 @@ export default function PlayersSyncTab() {
             });
             return null;
         }
-    };
+    }, []);
 
-    const fetchSyncedPlayers = async (activeRunId) => {
+    const fetchSyncedPlayers = useCallback(async (
+        activeRunId,
+        isCurrent = () => mountedRef.current,
+    ) => {
         try {
             const playersRef = activeRunId
                 ? collection(db, 'laLigaSyncRuns', activeRunId, 'players')
@@ -150,21 +150,65 @@ export default function PlayersSyncTab() {
                 id: doc.id,
                 ...doc.data()
             }));
+            if (!isCurrent()) return;
             setSyncedPlayers(players);
             setCurrentPage(1);
         } catch (error) {
             console.error("Error fetching synced players:", error);
         }
-    };
+    }, []);
+
+    // Load saved players in every environment, but query sync state only locally.
+    useEffect(() => {
+        mountedRef.current = true;
+        let cancelled = false;
+        const isCurrent = () => !cancelled && mountedRef.current;
+
+        const loadPlayerSnapshot = async () => {
+            if (!playerSyncEnabled) {
+                if (cancelled) return;
+                setSyncStatus({
+                    status: 'disabled',
+                    lastSync: null,
+                    playersCount: 0,
+                    lastError: null,
+                    activeRunId: null,
+                });
+                await fetchSyncedPlayers(null, isCurrent);
+                return;
+            }
+
+            const status = await fetchSyncStatus(isCurrent);
+            if (cancelled) return;
+            await fetchSyncedPlayers(status?.activeRunId, isCurrent);
+        };
+
+        void loadPlayerSnapshot();
+
+        return () => {
+            cancelled = true;
+            mountedRef.current = false;
+            if (progressTimeoutRef.current) {
+                clearTimeout(progressTimeoutRef.current);
+                progressTimeoutRef.current = null;
+            }
+        };
+    }, [fetchSyncStatus, fetchSyncedPlayers]);
 
     const handleSync = async () => {
-        if (isSyncing) return;
+        if (!playerSyncEnabled || syncInFlightRef.current) return;
+        syncInFlightRef.current = true;
+        if (progressTimeoutRef.current) {
+            clearTimeout(progressTimeoutRef.current);
+            progressTimeoutRef.current = null;
+        }
 
         setIsSyncing(true);
         setSyncProgress({ message: 'Iniciando sincronización...', stage: 'init' });
 
         try {
             const result = await syncLaLigaPlayers();
+            if (!mountedRef.current) return;
 
             if (result.success) {
                 const message = result.message ||
@@ -178,20 +222,26 @@ export default function PlayersSyncTab() {
             }
         } catch (error) {
             console.error("Error syncing players:", error);
+            if (!mountedRef.current) return;
             let errorMsg = error.message;
 
             if (error.code?.endsWith('permission-denied') || error.code?.endsWith('unauthenticated')) {
                 errorMsg = "No tienes permiso para sincronizar jugadores. Contacta al administrador.";
             } else if (error.code?.endsWith('failed-precondition')) {
-                errorMsg = "La clave de football-data.org no está configurada en el servidor.";
+                errorMsg = "La sincronización local no está disponible.";
             }
 
             toast.error(`Error: ${errorMsg}`);
             setSyncProgress({ message: `Error: ${errorMsg}`, stage: 'error' });
             await fetchSyncStatus();
         } finally {
-            setIsSyncing(false);
-            setTimeout(() => setSyncProgress(null), 5000);
+            syncInFlightRef.current = false;
+            if (mountedRef.current) {
+                setIsSyncing(false);
+                progressTimeoutRef.current = setTimeout(() => {
+                    if (mountedRef.current) setSyncProgress(null);
+                }, 5000);
+            }
         }
     };
 
@@ -257,6 +307,13 @@ export default function PlayersSyncTab() {
                         No sincronizado
                     </span>
                 );
+            case 'disabled':
+                return (
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                        <Database className="w-4 h-4" />
+                        Solo lectura
+                    </span>
+                );
             default:
                 return (
                     <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700">
@@ -291,7 +348,9 @@ export default function PlayersSyncTab() {
                             Sincronización de Jugadores La Liga
                         </h2>
                         <p className="text-gray-600 dark:text-gray-400 text-sm">
-                            Sincroniza la base de datos de jugadores desde la API oficial de football-data.org
+                            {playerSyncEnabled
+                                ? 'Carga el fixture local de jugadores para desarrollo.'
+                                : 'Consulta el catálogo de jugadores guardado.'}
                         </p>
                     </div>
                     {getStatusBadge()}
@@ -300,15 +359,15 @@ export default function PlayersSyncTab() {
                 {/* Sync Button */}
                 <button
                     onClick={handleSync}
-                    disabled={isSyncing}
+                    disabled={!playerSyncEnabled || isSyncing}
                     className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
                     {isSyncing
                         ? 'Sincronizando...'
-                        : isUsingEmulators
+                        : playerSyncEnabled
                             ? 'Sincronizar fixture local'
-                            : 'Sincronizar Ahora'}
+                            : 'Sincronización no disponible'}
                 </button>
 
                 {/* Progress Message */}
@@ -339,20 +398,17 @@ export default function PlayersSyncTab() {
                         <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                         <div className="text-sm text-amber-800 dark:text-amber-300">
                             <p className="font-semibold mb-1">
-                                {isUsingEmulators ? 'Modo local aislado' : 'Información importante'}
+                                {playerSyncEnabled ? 'Modo local aislado' : 'Catálogo en modo de consulta'}
                             </p>
-                            {isUsingEmulators ? (
+                            {playerSyncEnabled ? (
                                 <p>
                                     Ninguna acción de esta pantalla contacta con producción.
                                     La sincronización usa un fixture local determinista y protegido.
                                 </p>
                             ) : (
-                                <ul className="list-disc list-inside space-y-1">
-                                    <li>La API de football-data.org tiene un límite de 10 solicitudes por minuto</li>
-                                    <li>La sincronización puede tardar varios minutos</li>
-                                    <li>Solo se publica el último snapshot completo de jugadores</li>
-                                    <li>El historial de equipos y posiciones se preserva automáticamente</li>
-                                </ul>
+                                <p>
+                                    La actualización automática está temporalmente desactivada. Puedes seguir consultando los jugadores ya guardados.
+                                </p>
                             )}
                         </div>
                     </div>
@@ -511,7 +567,9 @@ export default function PlayersSyncTab() {
                             {syncedPlayers.length === 0 ? (
                                 <tr>
                                     <td colSpan="4" className="p-8 text-center text-gray-500 dark:text-gray-400">
-                                        No hay jugadores sincronizados. Haz clic en "Sincronizar Ahora" para comenzar.
+                                        {playerSyncEnabled
+                                            ? 'No hay jugadores en el fixture local. Ejecuta la sincronización para cargarlos.'
+                                            : 'No hay jugadores guardados actualmente.'}
                                     </td>
                                 </tr>
                             ) : filteredPlayers.length === 0 ? (

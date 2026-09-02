@@ -23,6 +23,15 @@ test('the shared Firebase module owns every service and emulator connection', ()
   assert.match(firebaseSource, /export const isUsingEmulators/);
 });
 
+test('runtime capabilities fail closed unless both dev mode and emulators are active', () => {
+  const capabilitySource = source('src/config/capabilities.js');
+
+  assert.match(capabilitySource, /resolveCapabilities/);
+  assert.match(capabilitySource, /import\.meta\.env\.DEV/);
+  assert.match(capabilitySource, /isUsingEmulators/);
+  assert.match(capabilitySource, /export const playerSyncEnabled/);
+});
+
 test('callable consumers route protected operations through shared services', () => {
   const loginSource = source('src/pages/LoginPage.jsx');
   const adminApiSource = source('src/services/admin-api.js');
@@ -90,4 +99,5 @@ test('player sync uses the centralized Functions service', () => {
   assert.match(syncSource, /services\/admin-api/);
   assert.match(apiSource, /syncLaLigaPlayersV2/);
   assert.match(apiSource, /getLaLigaSyncStatusV2/);
+  assert.match(apiSource, /assertPlayerSyncEnabled\(playerSyncEnabled\)/);
 });
