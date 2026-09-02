@@ -61,11 +61,28 @@ Estas cuentas sólo existen en Auth Emulator. El frontend y el seed abortan si
 el project ID no es exactamente `demo-fantasya` o falta algún emulador
 obligatorio. No se copian datos reales.
 
+## Seguridad local verificable
+
+| Identidad | Operaciones permitidas | Operaciones bloqueadas |
+| --- | --- | --- |
+| Miembro de temporada | Editar sus campos de perfil seguros y su equipo, salir de la temporada, publicar y reaccionar con su propio UID, chatear como participante y subir sus imágenes. | Cambiar roles, XP, propietarios, otros miembros, premios o eventos de sistema; leer chats ajenos. |
+| Administrador de temporada | Lo anterior, más operaciones de temporada, revisión atómica de solicitudes, trofeos, retos e imagen de temporada. El propietario conserva en exclusiva la creación y eliminación de liga/temporada. | Suplantar identidades, alterar el propietario o escribir directamente los espejos de logros/XP. |
+| Superadministrador global | Asignar roles mediante Function, sincronizar jugadores y moderar publicaciones e imágenes. | Acceder por ese rol a chats privados o temporadas de las que no sea miembro/administrador. |
+| Usuario ajeno a una liga | Leer contenido público, usar su propio perfil/feed y solicitar acceso por el flujo controlado. | Leer transferencias, miembros o chats privados; modificar la liga o incorporarse directamente. |
+
+Las reglas y handlers anteriores se comprueban en una sola sesión aislada de
+emuladores con:
+
+```powershell
+npm run test:integrity
+```
+
 ## Comprobaciones
 
 ```powershell
 npm run test:unit
 npm run test:seed
+npm run test:integrity
 npm run build
 ```
 
