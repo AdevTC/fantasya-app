@@ -82,6 +82,8 @@ export function parseGitDivergence(output) {
   return { behind: parts[0], ahead: parts[1] };
 }
 
+export const shouldInspectFootballSecret = (value) => value === true;
+
 function runCaptured(command, args, { cwd, label }) {
   const result = spawnSync(command, args, {
     cwd,
@@ -207,7 +209,34 @@ export async function probeFootballSecretStatus(cwd, accountEmail) {
   }
 }
 
-export async function inspectProductionState({ cwd = projectRoot } = {}) {
+export function inspectFirebaseIdentity({ cwd = projectRoot } = {}) {
+  // Deliberately avoid --json here: current firebase-tools serializes saved
+  // OAuth token objects in login:list JSON. The normal output exposes email only.
+  const loginResult = runCapturedFirebase(['login:list'], {
+    cwd,
+    label: 'Firebase active-account check',
+  });
+  const activeFirebaseAccount = parseActiveFirebaseAccount(
+    `${loginResult.stdout}\n${loginResult.stderr}`,
+  );
+  const projectsResult = runCapturedFirebase([
+    'projects:list',
+    '--account',
+    EXPECTED_PRODUCTION.firebaseAccount,
+    '--json',
+    '--non-interactive',
+  ], {
+    cwd,
+    label: 'Firebase project visibility check',
+  });
+  const firebaseProjectIds = parseFirebaseProjectIds(projectsResult.stdout);
+  return { activeFirebaseAccount, firebaseProjectIds };
+}
+
+export async function inspectProductionState({
+  cwd = projectRoot,
+  inspectFootballSecret = false,
+} = {}) {
   assertNodeVersion();
   const localState = readLocalReleaseState(cwd);
   const localErrors = [];
@@ -227,7 +256,7 @@ export async function inspectProductionState({ cwd = projectRoot } = {}) {
     behind: null,
     activeFirebaseAccount: null,
     firebaseProjectIds: [],
-    secretStatus: 'unchecked',
+    secretStatus: 'not-requested',
   };
   if (localErrors.length > 0) {
     return {
@@ -249,31 +278,16 @@ export async function inspectProductionState({ cwd = projectRoot } = {}) {
     { cwd, label: 'Git main/origin comparison' },
   ));
 
-  // Deliberately avoid --json here: current firebase-tools serializes saved
-  // OAuth token objects in login:list JSON. The normal output exposes email only.
-  const loginResult = runCapturedFirebase(['login:list'], {
-    cwd,
-    label: 'Firebase active-account check',
-  });
-  const activeFirebaseAccount = parseActiveFirebaseAccount(
-    `${loginResult.stdout}\n${loginResult.stderr}`,
-  );
-  const projectsResult = runCapturedFirebase([
-    'projects:list',
-    '--account',
-    EXPECTED_PRODUCTION.firebaseAccount,
-    '--json',
-    '--non-interactive',
-  ], {
-    cwd,
-    label: 'Firebase project visibility check',
-  });
-  const firebaseProjectIds = parseFirebaseProjectIds(projectsResult.stdout);
-  const secretStatus = activeFirebaseAccount?.toLowerCase()
-    === EXPECTED_PRODUCTION.firebaseAccount
-    && firebaseProjectIds.includes(EXPECTED_PRODUCTION.firebaseProject)
-    ? await probeFootballSecretStatus(cwd, activeFirebaseAccount)
-    : 'unchecked';
+  const { activeFirebaseAccount, firebaseProjectIds }
+    = inspectFirebaseIdentity({ cwd });
+  let secretStatus = 'not-requested';
+  if (shouldInspectFootballSecret(inspectFootballSecret)) {
+    secretStatus = activeFirebaseAccount?.toLowerCase()
+      === EXPECTED_PRODUCTION.firebaseAccount
+      && firebaseProjectIds.includes(EXPECTED_PRODUCTION.firebaseProject)
+      ? await probeFootballSecretStatus(cwd, activeFirebaseAccount)
+      : 'unchecked';
+  }
 
   const state = {
     ...localState,
@@ -299,11 +313,14 @@ export async function runProductionPreflight({
   cwd = projectRoot,
   requireFootballSecret = false,
 } = {}) {
-  const report = await inspectProductionState({ cwd });
+  const report = await inspectProductionState({
+    cwd,
+    inspectFootballSecret: requireFootballSecret,
+  });
   const errors = [...report.errors];
   if (
     errors.length === 0
-    && requireFootballSecret
+    && shouldInspectFootballSecret(requireFootballSecret)
     && report.state.secretStatus !== 'present'
   ) {
     errors.push(
@@ -326,7 +343,9 @@ export function printProductionReport(report) {
   console.log(
     `- tictaktools visible: ${state.firebaseProjectIds?.includes(EXPECTED_PRODUCTION.firebaseProject) ? 'yes' : 'not confirmed'}`,
   );
-  console.log(`- FOOTBALL_DATA_API_KEY metadata: ${state.secretStatus}`);
+  if (state.secretStatus !== 'not-requested') {
+    console.log(`- FOOTBALL_DATA_API_KEY metadata: ${state.secretStatus}`);
+  }
   for (const warning of report.warnings) {
     console.warn(`WARNING: ${warning}`);
   }

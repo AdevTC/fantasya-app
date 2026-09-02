@@ -9,6 +9,7 @@ import {
   parseActiveFirebaseAccount,
   parseFirebaseProjectIds,
   parseGitDivergence,
+  shouldInspectFootballSecret,
 } from '../../scripts/production-preflight.mjs';
 import {
   DEPLOY_TARGETS,
@@ -80,6 +81,33 @@ test('parses only sanitized Firebase and Git preflight output', () => {
     result: [{ projectId: 'tictaktools' }, { projectId: 'demo-fantasya' }],
   })), ['tictaktools', 'demo-fantasya']);
   assert.deepEqual(parseGitDivergence('2\t3'), { behind: 2, ahead: 3 });
+});
+
+test('inspects Football Data secret metadata only for a strict boolean opt-in', () => {
+  assert.equal(shouldInspectFootballSecret(false), false);
+  assert.equal(shouldInspectFootballSecret(true), true);
+  assert.equal(shouldInspectFootballSecret('true'), false);
+  assert.equal(shouldInspectFootballSecret(1), false);
+});
+
+test('normal production preflight does not opt into Football Data secret inspection', () => {
+  const source = readFileSync(
+    new URL('../../scripts/production-preflight.mjs', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    source,
+    /const report = await runProductionPreflight\(\);/,
+  );
+  assert.match(
+    source,
+    /inspectProductionState\(\{\s*cwd,\s*inspectFootballSecret:\s*requireFootballSecret,?\s*\}\)/,
+  );
+  assert.match(
+    source,
+    /shouldInspectFootballSecret\(inspectFootballSecret\)[\s\S]*?probeFootballSecretStatus\(cwd, activeFirebaseAccount\)/,
+  );
 });
 
 test('deploy targets are bounded and include every changed security function', () => {
