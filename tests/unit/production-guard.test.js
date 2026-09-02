@@ -15,7 +15,6 @@ import {
   DEPLOY_TARGETS,
   buildDeployArguments,
   confirmationForTarget,
-  targetNeedsFootballSecret,
 } from '../../scripts/deploy-production.mjs';
 import {
   LEGACY_DELETE_ARGUMENTS,
@@ -110,32 +109,60 @@ test('normal production preflight does not opt into Football Data secret inspect
   );
 });
 
-test('deploy targets are bounded and include every changed security function', () => {
-  assert.deepEqual(Object.keys(DEPLOY_TARGETS).sort(), [
+test('main-only deploy targets contain exactly rules, indexes and storage', () => {
+  assert.deepEqual(Object.keys(DEPLOY_TARGETS), [
     'firestore',
-    'functions-core',
-    'functions-league',
-    'functions-sync',
     'indexes',
     'storage',
   ]);
-  assert.match(DEPLOY_TARGETS['functions-core'], /functions:unlinkUserFromTeam/);
-  assert.deepEqual(
-    DEPLOY_TARGETS['functions-sync'].split(',').sort(),
-    [
-      'functions:syncLaLigaPlayersV2',
-      'functions:getLaLigaSyncStatusV2',
-      'functions:syncLaLigaPlayers',
-      'functions:getLaLigaSyncStatus',
-    ].sort(),
-  );
-  assert.equal(targetNeedsFootballSecret('functions-sync'), true);
-  assert.equal(targetNeedsFootballSecret('functions-core'), false);
+  assert.deepEqual(DEPLOY_TARGETS, {
+    firestore: 'firestore:rules',
+    indexes: 'firestore:indexes',
+    storage: 'storage',
+  });
   assert.equal(
     confirmationForTarget('storage'),
     'deploy tictaktools storage',
   );
-  assert.throws(() => buildDeployArguments('anything'), /Unknown target/);
+  for (const target of [
+    'functions-core',
+    'functions-sync',
+    'functions-league',
+  ]) {
+    assert.throws(() => confirmationForTarget(target), /Unknown target/);
+    assert.throws(() => buildDeployArguments(target), /Unknown target/);
+  }
+});
+
+test('main-only deployment never opts into secrets or contains Function routes', () => {
+  const source = readFileSync(
+    new URL('../../scripts/deploy-production.mjs', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /runProductionPreflight\(\)/);
+  assert.doesNotMatch(
+    source,
+    /targetNeedsFootballSecret|requireFootballSecret|functions-core|functions-sync|functions-league/,
+  );
+});
+
+test('main-only deployment rejects non-string targets without coercion', () => {
+  const target = {
+    toString() {
+      throw new Error('SECRET=never-print');
+    },
+  };
+  for (const invoke of [
+    () => confirmationForTarget(target),
+    () => buildDeployArguments(target),
+  ]) {
+    assert.throws(invoke, (error) => {
+      assert.equal(error.message, 'Unknown target.');
+      assert.doesNotMatch(String(error), /SECRET|never-print/);
+      return true;
+    });
+  }
 });
 
 test('deploy arguments always pin project, account and allowlisted resources', () => {
@@ -207,4 +234,5 @@ test('package scripts expose no direct production deployment escape hatch', () =
   assert.equal(rootPackage.scripts['firebase:deploy:all'], undefined);
   assert.equal(rootPackage.scripts['deploy:prod:functions:core'], undefined);
   assert.equal(rootPackage.scripts['deploy:prod:functions:sync'], undefined);
+  assert.equal(rootPackage.scripts['deploy:prod:functions:league'], undefined);
 });

@@ -40,7 +40,6 @@
     "deploy:prod:pr:functions:core-v2": "node scripts/deploy-premerge-functions.mjs functions-core-v2",
     "deploy:prod:pr:functions:league": "node scripts/deploy-premerge-functions.mjs functions-league",
     "deploy:prod:pr:functions:content-v2": "node scripts/deploy-premerge-functions.mjs functions-content-v2",
-    "deploy:prod:functions:league": "node scripts/deploy-production.mjs functions-league",
     "deploy:prod:firestore": "node scripts/deploy-production.mjs firestore",
     "deploy:prod:indexes": "node scripts/deploy-production.mjs indexes",
     "deploy:prod:storage": "node scripts/deploy-production.mjs storage",

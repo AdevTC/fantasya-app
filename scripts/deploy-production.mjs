@@ -10,51 +10,27 @@ import {
 } from './production-preflight.mjs';
 
 export const DEPLOY_TARGETS = Object.freeze({
-  'functions-core': [
-    'functions:createProfileDocuments',
-    'functions:unlinkUserFromTeam',
-    'functions:setUserAppRole',
-    'functions:createOrGetChat',
-    'functions:onPostCreatedAwardXp',
-    'functions:onTransferCreatedAwardXp',
-    'functions:recalculateXp',
-  ].join(','),
-  'functions-sync': [
-    'functions:syncLaLigaPlayersV2',
-    'functions:getLaLigaSyncStatusV2',
-    'functions:syncLaLigaPlayers',
-    'functions:getLaLigaSyncStatus',
-  ].join(','),
-  'functions-league': [
-    'functions:joinSeasonByInviteCode',
-    'functions:submitJoinRequest',
-    'functions:reviewJoinRequest',
-    'functions:replaceSeasonTrophies',
-    'functions:saveSeasonChallenge',
-    'functions:deleteSeasonChallenge',
-    'functions:setChallengeWinners',
-    'functions:refreshCareerAchievements',
-  ].join(','),
   firestore: 'firestore:rules',
   indexes: 'firestore:indexes',
   storage: 'storage',
 });
 
-export function targetNeedsFootballSecret(target) {
-  return target === 'functions-sync';
+function assertKnownTarget(target) {
+  if (
+    typeof target !== 'string'
+    || !Object.hasOwn(DEPLOY_TARGETS, target)
+  ) {
+    throw new Error('Unknown target.');
+  }
 }
 
 export function confirmationForTarget(target) {
-  if (!Object.hasOwn(DEPLOY_TARGETS, target)) {
-    throw new Error(`Unknown target: ${String(target)}`);
-  }
+  assertKnownTarget(target);
   return `deploy ${EXPECTED_PRODUCTION.firebaseProject} ${target}`;
 }
 
 export function buildDeployArguments(target) {
-  if (!Object.hasOwn(DEPLOY_TARGETS, target)) {
-    throw new Error(`Unknown target: ${String(target)}`);
-  }
+  assertKnownTarget(target);
   return [
     'deploy',
     '--project',
@@ -96,9 +72,7 @@ async function main() {
   requireInteractiveTerminal();
 
   const target = args[0];
-  const report = await runProductionPreflight({
-    requireFootballSecret: targetNeedsFootballSecret(target),
-  });
+  const report = await runProductionPreflight();
   printProductionReport(report);
   if (report.errors.length > 0) {
     throw new Error('Production preflight failed; deployment was not started.');
