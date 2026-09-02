@@ -21,6 +21,44 @@
 - La puntuación conserva los valores actuales: post 10, post con imagen 15, transferencia 5, un punto por cada 10 puntos de jornada y trofeo 100.
 - No se despliega a producción durante este plan.
 
+## Security Review Amendments (override the task text below)
+
+These amendments are mandatory. When an older step conflicts with this section,
+this section wins.
+
+- Add an exact-demo emulator reset helper before Task 1. It must refuse every
+  project except `demo-fantasya`, clear Auth and Firestore through their local
+  emulator endpoints, and run stateful test files with `--test-concurrency=1`.
+  Each integration/rules test suite must start from an isolated known state.
+- Preserve the existing public username contract everywhere: trim and lowercase,
+  3–16 characters, only lowercase letters, numbers, `_` and `.`, no leading or
+  trailing `.`, and no leading digit. Put the contract in shared client code,
+  enforce it again in the callable, and test both signup forms plus the server.
+- Once Firebase Auth registration succeeds, later profile or verification
+  failures must never delete the Auth account. Keep the incomplete account,
+  route it to `/complete-profile`, and make email verification independently
+  retryable.
+- Task 3 also owns `unlinkUserFromTeam`. Extract reusable
+  `getSeasonContext()`/`requireSeasonAdmin()` authorization, read league and
+  season consistently, compare the protected user with `league.ownerId` (not a
+  season field), and prove that a league admin cannot unlink the league owner
+  and that a normal member cannot invoke the callable.
+- All Firestore transactions must perform every read before their first write.
+- Task 5 must secure both generations of player-sync endpoints in the same
+  change. The legacy `syncLaLigaPlayers` endpoint must delegate to the same V2
+  service, require `superadmin`, and bind the same secret; it must not remain an
+  authentication-only compatibility window. Preserve its current HTTP response
+  shape while migrating the frontend exclusively to callable V2 APIs. The legacy
+  status endpoint must reuse the protected status service.
+- Player sync must never report `completed` after silently skipping failed
+  teams. After the documented retry, fail before writing player documents and
+  record an error status; cover this behavior with a test.
+- The additive production deploy group in Plan 04 must include
+  `unlinkUserFromTeam`, both V2 player-sync functions, and both hardened legacy
+  endpoint names. Production rollout order is: compatible callables first,
+  frontend with client-side XP removed second, XP triggers third, and explicit
+  XP recalculation last. No rollout happens in this plan.
+
 ---
 
 ## File Structure
