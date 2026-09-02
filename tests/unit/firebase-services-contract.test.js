@@ -40,3 +40,12 @@ test('the application renders the local environment banner', () => {
   assert.match(bannerSource, /Firebase local · demo-fantasya/);
   assert.match(bannerSource, /if \(!isUsingEmulators\) return null/);
 });
+
+test('AdSense is loaded by the guarded component instead of static HTML', () => {
+  const htmlSource = source('index.html');
+  const adSource = source('src/components/AdBanner.jsx');
+
+  assert.doesNotMatch(htmlSource, /googlesyndication/);
+  assert.match(adSource, /resolveAdSenseRuntime/);
+  assert.match(adSource, /isUsingEmulators/);
+});
