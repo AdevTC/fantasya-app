@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
-import { resolve } from 'node:path';
+import { win32 } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -83,7 +83,7 @@ export function isOwnedDemoFirestoreProcess(processInfo, projectRoot) {
   const commandLine = normalize(
     processInfo?.CommandLine ?? processInfo?.commandLine,
   );
-  const rulesPath = normalize(resolve(projectRoot, 'firestore.rules'));
+  const rulesPath = normalize(win32.resolve(projectRoot, 'firestore.rules'));
 
   return (name === 'java.exe' || name === 'java')
     && commandLine.includes('cloud-firestore-emulator-v')
@@ -107,7 +107,7 @@ export function isOwnedFirebaseCliProcess(
   const commandLine = normalize(
     processInfo?.CommandLine ?? processInfo?.commandLine,
   );
-  const firebaseCli = normalize(resolve(
+  const firebaseCli = normalize(win32.resolve(
     projectRoot,
     'node_modules/firebase-tools/lib/bin/firebase.js',
   ));
