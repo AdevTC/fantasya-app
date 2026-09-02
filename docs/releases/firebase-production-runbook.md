@@ -16,7 +16,7 @@ La sincronización de Football Data queda fuera de esta release. El fixture y lo
 controles de sync del cliente nuevo se usan exclusivamente en desarrollo con
 emuladores. El frontend de producción no solicita sync: lee el catálogo de
 jugadores desde Firestore en modo de sólo lectura. Aun así, los tres endpoints
-legacy capaces `syncLaLigaPlayers`, `getLaLigaSyncStatus` y
+legacy relacionados `syncLaLigaPlayers`, `getLaLigaSyncStatus` y
 `clearLaLigaPlayers` siguen desplegados temporalmente para mantener la
 compatibilidad. Estos endpoints legacy no deben invocarse ni retirarse hasta
 superar el gate de observación de 24 horas y la aprobación separada de la fase 7.

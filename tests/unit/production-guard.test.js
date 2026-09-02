@@ -40,6 +40,39 @@ const productionRunbook = readFileSync(
   'utf8',
 );
 
+function hasAmbiguousSyncGuidance(value) {
+  const normalized = value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  const phrases = normalized
+    .split(/[.!?;:]+/u)
+    .map((phrase) => phrase.trim())
+    .filter(Boolean);
+
+  return phrases.some((phrase) => {
+    const tokens = phrase.match(/[a-z0-9]+/g) ?? [];
+    const words = new Set(tokens);
+    const mentionsSync = words.has('sync') || words.has('sincronizacion');
+    const restrictsScope = words.has('solo')
+      || tokens.some((word) => word.startsWith('exclusiv'));
+    const mentionsLocalEnvironment = words.has('desarrollo')
+      || tokens.some((word) => word.startsWith('emulador'));
+    const qualifiesFixture = words.has('fixture');
+    const qualifiesClientControl = (
+      (words.has('control') || words.has('controles'))
+      && words.has('cliente')
+    );
+    return mentionsSync
+      && restrictsScope
+      && mentionsLocalEnvironment
+      && !qualifiesFixture
+      && !qualifiesClientControl;
+  });
+}
+
 test('accepts only the exact synchronized production identity', () => {
   assert.deepEqual(evaluateProductionState(safe), []);
   assert.deepEqual(evaluateProductionState({
@@ -276,8 +309,16 @@ test('runbook preserves additive Functions and states billing limitations', () =
     /fixture y los\s+controles de sync del cliente nuevo se usan exclusivamente[\s\S]*desarrollo con\s+emuladores/,
   );
   assert.doesNotMatch(
-    productionRunbook,
-    /\bel sync\s+s[oó]lo\b[\s\S]{0,120}(?:desarrollo|emuladores)/i,
+    introduction,
+    /endpoints\s+legacy capaces/,
+  );
+  assert.match(
+    introduction,
+    /endpoints\s+legacy relacionados/,
+  );
+  assert.equal(
+    hasAmbiguousSyncGuidance(productionRunbook),
+    false,
   );
   assert.match(
     introduction,
@@ -302,5 +343,31 @@ test('runbook preserves additive Functions and states billing limitations', () =
   assert.match(
     productionRunbook,
     /spend caps?[\s\S]{0,300}no (?:es|son) un\s+límite duro ni instantáneo[\s\S]{0,300}retraso[\s\S]*reporting/,
+  );
+});
+
+test('sync guidance classifier rejects only unqualified ambiguous phrases', () => {
+  const ambiguous = [
+    'El sync sólo se usa en desarrollo con emuladores.',
+    'LA SINCRONIZACIÓN   está disponible exclusivamente\n en desarrollo.',
+    'La sincronizacion funciona solo con el emulador.',
+  ];
+  for (const sentence of ambiguous) {
+    assert.equal(hasAmbiguousSyncGuidance(sentence), true, sentence);
+  }
+
+  assert.equal(
+    hasAmbiguousSyncGuidance(
+      'El fixture y los controles de sync del cliente nuevo se usan '
+      + 'exclusivamente en desarrollo con emuladores.',
+    ),
+    false,
+  );
+  assert.equal(
+    hasAmbiguousSyncGuidance(
+      'El fixture está versionado. El sync sólo se usa en desarrollo.',
+    ),
+    true,
+    'qualification in another sentence must not exempt ambiguous guidance',
   );
 });
