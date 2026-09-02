@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, where, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions'; // AÑADIDO
+import { db, functions } from '../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
@@ -252,7 +252,6 @@ export default function AdminTab({ league, season, roundsData }) {
         if (window.confirm(confirmationMessage)) {
             const loadingToast = toast.loading(`Desvinculando a ${teamName}...`);
             try {
-                const functions = getFunctions();
                 const unlinkUser = httpsCallable(functions, 'unlinkUserFromTeam');
                 await unlinkUser({
                     leagueId: league.id,

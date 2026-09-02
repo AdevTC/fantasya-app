@@ -11,7 +11,7 @@
     "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
-    "test:unit": "node --test tests/unit/firebase-runtime.test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
     "preview": "vite preview",
     "firebase:login": "firebase login",
     "firebase:deploy:rules": "firebase deploy --only firestore:rules",

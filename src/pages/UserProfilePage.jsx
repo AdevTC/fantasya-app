@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, onSnapshot } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db } from '../config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../config/firebase';
 import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle, Flame } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 import TrophyComponent from '../components/Trophy';
@@ -266,7 +266,6 @@ export default function UserProfilePage() {
     const handleStartChat = async () => {
         if (!currentUser || !profile || currentUser.uid === profile.id) return;
 
-        const functions = getFunctions();
         const createOrGetChat = httpsCallable(functions, 'createOrGetChat');
         
         toast.loading('Iniciando chat...');

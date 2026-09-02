@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from 'firebase/auth'; // Added sendPasswordResetEmail
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { Mail, Lock, Eye, EyeOff, UserPlus, ArrowLeft } from 'lucide-react'; // Added ArrowLeft
 import toast from 'react-hot-toast';
 
@@ -118,7 +118,6 @@ export default function LoginPage() {
                 const user = userCredential.user;
 
                 // 2. Llamar a la Cloud Function para crear los documentos en Firestore
-                const functions = getFunctions();
                 const createProfileDocuments = httpsCallable(functions, 'createProfileDocuments');
                 await createProfileDocuments({ username });
                 

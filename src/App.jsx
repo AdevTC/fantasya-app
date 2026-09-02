@@ -4,6 +4,7 @@ import { useAuth } from './hooks/useAuth';
 import { ThemeProvider } from './context/ThemeContext';
 import ThemedToaster from './components/ThemedToaster'; // Import new ThemedToaster
 import LoadingSpinner from './components/LoadingSpinner'; // Import LoadingSpinner
+import EnvironmentBanner from './components/EnvironmentBanner';
 
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
@@ -46,6 +47,7 @@ function App() {
   return (
     <ThemeProvider>
       <ThemedToaster />
+      <EnvironmentBanner />
       <Router>
         <Routes>
           <Route path="/" element={<InitialRoute />} />
