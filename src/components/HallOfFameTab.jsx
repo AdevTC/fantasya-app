@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import Trophy from './Trophy';
 import LoadingSpinner from './LoadingSpinner';
-import { TROPHY_DEFINITIONS } from './AdminTab';
+import { TROPHY_DEFINITIONS } from '../constants/trophies';
 
 export default function HallOfFameTab({ league, seasons }) {
     const [selectedSeason, setSelectedSeason] = useState(seasons.length > 0 ? seasons[seasons.length - 1] : null);

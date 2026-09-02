@@ -28,52 +28,68 @@ service cloud.firestore {
         && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
     }
 
-    // Check if user is a member of a season (members is a MAP field in season document)
-    function isSeasonMember(seasonData) {
-      return isAuthenticated() &&
-        'members' in seasonData &&
-        request.auth.uid in seasonData.members;
+    function leagueAfter(leagueId) {
+      return getAfter(
+        /databases/$(database)/documents/leagues/$(leagueId)
+      ).data;
     }
 
-    // Check if user is admin of a season (members is a MAP field in season document)
-    function isSeasonAdmin(seasonData) {
-      return isAuthenticated() &&
-        'members' in seasonData &&
-        request.auth.uid in seasonData.members &&
-        'role' in seasonData.members[request.auth.uid] &&
-        seasonData.members[request.auth.uid].role == 'admin';
+    function seasonData(leagueId, seasonId) {
+      return get(
+        /databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)
+      ).data;
     }
 
-    // Check if user is a member of a league (in specific season) - for cross-document checks
+    function isLeagueOwner(leagueId) {
+      return isAuthenticated()
+        && get(
+          /databases/$(database)/documents/leagues/$(leagueId)
+        ).data.ownerId == request.auth.uid;
+    }
+
+    function isLeagueOwnerAfter(leagueId) {
+      return isAuthenticated()
+        && leagueAfter(leagueId).ownerId == request.auth.uid;
+    }
+
     function isLeagueMember(leagueId, seasonId) {
-      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
-      return isAuthenticated() &&
-        'members' in seasonData &&
-        request.auth.uid in seasonData.members;
+      return isAuthenticated()
+        && request.auth.uid in seasonData(leagueId, seasonId).members;
     }
 
-    // Check if user is admin of a league (in specific season) - for cross-document checks
     function isLeagueAdmin(leagueId, seasonId) {
-      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
-      return isAuthenticated() &&
-        'members' in seasonData &&
-        request.auth.uid in seasonData.members &&
-        'role' in seasonData.members[request.auth.uid] &&
-        seasonData.members[request.auth.uid].role == 'admin';
+      return isLeagueMember(leagueId, seasonId)
+        && seasonData(leagueId, seasonId).members[request.auth.uid].role == 'admin';
     }
 
-    // Check if user is admin in the league's active season
-    function isLeagueAdminActive(leagueId) {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/leagues/$(leagueId)) &&
-        get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason != null &&
-        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason)).data.members[request.auth.uid].role == 'admin';
+    function changesOnlyOwnMember() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members'])
+        && request.resource.data.members.diff(resource.data.members)
+          .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.members[request.auth.uid]
+          .diff(resource.data.members[request.auth.uid]).affectedKeys()
+          .hasOnly(['teamName', 'photoURL', 'finances']);
     }
 
-    // Check if username is available
-    function isUsernameOwner(username) {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/usernames/$(username)).data.userId == request.auth.uid;
+    function removesOnlyOwnMembership(leagueId) {
+      return request.auth.uid != get(
+          /databases/$(database)/documents/leagues/$(leagueId)
+        ).data.ownerId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members'])
+        && request.resource.data.members.diff(resource.data.members)
+          .affectedKeys().hasOnly([request.auth.uid])
+        && request.auth.uid in resource.data.members
+        && !(request.auth.uid in request.resource.data.members);
+    }
+
+    function preservesLeagueOwner(leagueId) {
+      let ownerId = get(
+        /databases/$(database)/documents/leagues/$(leagueId)
+      ).data.ownerId;
+      return ownerId in request.resource.data.members
+        && request.resource.data.members[ownerId].role == 'admin';
     }
 
     // ============================================================================
@@ -141,126 +157,82 @@ service cloud.firestore {
     // ============================================================================
 
     match /leagues/{leagueId} {
-      // Anyone can read public league info
       allow read: if true;
-      // Only authenticated users can create leagues
-      allow create: if isAuthenticated();
-      // Only league admins can update league settings
-      allow update: if isLeagueAdminActive(leagueId);
-      // Only league creator can delete
-      allow delete: if isAuthenticated()
-        && resource.data.creatorId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys()
+          .hasAll(['name', 'ownerId', 'activeSeason']);
+      allow update: if request.resource.data.ownerId == resource.data.ownerId
+        && (isLeagueOwner(leagueId)
+          || (resource.data.activeSeason != null
+            && isLeagueAdmin(leagueId, resource.data.activeSeason)));
+      allow delete: if isLeagueOwner(leagueId);
 
-      // Seasons subcollection
       match /seasons/{seasonId} {
-        // Allow reading basic season info for browsing/discovery (name, description, etc.)
         allow read: if isAuthenticated();
+        allow create: if isLeagueOwnerAfter(leagueId)
+          && request.resource.data.keys()
+            .hasAll(['name', 'seasonNumber', 'inviteCode', 'members'])
+          && request.auth.uid in request.resource.data.members
+          && request.resource.data.members[request.auth.uid].role == 'admin';
+        allow update: if (isLeagueOwner(leagueId)
+            || isLeagueAdmin(leagueId, seasonId))
+          && preservesLeagueOwner(leagueId);
+        allow update: if isLeagueMember(leagueId, seasonId)
+          && changesOnlyOwnMember();
+        allow update: if isLeagueMember(leagueId, seasonId)
+          && removesOnlyOwnMembership(leagueId);
+        allow delete: if isLeagueOwner(leagueId);
 
-        // Only admins can create or delete seasons
-        allow create, delete: if isSeasonAdmin(resource.data);
-
-        // UPDATE rules (multiple conditions - any can pass):
-        // 1. Admins can update anything (using resource.data - no cross-document reads)
-        // 2. Existing members can update their own data
-        // 3. New users can join (add themselves as members)
-
-        allow update: if isSeasonAdmin(resource.data)
-          || (
-            // Existing member updating their own data
-            isSeasonMember(resource.data)
-            && request.resource.data.members[request.auth.uid] != null
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
-          )
-          || (
-            // New user joining the season
-            isAuthenticated()
-            && resource.data.members[request.auth.uid] == null
-            && request.resource.data.members[request.auth.uid] != null
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
-          );
-
-        // Members subcollection
         match /members/{userId} {
-          // Members can read other members' public info
           allow read: if isLeagueMember(leagueId, seasonId);
-          // Only admins can manage members
-          allow write: if isLeagueAdmin(leagueId, seasonId);
-          // Users can delete themselves (leave league)
-          allow delete: if isOwner(userId);
+          allow write: if false;
         }
 
-        // Rounds subcollection
         match /rounds/{roundId} {
-          // Allow authenticated users to read (for viewing by non-members)
           allow read: if isAuthenticated();
           allow write: if isLeagueAdmin(leagueId, seasonId);
         }
 
-        // Lineups subcollection
         match /lineups/{lineupId} {
-          // LineupId format: {roundId}-{userId}
-          // Allow authenticated users to read (for stats viewing by non-members)
           allow read: if isAuthenticated();
-          // Owner can update their lineup, admin can update/delete any lineup
-          allow write: if isLeagueAdmin(leagueId, seasonId) ||
-            (isAuthenticated() && lineupId.matches('.*-' + request.auth.uid + '$'));
-          // Admins can delete any lineup (for season management)
+          allow create, update: if isLeagueAdmin(leagueId, seasonId)
+            || (isLeagueMember(leagueId, seasonId)
+              && lineupId.matches('.*-' + request.auth.uid + '$'));
           allow delete: if isLeagueAdmin(leagueId, seasonId);
         }
 
-        // Transfers subcollection
         match /transfers/{transferId} {
           allow read: if isLeagueMember(leagueId, seasonId);
-          // League members can create transfers
-          allow create: if isLeagueMember(leagueId, seasonId);
-          // Allow deletion by admin (for season management)
-          allow delete: if isLeagueAdmin(leagueId, seasonId);
-          // Allow update by members (for editing transfer details)
-          allow update: if isLeagueMember(leagueId, seasonId);
+          allow write: if isLeagueAdmin(leagueId, seasonId);
         }
 
-        // Achievements subcollection
         match /achievements/{userId} {
-          // Allow authenticated users to read (for viewing by non-members)
           allow read: if isAuthenticated();
-          allow write: if isLeagueAdmin(leagueId, seasonId);
+          allow write: if false;
         }
 
-        // Challenges subcollection
         match /challenges/{challengeId} {
-          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow write: if false;
+        }
+
+        match /joinRequests/{requestId} {
+          allow create, update, delete: if false;
+          allow read: if isLeagueAdmin(leagueId, seasonId)
+            || (isAuthenticated()
+              && resource.data.userId == request.auth.uid);
+        }
+
+        match /porra/{porraId} {
           allow read: if isAuthenticated();
           allow write: if isLeagueAdmin(leagueId, seasonId);
-        }
 
-        // Join Requests subcollection (solicitudes de unión)
-        match /joinRequests/{requestId} {
-          // Authenticated users can create join requests
-          allow create: if isAuthenticated()
-            && request.resource.data.userId == request.auth.uid
-            && request.resource.data.status == 'pending';
-          // Only admins can read and update (approve/reject) requests
-          // Use isSeasonAdmin with the parent season data (passed via get())
-          allow read, update: if isSeasonAdmin(get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data);
-        }
-
-        // Porra subcollection (predictions/betting)
-        match /porra/{porraId} {
-          // Allow authenticated users to read (for viewing by non-members)
-          allow read: if isAuthenticated();
-          allow create: if isLeagueAdmin(leagueId, seasonId);
-          allow update, delete: if isLeagueAdmin(leagueId, seasonId);
-
-          // Predictions subcollection
           match /predictions/{predictionId} {
-            // Allow authenticated users to read (for viewing by non-members)
             allow read: if isAuthenticated();
-            // Members can create/update their own predictions
-            allow create: if isLeagueMember(leagueId, seasonId)
-              && request.resource.data.userId == request.auth.uid;
-            allow update: if isLeagueMember(leagueId, seasonId)
-              && resource.data.userId == request.auth.uid;
-            // Only admins can delete predictions
+            allow create, update: if isLeagueAdmin(leagueId, seasonId)
+              || (isLeagueMember(leagueId, seasonId)
+                && predictionId == request.auth.uid);
             allow delete: if isLeagueAdmin(leagueId, seasonId);
           }
         }

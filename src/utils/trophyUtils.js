@@ -1,6 +1,6 @@
 import { doc, getDocs, collection, writeBatch, deleteDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { TROPHY_DEFINITIONS } from '../components/AdminTab';
+import { TROPHY_DEFINITIONS } from '../constants/trophies';
 
 const calculateStandardDeviation = (array) => {
     const n = array.length;

@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { db, storage } from '../config/firebase';
-import { doc, getDoc, collection, addDoc, serverTimestamp, query, orderBy, onSnapshot, updateDoc, writeBatch, getDocs, where } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, serverTimestamp, query, orderBy, onSnapshot, updateDoc, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { Send, ArrowLeft, Image as ImageIcon, X, Check, XCircle, UserPlus, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import toast from 'react-hot-toast';
+import { reviewJoinRequest } from '../services/league-api';
 
 const Message = ({ message, isSender, onRequestAction, processingRequestId, isAdmin }) => {
     const isJoinRequest = message.isJoinRequest;
@@ -227,90 +227,21 @@ export default function ChatPage() {
         const loadingToast = toast.loading(action === 'approve' ? 'Aprobando solicitud...' : 'Rechazando solicitud...');
 
         try {
-            // Get the join request to verify it's still pending
-            const requestRef = doc(db, 'leagues', message.leagueId, 'seasons', message.seasonId, 'joinRequests', message.requestId);
-            const requestSnap = await getDoc(requestRef);
-
-            if (!requestSnap.exists()) {
-                toast.error('La solicitud ya no existe', { id: loadingToast });
-                setProcessingRequestId(null);
-                return;
-            }
-
-            const requestData = requestSnap.data();
-            if (requestData.status !== 'pending') {
-                toast.error('Esta solicitud ya ha sido procesada', { id: loadingToast });
-                setProcessingRequestId(null);
-                return;
-            }
-
-            if (action === 'approve') {
-                const batch = writeBatch(db);
-
-                // Update request status
-                batch.update(requestRef, {
-                    status: 'approved',
-                    reviewedAt: serverTimestamp(),
-                    reviewedBy: currentUser.uid
-                });
-
-                // Add user to members
-                const seasonRef = doc(db, 'leagues', message.leagueId, 'seasons', message.seasonId);
-                batch.update(seasonRef, {
-                    [`members.${requestData.userId}`]: {
-                        teamName: requestData.teamName,
-                        username: requestData.username,
-                        role: 'member',
-                        totalPoints: 0,
-                        finances: { budget: 200, teamValue: 0 }
-                    }
-                });
-
-                await batch.commit();
-
-                // Send notification message
-                const notificationMessage = `¡Felicidades! Tu solicitud para unirte a la liga ha sido aprobada. Bienvenido "${requestData.teamName}"!`;
-                await addDoc(collection(db, 'chats', chatId, 'messages'), {
-                    senderId: currentUser.uid,
-                    text: notificationMessage,
-                    createdAt: serverTimestamp(),
-                    read: false,
-                    isSystemMessage: true,
-                    relatedRequestId: message.requestId
-                });
-
-                toast.success(`¡${requestData.username} ha sido aprobado!`, { id: loadingToast });
-            } else {
-                // Reject
-                await updateDoc(requestRef, {
-                    status: 'rejected',
-                    reviewedAt: serverTimestamp(),
-                    reviewedBy: currentUser.uid
-                });
-
-                // Send notification message
-                const notificationMessage = `Lo sentimos, tu solicitud para unirte a la liga con el equipo "${requestData.teamName}" ha sido rechazada.`;
-                await addDoc(collection(db, 'chats', chatId, 'messages'), {
-                    senderId: currentUser.uid,
-                    text: notificationMessage,
-                    createdAt: serverTimestamp(),
-                    read: false,
-                    isSystemMessage: true,
-                    relatedRequestId: message.requestId
-                });
-
-                toast.success('Solicitud rechazada.', { id: loadingToast });
-            }
-
-            // Update the message to show the new status
-            const messageRef = doc(db, 'chats', chatId, 'messages', message.id);
-            await updateDoc(messageRef, {
-                requestStatus: action === 'approve' ? 'approved' : 'rejected'
+            await reviewJoinRequest({
+                leagueId: message.leagueId,
+                seasonId: message.seasonId,
+                requestId: message.requestId,
+                action,
+                messageId: message.id
             });
+            toast.success(
+                action === 'approve' ? 'Solicitud aprobada.' : 'Solicitud rechazada.',
+                { id: loadingToast }
+            );
 
         } catch (error) {
             console.error("Error processing request:", error);
-            toast.error('Error al procesar la solicitud.', { id: loadingToast });
+            toast.error(error.message || 'Error al procesar la solicitud.', { id: loadingToast });
         } finally {
             setProcessingRequestId(null);
         }

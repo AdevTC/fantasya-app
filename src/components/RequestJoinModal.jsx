@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { doc, getDoc, getDocs, collection, query, where, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getDocs, collection, query, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { X, Send, Loader2 } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { submitJoinRequest } from '../services/league-api';
 
 export default function RequestJoinModal({ isOpen, onClose, league }) {
     const [admins, setAdmins] = useState([]);
@@ -52,7 +53,7 @@ export default function RequestJoinModal({ isOpen, onClose, league }) {
         setSelectedAdmin(null);
     };
 
-    const submitJoinRequest = async (e) => {
+    const handleSubmitJoinRequest = async (e) => {
         e.preventDefault();
 
         if (!teamName.trim()) {
@@ -69,59 +70,22 @@ export default function RequestJoinModal({ isOpen, onClose, league }) {
         const loadingToast = toast.loading('Enviando solicitud...');
 
         try {
-            // 1. Create or get the chat with admin
-            const chatId = [currentUser.uid, selectedAdmin.id].sort().join('_');
-            const chatRef = doc(db, 'chats', chatId);
-            const chatSnap = await getDoc(chatRef);
-
-            if (!chatSnap.exists()) {
-                await setDoc(chatRef, {
-                    participants: [currentUser.uid, selectedAdmin.id],
-                    createdAt: serverTimestamp(),
-                    lastMessage: ''
-                });
-            }
-
-            // 2. Create the join request document
-            const requestRef = await addDoc(
-                collection(db, 'leagues', league.id, 'seasons', league.activeSeason, 'joinRequests'),
-                {
-                    userId: currentUser.uid,
-                    username: currentUser.displayName || currentUser.email?.split('@')[0] || 'Usuario',
-                    teamName: teamName.trim(),
-                    message: message.trim() || '',
-                    status: 'pending',
-                    createdAt: serverTimestamp(),
-                    chatId: chatId,
-                    adminId: selectedAdmin.id
-                }
-            );
-
-            // 3. Send automatic message in the chat
-            const autoMessage = `¡Hola! Me gustaría unirme a la liga "${league.name}" con el equipo "${teamName.trim()}"${message.trim() ? `. Mensaje: ${message.trim()}` : ''}`;
-            await addDoc(collection(db, 'chats', chatId, 'messages'), {
-                senderId: currentUser.uid,
-                text: autoMessage,
-                createdAt: serverTimestamp(),
-                read: false,
-                isJoinRequest: true,
-                requestId: requestRef.id,
+            const result = await submitJoinRequest({
                 leagueId: league.id,
-                seasonId: league.activeSeason
+                seasonId: league.activeSeason,
+                adminId: selectedAdmin.id,
+                teamName,
+                message,
             });
 
-            // Update chat last message
-            await setDoc(chatRef, {
-                lastMessage: autoMessage,
-                lastMessageAt: serverTimestamp()
-            }, { merge: true });
-
-            toast.success('¡Solicitud enviada correctamente!', { id: loadingToast });
-            navigate(`/chat/${chatId}`);
+            toast.success(result.alreadyPending
+                ? 'La solicitud ya estaba enviada.'
+                : '¡Solicitud enviada correctamente!', { id: loadingToast });
+            navigate(`/chat/${result.chatId}`);
             onClose();
         } catch (error) {
             console.error("Error al enviar la solicitud:", error);
-            toast.error("Error al enviar la solicitud. Inténtalo de nuevo.", { id: loadingToast });
+            toast.error(error.message || "Error al enviar la solicitud.", { id: loadingToast });
         } finally {
             setSubmitting(false);
         }
@@ -169,7 +133,7 @@ export default function RequestJoinModal({ isOpen, onClose, league }) {
                         </div>
                     </div>
                 ) : (
-                    <form onSubmit={submitJoinRequest} className="space-y-4">
+                    <form onSubmit={handleSubmitJoinRequest} className="space-y-4">
                         {/* Show selected admin */}
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800">
                             <img
@@ -193,7 +157,7 @@ export default function RequestJoinModal({ isOpen, onClose, league }) {
                                 onChange={(e) => setTeamName(e.target.value)}
                                 placeholder="Ej: Los Invencibles FC"
                                 className="input dark:bg-gray-700 dark:border-gray-600 w-full"
-                                maxLength={30}
+                                maxLength={24}
                                 required
                             />
                         </div>

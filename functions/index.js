@@ -10,6 +10,7 @@ const {
 const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
 const { db, FieldValue } = require('./lib/firebase');
+const { requireAuth } = require('./lib/authz');
 const {
   createProfileDocumentsHandler,
 } = require('./handlers/profile');
@@ -26,6 +27,11 @@ const {
   syncLaLigaPlayersLegacyHandler,
   syncLaLigaPlayersV2Handler,
 } = require('./handlers/player-sync');
+const {
+  joinSeasonByInviteCodeHandler,
+  reviewJoinRequestHandler,
+  submitJoinRequestHandler,
+} = require('./handlers/membership');
 
 const browserOrigins = [
   'https://fantasya-app.vercel.app',
@@ -159,6 +165,30 @@ exports.unlinkUserFromTeam = onCall(
 exports.setUserAppRole = onCall(
   { region: 'us-central1', cors: browserOrigins },
   setUserAppRoleHandler,
+);
+
+exports.joinSeasonByInviteCode = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => joinSeasonByInviteCodeHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.submitJoinRequest = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => submitJoinRequestHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.reviewJoinRequest = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => reviewJoinRequestHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
 );
 
 exports.onPostCreatedAwardXp = onDocumentCreated(

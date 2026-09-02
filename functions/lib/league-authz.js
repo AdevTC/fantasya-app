@@ -37,8 +37,25 @@ async function getSeasonContext(data, firestore = db) {
   };
 }
 
-function requireSeasonAdmin(request, context) {
-  const uid = requireAuth(request);
+function actorUid(actor) {
+  return typeof actor === 'string'
+    ? requireDocumentId(actor, 'uid')
+    : requireAuth(actor);
+}
+
+function requireLeagueOwner(actor, context) {
+  const uid = actorUid(actor);
+  if (uid !== context.league.ownerId) {
+    throw new HttpsError(
+      'permission-denied',
+      'Debes ser propietario de la liga.',
+    );
+  }
+  return uid;
+}
+
+function requireSeasonAdmin(actor, context) {
+  const uid = actorUid(actor);
   const member = context.season.members?.[uid];
   if (uid !== context.league.ownerId && member?.role !== 'admin') {
     throw new HttpsError(
@@ -52,5 +69,6 @@ function requireSeasonAdmin(request, context) {
 module.exports = {
   getSeasonContext,
   requireDocumentId,
+  requireLeagueOwner,
   requireSeasonAdmin,
 };
