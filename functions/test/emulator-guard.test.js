@@ -28,3 +28,16 @@ test('rejects a missing emulator endpoint', () => {
   delete env.FIRESTORE_EMULATOR_HOST;
   assert.throws(() => assertEmulatorEnvironment(env), /FIRESTORE_EMULATOR_HOST/);
 });
+
+test('rejects remote hosts, aliases, and unexpected emulator ports', () => {
+  for (const [name, value] of [
+    ['FIREBASE_AUTH_EMULATOR_HOST', 'localhost:9099'],
+    ['FIRESTORE_EMULATOR_HOST', 'remote-host:8080'],
+    ['FIREBASE_STORAGE_EMULATOR_HOST', '127.0.0.1:9299'],
+  ]) {
+    assert.throws(
+      () => assertEmulatorEnvironment({ ...validEnv, [name]: value }),
+      new RegExp(name),
+    );
+  }
+});

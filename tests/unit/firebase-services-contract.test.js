@@ -49,3 +49,23 @@ test('AdSense is loaded by the guarded component instead of static HTML', () => 
   assert.match(adSource, /resolveAdSenseRuntime/);
   assert.match(adSource, /isUsingEmulators/);
 });
+
+test('legacy player sync is explicitly disabled in emulator mode', () => {
+  const syncSource = source('src/components/PlayersSyncTab.jsx');
+  const statusGuard = syncSource.indexOf(
+    'if (playerSyncRuntime.legacyRemoteEnabled)',
+  );
+  const statusRequest = syncSource.indexOf(
+    'https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app',
+  );
+  const syncGuard = syncSource.indexOf(
+    'if (!playerSyncRuntime.legacyRemoteEnabled)',
+  );
+  const syncRequest = syncSource.indexOf(
+    'https://synclaligaplayers-6co4rpvhqa-uc.a.run.app',
+  );
+
+  assert.match(syncSource, /resolvePlayerSyncRuntime\(isUsingEmulators\)/);
+  assert.ok(statusGuard >= 0 && statusGuard < statusRequest);
+  assert.ok(syncGuard >= 0 && syncGuard < syncRequest);
+});

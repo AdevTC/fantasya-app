@@ -84,7 +84,7 @@ async function seedEmulators() {
       following: user.uid === 'dev-league-admin' ? ['dev-user'] : [],
       pinnedTrophies: [],
       savedPosts: user.uid === 'dev-user' ? ['dev-post'] : [],
-    }, { merge: true });
+    });
     batch.set(db.doc('usernames/' + user.username), {
       userId: user.uid,
     });
@@ -96,7 +96,7 @@ async function seedEmulators() {
     activeSeason: 'season-1',
     rules: 'Datos exclusivos del emulador.',
     createdAt: fixedDate,
-  }, { merge: true });
+  });
 
   batch.set(db.doc('leagues/dev-league-active/seasons/season-1'), {
     name: 'Temporada Local',
@@ -131,14 +131,14 @@ async function seedEmulators() {
         finances: { budget: 200, teamValue: 0 },
       },
     },
-  }, { merge: true });
+  });
 
   batch.set(db.doc('leagues/dev-league-archived'), {
     name: 'Liga Local Archivada',
     ownerId: 'dev-league-admin',
     activeSeason: 'season-1',
     createdAt: fixedDate,
-  }, { merge: true });
+  });
 
   batch.set(db.doc('leagues/dev-league-archived/seasons/season-1'), {
     name: 'Temporada Archivada',
@@ -155,13 +155,13 @@ async function seedEmulators() {
         finances: { budget: 150, teamValue: 50 },
       },
     },
-  }, { merge: true });
+  });
 
   batch.set(db.doc('players/dev-player'), {
     name: 'Jugador Local',
     teamHistory: [{ teamName: 'Real Madrid', startDate: fixedDate, endDate: null }],
     positionHistory: [{ position: 'Delantero', startDate: fixedDate, endDate: null }],
-  }, { merge: true });
+  });
 
   batch.set(db.doc('posts/dev-post'), {
     authorId: 'dev-league-admin',
@@ -172,7 +172,7 @@ async function seedEmulators() {
     tags: ['local'],
     likes: ['dev-user'],
     createdAt: fixedDate,
-  }, { merge: true });
+  });
 
   batch.set(db.doc('posts/dev-post/comments/dev-comment'), {
     authorId: 'dev-user',
@@ -181,7 +181,7 @@ async function seedEmulators() {
     content: 'Comentario local',
     likes: [],
     createdAt: fixedDate,
-  }, { merge: true });
+  });
 
   batch.set(db.doc('posts/dev-post/comments/dev-comment/replies/dev-reply'), {
     authorId: 'dev-league-admin',
@@ -189,7 +189,7 @@ async function seedEmulators() {
     authorPhotoURL: null,
     content: 'Respuesta local',
     createdAt: fixedDate,
-  }, { merge: true });
+  });
 
   batch.set(db.doc('users/dev-league-admin/xpEvents/post:dev-post'), {
     amount: 10,
@@ -259,7 +259,7 @@ async function seedEmulators() {
     status: 'never_synced',
     playersCount: 0,
     seededAt: fixedDate,
-  }, { merge: true });
+  });
 
   await batch.commit();
   return { users: USERS.length };

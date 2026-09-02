@@ -1,9 +1,9 @@
 const DEMO_PROJECT_ID = 'demo-fantasya';
-const REQUIRED_HOSTS = [
-  'FIREBASE_AUTH_EMULATOR_HOST',
-  'FIRESTORE_EMULATOR_HOST',
-  'FIREBASE_STORAGE_EMULATOR_HOST',
-];
+const REQUIRED_HOSTS = Object.freeze({
+  FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
+  FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+  FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9199',
+});
 
 function assertEmulatorEnvironment(env = process.env) {
   const projectId = env.GCLOUD_PROJECT || env.GOOGLE_CLOUD_PROJECT;
@@ -17,8 +17,12 @@ function assertEmulatorEnvironment(env = process.env) {
     );
   }
 
-  for (const name of REQUIRED_HOSTS) {
-    if (!env[name]) throw new Error('Seed requires ' + name + '.');
+  for (const [name, expected] of Object.entries(REQUIRED_HOSTS)) {
+    if (env[name] !== expected) {
+      throw new Error(
+        'Seed requires ' + name + '=' + expected + '.',
+      );
+    }
   }
 
   return { projectId };

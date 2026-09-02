@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { isOwnedDemoFirestoreProcess } from '../../scripts/emulator-processes.mjs';
+import {
+  buildWindowsTreeKillArguments,
+  isOwnedFirebaseCliProcess,
+  isOwnedDemoFirestoreProcess,
+  selectNewOwnedProcessIds,
+  terminateWindowsProcessTree,
+} from '../../scripts/emulator-processes.mjs';
 
 const projectRoot = 'C:\\work\\fantasya-app';
 const rulesPath = join(projectRoot, 'firestore.rules');
@@ -49,4 +55,68 @@ test('does not match unrelated Java processes', () => {
     Name: 'java.exe',
     CommandLine: 'java -jar unrelated-service.jar',
   }, projectRoot), false);
+});
+
+test('never selects a process that existed before this emulator session', () => {
+  const processes = [
+    { ProcessId: 10 },
+    { ProcessId: 20 },
+    { ProcessId: 30 },
+  ];
+
+  assert.deepEqual(
+    selectNewOwnedProcessIds(processes, new Set([10, 30])),
+    [20],
+  );
+});
+
+test('builds a Windows taskkill command for one exact child tree', async () => {
+  assert.deepEqual(buildWindowsTreeKillArguments(4321), [
+    '/PID',
+    '4321',
+    '/T',
+    '/F',
+  ]);
+  assert.throws(() => buildWindowsTreeKillArguments(0), /process ID/i);
+
+  let invocation;
+  const terminated = await terminateWindowsProcessTree(4321, {
+    platform: 'win32',
+    execFileImpl: async (file, arguments_, options) => {
+      invocation = { file, arguments_, options };
+    },
+  });
+
+  assert.equal(terminated, true);
+  assert.equal(invocation.file, 'taskkill.exe');
+  assert.deepEqual(invocation.arguments_, ['/PID', '4321', '/T', '/F']);
+  assert.equal(invocation.options.windowsHide, true);
+});
+
+test('matches only the Firebase CLI child owned by this wrapper and checkout', () => {
+  const cliPath = join(
+    projectRoot,
+    'node_modules/firebase-tools/lib/bin/firebase.js',
+  ).replaceAll('\\', '\\\\');
+  const firebaseProcess = {
+    ProcessId: 222,
+    ParentProcessId: 111,
+    Name: 'node.exe',
+    CommandLine:
+      `node ${cliPath} emulators:exec --project demo-fantasya ` +
+      '--only auth,firestore,functions,storage',
+  };
+
+  assert.equal(isOwnedFirebaseCliProcess(
+    firebaseProcess,
+    { processId: 222, ownerProcessId: 111, projectRoot },
+  ), true);
+  assert.equal(isOwnedFirebaseCliProcess(
+    { ...firebaseProcess, ParentProcessId: 999 },
+    { processId: 222, ownerProcessId: 111, projectRoot },
+  ), false);
+  assert.equal(isOwnedFirebaseCliProcess(
+    { ...firebaseProcess, CommandLine: 'node unrelated.js' },
+    { processId: 222, ownerProcessId: 111, projectRoot },
+  ), false);
 });

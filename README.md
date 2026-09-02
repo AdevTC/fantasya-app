@@ -46,9 +46,10 @@ Abre <http://127.0.0.1:5173>. La Emulator UI está en
 “Firebase local · demo-fantasya”.
 
 `npm run dev` arranca Auth, Firestore, Functions y Storage Emulator, crea datos
-deterministas y después inicia Vite. Al detenerlo con `Ctrl+C`, el wrapper
-espera a Firebase y elimina únicamente cualquier proceso Firestore huérfano
-que haya arrancado esa misma sesión y pertenezca a este checkout.
+deterministas y después inicia Vite. Al detenerlo con `Ctrl+C`, el wrapper y un
+watchdog oculto limpian únicamente el árbol de procesos de esa sesión cuando
+pertenece a este checkout y al proyecto demo, y comprueban que sus puertos
+locales hayan quedado libres.
 
 | Rol | Email | Contraseña |
 | --- | --- | --- |

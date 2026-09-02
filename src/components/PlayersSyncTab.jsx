@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { app, db } from '../config/firebase';
+import { app, db, isUsingEmulators } from '../config/firebase';
+import { resolvePlayerSyncRuntime } from '../config/player-sync-runtime';
 import toast from 'react-hot-toast';
 import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -29,6 +30,7 @@ export default function PlayersSyncTab() {
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 20;
+    const playerSyncRuntime = resolvePlayerSyncRuntime(isUsingEmulators);
 
     // Fetch sync status on mount
     useEffect(() => {
@@ -117,27 +119,28 @@ export default function PlayersSyncTab() {
 
     const fetchSyncStatus = async () => {
         try {
-            const auth = getAuth(app);
-            const token = await auth.currentUser?.getIdToken();
+            if (playerSyncRuntime.legacyRemoteEnabled) {
+                const auth = getAuth(app);
+                const token = await auth.currentUser?.getIdToken();
 
-            // Try the status Cloud Function first
-            if (token) {
-                try {
-                    const statusResponse = await fetch('https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
+                if (token) {
+                    try {
+                        const statusResponse = await fetch('https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (statusResponse.ok) {
+                            const statusData = await statusResponse.json();
+                            setSyncStatus(statusData);
+                            return;
                         }
-                    });
-
-                    if (statusResponse.ok) {
-                        const statusData = await statusResponse.json();
-                        setSyncStatus(statusData);
-                        return;
+                    } catch {
+                        console.log('Status Cloud Function not available, using Firestore');
                     }
-                } catch (funcError) {
-                    console.log("Status Cloud Function not available, using Firestore");
                 }
             }
 
@@ -187,6 +190,14 @@ export default function PlayersSyncTab() {
     };
 
     const handleSync = async () => {
+        if (!playerSyncRuntime.legacyRemoteEnabled) {
+            toast.error(
+                'La sincronización remota está bloqueada en modo local. ' +
+                'Se habilitará mediante el fixture del emulador.',
+            );
+            return;
+        }
+
         if (isSyncing) return;
 
         setIsSyncing(true);
@@ -348,11 +359,15 @@ export default function PlayersSyncTab() {
                 {/* Sync Button */}
                 <button
                     onClick={handleSync}
-                    disabled={isSyncing}
+                    disabled={isSyncing || !playerSyncRuntime.legacyRemoteEnabled}
                     className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    {isSyncing ? 'Sincronizando...' : 'Sincronizar Ahora'}
+                    {isSyncing
+                        ? 'Sincronizando...'
+                        : playerSyncRuntime.legacyRemoteEnabled
+                            ? 'Sincronizar Ahora'
+                            : 'Sincronización remota bloqueada'}
                 </button>
 
                 {/* Progress Message */}
@@ -377,38 +392,27 @@ export default function PlayersSyncTab() {
                     </div>
                 )}
 
-                {/* IAM Policy Warning Banner */}
-                {syncStatus.status === 'error' && syncStatus.lastError?.includes('permission-denied') && (
-                    <div className="mt-6 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
-                        <div className="flex gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                            <div className="text-sm text-red-800 dark:text-red-300">
-                                <p className="font-semibold mb-1">Error de Permisos (IAM)</p>
-                                <p className="mb-2">Las funciones de Cloud necesitan permisos adicionales. Para arreglar esto:</p>
-                                <ol className="list-decimal list-inside space-y-1">
-                                    <li>Ve a <a href="https://console.cloud.google.com/functions/list" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud Console</a></li>
-                                    <li>Selecciona el proyecto <strong>tictaktools</strong></li>
-                                    <li>Abre las funciones <strong>syncLaLigaPlayers</strong> y <strong>getLaLigaSyncStatus</strong></li>
-                                    <li>Ve a la pestaña <strong>Permissions</strong></li>
-                                    <li>Añade <code>allAuthenticatedUsers</code> con el rol <strong>Cloud Functions Invoker</strong></li>
-                                </ol>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
                 {/* Info Banner */}
                 <div className="mt-6 p-4 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg">
                     <div className="flex gap-3">
                         <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                         <div className="text-sm text-amber-800 dark:text-amber-300">
-                            <p className="font-semibold mb-1">Información importante</p>
-                            <ul className="list-disc list-inside space-y-1">
-                                <li>La API de football-data.org tiene un límite de 10 solicitudes por minuto</li>
-                                <li>La sincronización puede tardar varios minutos (aprox. 13-15 minutos para 20 equipos)</li>
-                                <li>Los jugadores se almacenan en la colección <code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">laLigaPlayers</code></li>
-                                <li>El historial de equipos y posiciones se preserva automáticamente</li>
-                            </ul>
+                            <p className="font-semibold mb-1">
+                                {isUsingEmulators ? 'Modo local aislado' : 'Información importante'}
+                            </p>
+                            {isUsingEmulators ? (
+                                <p>
+                                    Ninguna acción de esta pantalla contacta con producción.
+                                    La sincronización se habilitará con un fixture local protegido.
+                                </p>
+                            ) : (
+                                <ul className="list-disc list-inside space-y-1">
+                                    <li>La API de football-data.org tiene un límite de 10 solicitudes por minuto</li>
+                                    <li>La sincronización puede tardar varios minutos (aprox. 13-15 minutos para 20 equipos)</li>
+                                    <li>Los jugadores se almacenan en la colección <code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">laLigaPlayers</code></li>
+                                    <li>El historial de equipos y posiciones se preserva automáticamente</li>
+                                </ul>
+                            )}
                         </div>
                     </div>
                 </div>

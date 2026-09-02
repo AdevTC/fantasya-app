@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import {
   findOwnedDemoFirestoreProcesses,
   stopNewOwnedDemoFirestoreProcesses,
+  terminateWindowsProcessTree,
+  waitForLocalPortsAvailable,
 } from './emulator-processes.mjs';
 
 const PROJECT_ID = 'demo-fantasya';
@@ -34,6 +36,45 @@ function waitForChild(child) {
   });
 }
 
+function startWindowsCleanupWatchdog({
+  baselineProcessIds,
+  firebaseProcessId,
+  ownerProcessId,
+  ports,
+  projectRoot,
+}) {
+  if (process.platform !== 'win32') {
+    return Promise.resolve();
+  }
+
+  const watchdogPath = resolve(
+    projectRoot,
+    'scripts/emulator-cleanup-watchdog.mjs',
+  );
+  const watchdog = spawn(process.execPath, [
+    watchdogPath,
+    String(ownerProcessId),
+    String(firebaseProcessId),
+    JSON.stringify([...baselineProcessIds]),
+    ports.join(','),
+  ], {
+    cwd: projectRoot,
+    detached: true,
+    env: process.env,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+
+  return new Promise((resolveWatchdog, rejectWatchdog) => {
+    watchdog.once('error', rejectWatchdog);
+    watchdog.once('spawn', () => {
+      watchdog.removeListener('error', rejectWatchdog);
+      watchdog.unref();
+      resolveWatchdog();
+    });
+  });
+}
+
 async function main() {
   const { command, withUi } = parseArguments(process.argv.slice(2));
   const projectRoot = process.cwd();
@@ -60,17 +101,41 @@ async function main() {
 
   firebaseArguments.push(command);
 
+  const portsToRelease = [9099, 8080, 5001, 9199];
+  if (withUi) portsToRelease.push(4000);
+  if (command === 'npm run dev:session') portsToRelease.push(5173);
+
   const child = spawn(process.execPath, firebaseArguments, {
     cwd: projectRoot,
     env: process.env,
     stdio: 'inherit',
     windowsHide: true,
   });
+
+  try {
+    await startWindowsCleanupWatchdog({
+      baselineProcessIds,
+      firebaseProcessId: child.pid,
+      ownerProcessId: process.pid,
+      ports: portsToRelease,
+      projectRoot,
+    });
+  } catch (error) {
+    await terminateWindowsProcessTree(child.pid);
+    throw error;
+  }
   let forwardedSignal;
+  let treeTerminationPromise;
+  let treeTerminationError;
   const forwardSignal = (signal) => {
     forwardedSignal = signal;
 
-    if (!child.killed) {
+    if (process.platform === 'win32' && !treeTerminationPromise) {
+      treeTerminationPromise = terminateWindowsProcessTree(child.pid)
+        .catch((error) => {
+          treeTerminationError = error;
+        });
+    } else if (process.platform !== 'win32' && !child.killed) {
       child.kill(signal);
     }
   };
@@ -90,12 +155,21 @@ async function main() {
     process.removeListener('SIGTERM', onTerminate);
 
     try {
+      if (treeTerminationPromise) {
+        await treeTerminationPromise;
+      }
       await stopNewOwnedDemoFirestoreProcesses(
         projectRoot,
         baselineProcessIds,
       );
+      await waitForLocalPortsAvailable(portsToRelease);
     } catch (error) {
-      cleanupError = error;
+      cleanupError = treeTerminationError
+        ? new AggregateError(
+            [treeTerminationError, error],
+            'Firebase emulator process-tree cleanup failed.',
+          )
+        : error;
     }
   }
 
