@@ -227,6 +227,51 @@ function readLocalReleaseState(cwd) {
   };
 }
 
+function evaluateLocalProductionState(state) {
+  const errors = [];
+  if (state.branch !== EXPECTED_PRODUCTION.branch) {
+    errors.push(`branch must be ${EXPECTED_PRODUCTION.branch}`);
+  }
+  if (state.clean !== true) {
+    errors.push('working tree must be clean');
+  }
+  if (state.originUrl !== EXPECTED_PRODUCTION.gitOrigin) {
+    errors.push('origin must point to the canonical Fantasya repository');
+  }
+  if (
+    !Array.isArray(state.firebaseFunctionsDotenvFiles)
+    || state.firebaseFunctionsDotenvFiles.length > 0
+  ) {
+    errors.push(FIREBASE_FUNCTIONS_DOTENV_ERROR);
+  }
+  return errors;
+}
+
+function uncheckedProductionReport(localState, errors) {
+  return {
+    state: {
+      ...localState,
+      ahead: null,
+      behind: null,
+      activeFirebaseAccount: null,
+      firebaseProjectIds: [],
+      secretStatus: 'not-requested',
+    },
+    errors,
+    warnings: [
+      'Remote and Firebase checks were skipped until local release state is valid.',
+    ],
+  };
+}
+
+function readProductionDivergence(cwd) {
+  return parseGitDivergence(runCaptured(
+    'git',
+    ['rev-list', '--left-right', '--count', 'origin/main...main'],
+    { cwd, label: 'Git main/origin comparison' },
+  ));
+}
+
 export async function probeFootballSecretStatus(cwd, accountEmail) {
   try {
     const auth = require(resolve(
@@ -290,50 +335,29 @@ export function inspectFirebaseIdentity({ cwd = projectRoot } = {}) {
 export async function inspectProductionState({
   cwd = projectRoot,
   inspectFootballSecret = false,
+  readLocal = readLocalReleaseState,
+  refreshOrigin = refreshOriginBranches,
+  inspectFirebase = inspectFirebaseIdentity,
 } = {}) {
   assertNodeVersion();
-  const localState = readLocalReleaseState(cwd);
-  const localErrors = [];
-  if (localState.branch !== EXPECTED_PRODUCTION.branch) {
-    localErrors.push(`branch must be ${EXPECTED_PRODUCTION.branch}`);
-  }
-  if (!localState.clean) {
-    localErrors.push('working tree must be clean');
-  }
-  if (localState.originUrl !== EXPECTED_PRODUCTION.gitOrigin) {
-    localErrors.push('origin must point to the canonical Fantasya repository');
-  }
-  if (localState.firebaseFunctionsDotenvFiles.length > 0) {
-    localErrors.push(FIREBASE_FUNCTIONS_DOTENV_ERROR);
-  }
-
-  const uncheckedState = {
-    ...localState,
-    ahead: null,
-    behind: null,
-    activeFirebaseAccount: null,
-    firebaseProjectIds: [],
-    secretStatus: 'not-requested',
-  };
+  const localState = readLocal(cwd);
+  const localErrors = evaluateLocalProductionState(localState);
   if (localErrors.length > 0) {
-    return {
-      state: uncheckedState,
-      errors: localErrors,
-      warnings: [
-        'Remote and Firebase checks were skipped until local release state is valid.',
-      ],
-    };
+    return uncheckedProductionReport(localState, localErrors);
   }
 
-  refreshOriginBranches(cwd, [EXPECTED_PRODUCTION.branch]);
-  const divergence = parseGitDivergence(runCaptured(
-    'git',
-    ['rev-list', '--left-right', '--count', 'origin/main...main'],
-    { cwd, label: 'Git main/origin comparison' },
-  ));
+  refreshOrigin(cwd, [EXPECTED_PRODUCTION.branch]);
+  const refreshedLocalState = readLocal(cwd);
+  const refreshedLocalErrors = evaluateLocalProductionState(
+    refreshedLocalState,
+  );
+  if (refreshedLocalErrors.length > 0) {
+    return uncheckedProductionReport(refreshedLocalState, refreshedLocalErrors);
+  }
+  const divergence = readProductionDivergence(cwd);
 
   const { activeFirebaseAccount, firebaseProjectIds }
-    = inspectFirebaseIdentity({ cwd });
+    = inspectFirebase({ cwd });
   let secretStatus = 'not-requested';
   if (shouldInspectFootballSecret(inspectFootballSecret)) {
     secretStatus = activeFirebaseAccount?.toLowerCase()
@@ -344,7 +368,7 @@ export async function inspectProductionState({
   }
 
   const state = {
-    ...localState,
+    ...refreshedLocalState,
     ...divergence,
     activeFirebaseAccount,
     firebaseProjectIds,
@@ -385,46 +409,74 @@ export async function runProductionPreflight({
 }
 
 export function printProductionReport(report) {
-  const { state } = report;
+  const state = report?.state && typeof report.state === 'object'
+    ? report.state
+    : {};
+  const branch = state.branch === EXPECTED_PRODUCTION.branch
+    ? EXPECTED_PRODUCTION.branch
+    : 'not confirmed';
+  const commit = typeof state.commit === 'string'
+    && /^[0-9a-f]{40}$/.test(state.commit)
+    ? state.commit
+    : 'not confirmed';
+  const origin = state.originUrl === EXPECTED_PRODUCTION.gitOrigin
+    ? 'canonical'
+    : 'not confirmed';
+  const firebaseAccount = typeof state.activeFirebaseAccount === 'string'
+    && state.activeFirebaseAccount.toLowerCase()
+      === EXPECTED_PRODUCTION.firebaseAccount
+    ? 'expected account active'
+    : 'not confirmed';
+  const ahead = Number.isSafeInteger(state.ahead) && state.ahead >= 0
+    ? state.ahead
+    : 'not checked';
+  const behind = Number.isSafeInteger(state.behind) && state.behind >= 0
+    ? state.behind
+    : 'not checked';
   console.log('Production preflight');
-  console.log(`- branch: ${state.branch || 'unknown'}`);
-  console.log(`- commit: ${state.commit || 'unknown'}`);
-  console.log(`- origin: ${state.originUrl || 'unknown'}`);
-  console.log(`- working tree: ${state.clean ? 'clean' : 'dirty'}`);
-  console.log(`- ahead of origin/main: ${state.ahead ?? 'not checked'}`);
-  console.log(`- behind origin/main: ${state.behind ?? 'not checked'}`);
-  console.log(`- Firebase account: ${state.activeFirebaseAccount || 'not checked'}`);
+  console.log(`- branch: ${branch}`);
+  console.log(`- commit: ${commit}`);
+  console.log(`- origin: ${origin}`);
+  console.log(`- working tree: ${state.clean === true ? 'clean' : 'dirty'}`);
+  console.log(`- ahead of origin/main: ${ahead}`);
+  console.log(`- behind origin/main: ${behind}`);
+  console.log(`- Firebase account: ${firebaseAccount}`);
   console.log(
-    `- tictaktools visible: ${state.firebaseProjectIds?.includes(EXPECTED_PRODUCTION.firebaseProject) ? 'yes' : 'not confirmed'}`,
+    `- tictaktools visible: ${Array.isArray(state.firebaseProjectIds) && state.firebaseProjectIds.includes(EXPECTED_PRODUCTION.firebaseProject) ? 'yes' : 'not confirmed'}`,
   );
-  if (state.secretStatus !== 'not-requested') {
+  if (['present', 'missing', 'unavailable', 'unchecked'].includes(
+    state.secretStatus,
+  )) {
     console.log(`- FOOTBALL_DATA_API_KEY metadata: ${state.secretStatus}`);
   }
-  for (const warning of report.warnings) {
+  for (const warning of Array.isArray(report?.warnings) ? report.warnings : []) {
     console.warn(`WARNING: ${warning}`);
   }
-  for (const error of report.errors) {
+  for (const error of Array.isArray(report?.errors) ? report.errors : []) {
     console.error(`ERROR: ${error}`);
   }
 }
 
 export function assertProductionStateUnchanged(
   expectedState,
-  { cwd = projectRoot } = {},
+  {
+    cwd = projectRoot,
+    refreshOrigin = refreshOriginBranches,
+    readLocal = readLocalReleaseState,
+    readDivergence = readProductionDivergence,
+  } = {},
 ) {
   assertNoFirebaseFunctionsDotenv(cwd);
-  refreshOriginBranches(cwd, [EXPECTED_PRODUCTION.branch]);
-  const current = readLocalReleaseState(cwd);
-  const divergence = parseGitDivergence(runCaptured(
-    'git',
-    ['rev-list', '--left-right', '--count', 'origin/main...main'],
-    { cwd, label: 'Final Git main/origin comparison' },
-  ));
+  refreshOrigin(cwd, [EXPECTED_PRODUCTION.branch]);
+  const current = readLocal(cwd);
+  const divergence = readDivergence(cwd);
   if (
     current.branch !== expectedState.branch
     || current.commit !== expectedState.commit
     || !current.clean
     || current.originUrl !== EXPECTED_PRODUCTION.gitOrigin
+    || !Array.isArray(current.firebaseFunctionsDotenvFiles)
+    || current.firebaseFunctionsDotenvFiles.length > 0
     || divergence.ahead !== 0
     || divergence.behind !== 0
   ) {

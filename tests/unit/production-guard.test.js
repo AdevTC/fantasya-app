@@ -17,21 +17,26 @@ import {
   assertProductionStateUnchanged,
   evaluateProductionState,
   findFirebaseFunctionsDotenvFiles,
+  inspectProductionState,
   parseActiveFirebaseAccount,
   parseFirebaseProjectIds,
   parseGitDivergence,
+  printProductionReport,
   refreshOriginBranches,
   shouldInspectFootballSecret,
 } from '../../scripts/production-preflight.mjs';
-import {
+import * as deployProduction from '../../scripts/deploy-production.mjs';
+import * as deleteLegacy from '../../scripts/delete-legacy-functions.mjs';
+
+const {
   DEPLOY_TARGETS,
   buildDeployArguments,
   confirmationForTarget,
-} from '../../scripts/deploy-production.mjs';
-import {
+} = deployProduction;
+const {
   LEGACY_DELETE_ARGUMENTS,
   LEGACY_DELETE_CONFIRMATION,
-} from '../../scripts/delete-legacy-functions.mjs';
+} = deleteLegacy;
 
 const safe = {
   branch: 'main',
@@ -226,6 +231,158 @@ test('production unchanged-state recheck fails closed on a newly-created dotenv'
   }
 });
 
+test('production inspection re-reads dotenv state after the origin refresh', async () => {
+  let refreshed = false;
+  let firebaseInspected = false;
+  const directory = mkdtempSync(join(tmpdir(), 'fantasya-production-inspect-'));
+  let report;
+  try {
+    report = await inspectProductionState({
+      cwd: directory,
+      readLocal: () => ({
+        ...safe,
+        commit: 'a'.repeat(40),
+        firebaseFunctionsDotenvFiles: refreshed ? ['.env.production'] : [],
+      }),
+      refreshOrigin: () => {
+        refreshed = true;
+      },
+      inspectFirebase: () => {
+        firebaseInspected = true;
+        throw new Error('Firebase inspection must not run.');
+      },
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+
+  assert.equal(refreshed, true);
+  assert.match(report.errors.join('\n'), /Functions environment file/i);
+  assert.equal(report.state.firebaseFunctionsDotenvFiles.length, 1);
+  assert.equal(firebaseInspected, false);
+});
+
+test('production unchanged-state recheck rejects a dotenv created by refresh', () => {
+  const expected = {
+    ...safe,
+    commit: 'a'.repeat(40),
+  };
+  let refreshed = false;
+  const directory = mkdtempSync(join(tmpdir(), 'fantasya-production-race-'));
+  try {
+    assert.throws(
+      () => assertProductionStateUnchanged(expected, {
+        cwd: directory,
+        refreshOrigin: () => {
+          refreshed = true;
+        },
+        readLocal: () => ({
+          ...expected,
+          firebaseFunctionsDotenvFiles: refreshed ? ['.env.tictaktools'] : [],
+        }),
+        readDivergence: () => ({ ahead: 0, behind: 0 }),
+      }),
+      (error) => {
+        assert.match(error.message, /release state changed/i);
+        assert.doesNotMatch(String(error), /SECRET|never-print/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('production report sanitizes every local and identity value', () => {
+  const lines = [];
+  const original = {
+    log: console.log,
+    warn: console.warn,
+    error: console.error,
+  };
+  console.log = (...values) => lines.push(values.join(' '));
+  console.warn = (...values) => lines.push(values.join(' '));
+  console.error = (...values) => lines.push(values.join(' '));
+  try {
+    printProductionReport({
+      state: {
+        branch: 'main\nSECRET=branch',
+        commit: 'SECRET=commit',
+        originUrl: 'https://token:SECRET@github.com/AdevTC/fantasya-app.git',
+        clean: false,
+        ahead: null,
+        behind: null,
+        activeFirebaseAccount: 'SECRET-email@example.com',
+        firebaseProjectIds: [],
+        secretStatus: 'not-requested',
+      },
+      warnings: [],
+      errors: [],
+    });
+  } finally {
+    console.log = original.log;
+    console.warn = original.warn;
+    console.error = original.error;
+  }
+
+  const output = lines.join('\n');
+  assert.doesNotMatch(output, /SECRET|token|example\.com/);
+  assert.match(output, /branch: not confirmed/);
+  assert.match(output, /commit: not confirmed/);
+  assert.match(output, /origin: not confirmed/);
+  assert.match(output, /Firebase account: not confirmed/);
+});
+
+test('production deploy checks dotenv immediately before Firebase spawn', async () => {
+  const calls = [];
+  await assert.rejects(
+    deployProduction.runProductionDeploy('firestore', {
+      cwd: process.cwd(),
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      preflight: async () => ({ state: safe, errors: [], warnings: [] }),
+      printReport: () => calls.push('report'),
+      askConfirmation: async (expected) => expected,
+      recheck: () => calls.push('recheck'),
+      checkDotenv: () => {
+        calls.push('dotenv');
+        throw new Error('Firebase Functions environment file is present.');
+      },
+      spawnFirebase: () => {
+        calls.push('deploy');
+        return { status: 0 };
+      },
+    }),
+    /Functions environment file/i,
+  );
+  assert.deepEqual(calls, ['report', 'recheck', 'dotenv']);
+});
+
+test('legacy deletion checks dotenv immediately before Firebase spawn', async () => {
+  const calls = [];
+  await assert.rejects(
+    deleteLegacy.runLegacyDelete({
+      cwd: process.cwd(),
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      preflight: async () => ({ state: safe, errors: [], warnings: [] }),
+      printReport: () => calls.push('report'),
+      askConfirmation: async () => LEGACY_DELETE_CONFIRMATION,
+      recheck: () => calls.push('recheck'),
+      checkDotenv: () => {
+        calls.push('dotenv');
+        throw new Error('Firebase Functions environment file is present.');
+      },
+      spawnFirebase: () => {
+        calls.push('delete');
+        return { status: 0 };
+      },
+    }),
+    /Functions environment file/i,
+  );
+  assert.deepEqual(calls, ['report', 'recheck', 'dotenv']);
+});
+
 test('firebase.json excludes every dotenv file from the Functions package', () => {
   const firebase = JSON.parse(readFileSync(
     new URL('../../firebase.json', import.meta.url),
@@ -349,7 +506,8 @@ test('main-only deployment never opts into secrets or contains Function routes',
     'utf8',
   );
 
-  assert.match(source, /runProductionPreflight\(\)/);
+  assert.match(source, /preflight = runProductionPreflight/);
+  assert.match(source, /const report = await preflight\(\{ cwd \}\)/);
   assert.doesNotMatch(
     source,
     /targetNeedsFootballSecret|requireFootballSecret|functions-core|functions-sync|functions-league/,
@@ -465,6 +623,11 @@ test('development guide distinguishes PR Functions from main-only mutations', ()
     developmentGuide,
     /`main` limpia y sincronizada con `origin\/main`/,
   );
+  assert.match(
+    developmentGuide,
+    /\+refs\/heads\/main:refs\/remotes\/origin\/main/,
+  );
+  assert.doesNotMatch(developmentGuide, /`git fetch origin main`/);
 });
 
 test('runbook preserves additive Functions and states billing limitations', () => {

@@ -910,7 +910,7 @@ test('rejects non-string deployment targets without coercing or exposing them', 
   }
 });
 
-test('orchestrates a deployment only after both exact-state checks', async () => {
+test('orchestrates a deployment only after all exact-state checks', async () => {
   const calls = [];
   const premergeReport = { state: safe(), errors: [], warnings: [] };
   const inventory = (stage) => ({
@@ -961,10 +961,47 @@ test('orchestrates a deployment only after both exact-state checks', async () =>
     'recheck',
     'inventory:baseline',
     'print-inventory:baseline',
+    'recheck',
     'dotenv',
     'deploy',
     'inventory:core-v2',
     'print-inventory:core-v2',
+  ]);
+});
+
+test('does not deploy when the final recheck after inventory fails', async () => {
+  const green = { state: safe(), errors: [], warnings: [] };
+  const calls = [];
+  let recheckCount = 0;
+  await assert.rejects(runPremergeDeploy('functions-core-v2', {
+    cwd: process.cwd(),
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    inspectPremerge: () => green,
+    printPremerge: () => {},
+    inspectFunctions: async ({ stage }) => ({ stage, items: [], errors: [] }),
+    printInventory: () => calls.push('inventory'),
+    askConfirmation: async (expected) => expected,
+    recheckPremerge: () => {
+      recheckCount += 1;
+      calls.push(`recheck:${recheckCount}`);
+      if (recheckCount === 2) {
+        throw new Error('Premerge state changed after final inventory.');
+      }
+      return green;
+    },
+    checkDotenv: () => calls.push('dotenv'),
+    spawnFirebase: () => {
+      calls.push('deploy');
+      return { status: 0 };
+    },
+  }), /changed after final inventory/i);
+
+  assert.deepEqual(calls, [
+    'inventory',
+    'recheck:1',
+    'inventory',
+    'recheck:2',
   ]);
 });
 

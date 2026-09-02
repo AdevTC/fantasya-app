@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   EXPECTED_PRODUCTION,
+  assertNoFirebaseFunctionsDotenv,
   assertProductionStateUnchanged,
   printProductionReport,
   runProductionPreflight,
@@ -25,16 +26,16 @@ export const LEGACY_DELETE_ARGUMENTS = Object.freeze([
   EXPECTED_PRODUCTION.firebaseAccount,
 ]);
 
-function requireInteractiveTerminal() {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+function requireInteractiveTerminal(stdin, stdout) {
+  if (!stdin?.isTTY || !stdout?.isTTY) {
     throw new Error('Production deletion requires an interactive terminal.');
   }
 }
 
-async function askForLiteralConfirmation() {
+async function askForLiteralConfirmation({ stdin, stdout }) {
   const terminal = createInterface({
-    input: process.stdin,
-    output: process.stdout,
+    input: stdin,
+    output: stdout,
   });
   try {
     return await terminal.question(
@@ -45,30 +46,46 @@ async function askForLiteralConfirmation() {
   }
 }
 
-async function main() {
-  if (process.argv.slice(2).length !== 0) {
-    throw new Error('This command accepts no function-name arguments.');
-  }
-  requireInteractiveTerminal();
-
-  const report = await runProductionPreflight();
-  printProductionReport(report);
+export async function runLegacyDelete({
+  cwd,
+  stdin = process.stdin,
+  stdout = process.stdout,
+  preflight = runProductionPreflight,
+  printReport = printProductionReport,
+  askConfirmation = askForLiteralConfirmation,
+  recheck = assertProductionStateUnchanged,
+  checkDotenv = assertNoFirebaseFunctionsDotenv,
+  spawnFirebase = spawnFirebaseCli,
+} = {}) {
+  requireInteractiveTerminal(stdin, stdout);
+  const report = await preflight({ cwd });
+  printReport(report);
   if (report.errors.length > 0) {
     throw new Error('Production preflight failed; deletion was not started.');
   }
 
-  const answer = await askForLiteralConfirmation();
+  const answer = await askConfirmation({ stdin, stdout });
   if (answer !== LEGACY_DELETE_CONFIRMATION) {
     throw new Error('Confirmation did not match; deletion was not started.');
   }
-  assertProductionStateUnchanged(report.state);
+  await recheck(report.state, { cwd });
+  checkDotenv(cwd);
 
-  const child = spawnFirebaseCli(LEGACY_DELETE_ARGUMENTS, {
+  const child = spawnFirebase(LEGACY_DELETE_ARGUMENTS, {
+    cwd,
     stdio: 'inherit',
   });
   if (child.error) {
     throw child.error;
   }
+  return child;
+}
+
+async function main() {
+  if (process.argv.slice(2).length !== 0) {
+    throw new Error('This command accepts no function-name arguments.');
+  }
+  const child = await runLegacyDelete();
   process.exitCode = child.status ?? 1;
 }
 

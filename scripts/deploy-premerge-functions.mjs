@@ -187,6 +187,7 @@ export async function runPremergeDeploy(target, {
   );
   printInventory(recheckedInventory);
 
+  await recheckPremerge(report, { cwd });
   checkDotenv(cwd);
   const child = spawnFirebase(buildPremergeDeployArguments(target), {
     cwd,

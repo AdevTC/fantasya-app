@@ -162,9 +162,11 @@ Los comandos `deploy:prod:indexes`, `deploy:prod:firestore`,
 ruta posterior: exigen `main` limpia y sincronizada con `origin/main`. Tanto
 esta ruta como la premerge fijan Node 22, `origin` canónico, cuenta y proyecto,
 terminal interactiva y confirmaciones literales; además, vuelven a comprobar el
-estado después de confirmar. `production:preflight` ejecuta un
-`git fetch origin main`, por lo que actualiza esa referencia Git local, pero no
-escribe en GitHub, Firebase ni Vercel.
+estado después de confirmar. `production:preflight` ejecuta el fetch con destino
+explícito `+refs/heads/main:refs/remotes/origin/main`; la ruta premerge hace lo
+mismo para `main` y para la rama publicada de la PR. Así actualiza exactamente
+las referencias remotas que compara aunque `remote.origin.fetch` esté ausente o
+remapeado, pero no escribe en GitHub, Firebase ni Vercel.
 
 El `origin` de release se compara de forma deliberadamente estricta con
 `https://github.com/AdevTC/fantasya-app.git`. Un clon configurado por SSH puede
