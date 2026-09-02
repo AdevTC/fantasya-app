@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../config/firebase';
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, doc, updateDoc } from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
 import { useAuth } from '../hooks/useAuth';
+import { createTransfer } from '../services/content-api';
 
 export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
     const { user } = useAuth();
@@ -15,6 +17,9 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
     const [loading, setLoading] = useState(false);
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
+    const operationIdRef = useRef(null);
+    const pendingAttemptRef = useRef(null);
+    const submissionInFlightRef = useRef(false);
 
     useEffect(() => {
         // Solo ejecutar si el modal está abierto y tenemos datos de la temporada
@@ -46,6 +51,8 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             setDate(now.toISOString().split('T')[0]);
             setTime(now.toTimeString().slice(0, 5));
         }
+        operationIdRef.current = null;
+        pendingAttemptRef.current = null;
     }, [isOpen, existingTransfer, season, user]); // Añadimos 'user' a las dependencias
 
     // Esta lógica de negocio se mantiene como la tenías
@@ -60,6 +67,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (submissionInFlightRef.current) return;
         if (!player || !price || !buyerId || !sellerId || !date || !time) {
             toast.error("Debes seleccionar un jugador de la lista y rellenar todos los campos.");
             return;
@@ -69,12 +77,9 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             return;
         }
 
-        setLoading(true);
-        const loadingToast = toast.loading(existingTransfer ? 'Actualizando fichaje...' : 'Registrando fichaje...');
         const combinedDateTime = new Date(`${date}T${time}`);
         if (isNaN(combinedDateTime.getTime())) {
-            toast.error("La fecha o la hora no son válidas.", { id: loadingToast });
-            setLoading(false);
+            toast.error("La fecha o la hora no son válidas.");
             return;
         }
 
@@ -89,6 +94,32 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             type: transferType,
             timestamp: combinedDateTime,
         };
+        let creationPayload = null;
+        if (!existingTransfer) {
+            creationPayload = {
+                leagueId: league.id,
+                seasonId: season.id,
+                playerId: player.id,
+                playerName: player.name,
+                price: Number.parseFloat(String(price).replace(',', '.')) || 0,
+                buyerId,
+                sellerId,
+                type: transferType,
+                timestamp: combinedDateTime.toISOString(),
+            };
+            const fingerprint = JSON.stringify(creationPayload);
+            if (pendingAttemptRef.current?.fingerprint !== fingerprint) {
+                operationIdRef.current = uuidv4();
+                pendingAttemptRef.current = { fingerprint, payload: creationPayload };
+            } else {
+                creationPayload = pendingAttemptRef.current.payload;
+            }
+            operationIdRef.current ||= uuidv4();
+        }
+
+        submissionInFlightRef.current = true;
+        setLoading(true);
+        const loadingToast = toast.loading(existingTransfer ? 'Actualizando fichaje...' : 'Registrando fichaje...');
 
         try {
             const basePath = collection(db, 'leagues', league.id, 'seasons', season.id, 'transfers');
@@ -97,7 +128,12 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 await updateDoc(transferRef, transferData);
                 toast.success('Fichaje actualizado correctamente', { id: loadingToast });
             } else {
-                await addDoc(basePath, transferData);
+                await createTransfer({
+                    operationId: operationIdRef.current,
+                    ...creationPayload,
+                });
+                operationIdRef.current = null;
+                pendingAttemptRef.current = null;
                 toast.success('Fichaje registrado correctamente', { id: loadingToast });
             }
             onTransferRegistered();
@@ -106,8 +142,16 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             console.error("Error al registrar el fichaje:", error);
             toast.error("No se pudo completar la operación.", { id: loadingToast });
         } finally {
+            submissionInFlightRef.current = false;
             setLoading(false);
         }
+    };
+
+    const handleClose = () => {
+        if (submissionInFlightRef.current) return;
+        operationIdRef.current = null;
+        pendingAttemptRef.current = null;
+        onClose();
     };
 
     if (!isOpen) return null;
@@ -150,7 +194,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                                 </select>
                             </div>
                         </div>
-                        <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
+                        <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={handleClose} disabled={loading} className="btn-secondary disabled:opacity-50">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
                     </form>
                 ) : (
                     <p className="text-gray-500 dark:text-gray-400">Cargando datos de la temporada...</p>

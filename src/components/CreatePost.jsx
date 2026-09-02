@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import React, { useRef, useState } from 'react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../config/firebase';
+import { v4 as uuidv4 } from 'uuid';
+import { storage } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { createPost } from '../services/content-api';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, X, Tag } from 'lucide-react';
 
@@ -14,6 +15,9 @@ export default function CreatePost() {
     const [loading, setLoading] = useState(false);
     const [tags, setTags] = useState([]);
     const [currentTag, setCurrentTag] = useState('');
+    const operationIdRef = useRef(null);
+    const pendingAttemptRef = useRef(null);
+    const submissionInFlightRef = useRef(false);
 
     const handleImageChange = (e) => {
         if (e.target.files[0]) {
@@ -39,6 +43,7 @@ export default function CreatePost() {
 
     const handleCreatePost = async (e) => {
         e.preventDefault();
+        if (submissionInFlightRef.current) return;
         if (content.trim().length < 1 && !image) {
             toast.error('La publicación debe tener texto o una imagen.');
             return;
@@ -47,27 +52,43 @@ export default function CreatePost() {
             toast.error('Debes estar autenticado para publicar.');
             return;
         }
+        const fingerprint = JSON.stringify({
+            content: content.trim(),
+            image: image ? [image.name, image.size, image.type, image.lastModified] : null,
+            tags,
+        });
+        if (!pendingAttemptRef.current || pendingAttemptRef.current.fingerprint !== fingerprint) {
+            operationIdRef.current = uuidv4();
+            pendingAttemptRef.current = { fingerprint, payload: null };
+        }
+        operationIdRef.current ||= uuidv4();
+        submissionInFlightRef.current = true;
         setLoading(true);
         const loadingToast = toast.loading('Publicando...');
 
         try {
-            let imageURL = null;
-            if (image) {
-                const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}_${image.name}`);
-                await uploadBytes(imageRef, image);
-                imageURL = await getDownloadURL(imageRef);
+            let payload = pendingAttemptRef.current?.payload;
+            if (!payload) {
+                let imageURL = null;
+                if (image) {
+                    const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}_${image.name}`);
+                    await uploadBytes(imageRef, image);
+                    imageURL = await getDownloadURL(imageRef);
+                }
+                payload = {
+                    content: content.trim(),
+                    imageURL,
+                    tags: [...tags],
+                };
+                pendingAttemptRef.current.payload = payload;
             }
 
-            await addDoc(collection(db, 'posts'), {
-                content: content.trim(),
-                imageURL: imageURL,
-                tags: tags,
-                authorId: user.uid,
-                authorUsername: profile.username,
-                authorPhotoURL: profile.photoURL || null,
-                createdAt: serverTimestamp(),
-                likes: [],
+            await createPost({
+                operationId: operationIdRef.current,
+                ...payload,
             });
+            operationIdRef.current = null;
+            pendingAttemptRef.current = null;
             setContent('');
             setImage(null);
             setImagePreview(null);
@@ -78,6 +99,7 @@ export default function CreatePost() {
             console.error("Error al crear el post:", error);
             toast.error('No se pudo crear la publicación.', { id: loadingToast });
         } finally {
+            submissionInFlightRef.current = false;
             setLoading(false);
         }
     };
