@@ -2,13 +2,10 @@ const {
   onDocumentCreated,
 } = require('firebase-functions/v2/firestore');
 const {
-  HttpsError,
   onCall,
   onRequest,
 } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
-const logger = require('firebase-functions/logger');
-const { db, FieldValue } = require('./lib/firebase');
 const { requireAuth } = require('./lib/authz');
 const {
   createProfileDocumentsHandler,
@@ -38,6 +35,7 @@ const {
   saveSeasonChallengeHandler,
   setChallengeWinnersHandler,
 } = require('./handlers/season-awards');
+const { createOrGetChatHandler } = require('./handlers/chat');
 
 const browserOrigins = [
   'https://fantasya-app.vercel.app',
@@ -156,53 +154,10 @@ exports.recalculateXp = onCall(
 
 exports.createOrGetChat = onCall(
   { region: 'us-central1', cors: browserOrigins },
-  async (request) => {
-    const authUserUid = request.auth?.uid;
-    const { otherUserUid } = request.data;
-    if (!authUserUid) {
-      throw new HttpsError(
-        'unauthenticated',
-        'Debes estar autenticado para iniciar un chat.',
-      );
-    }
-    if (!otherUserUid) {
-      throw new HttpsError('invalid-argument', 'Falta el ID del otro usuario.');
-    }
-    if (authUserUid === otherUserUid) {
-      throw new HttpsError(
-        'invalid-argument',
-        'No puedes crear un chat contigo mismo.',
-      );
-    }
-    const participants = [authUserUid, otherUserUid].sort();
-    const chatId = participants.join('_');
-    const chatRef = db.doc(`chats/${chatId}`);
-    try {
-      const chatDoc = await chatRef.get();
-      if (!chatDoc.exists) {
-        logger.info(
-          `Creating new chat (${chatId}) between ` +
-            `${authUserUid} and ${otherUserUid}`,
-        );
-        await chatRef.set({
-          participants,
-          createdAt: FieldValue.serverTimestamp(),
-          lastMessage: '',
-        });
-      }
-      return { chatId };
-    } catch (error) {
-      logger.error(
-        `Failed to create/get chat for users ${authUserUid} and ` +
-          `${otherUserUid}`,
-        error,
-      );
-      throw new HttpsError(
-        'internal',
-        'Ocurrió un error inesperado al iniciar el chat.',
-      );
-    }
-  },
+  (request) => createOrGetChatHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
 );
 
 exports.syncLaLigaPlayersV2 = onCall(

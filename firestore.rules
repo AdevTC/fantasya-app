@@ -22,10 +22,28 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.appRole == 'superadmin';
     }
 
-    function changesOnlyOwnUid(before, after) {
-      return after.size() == after.toSet().size()
+    function togglesOnlyOwnUid(before, after) {
+      return isAuthenticated()
+        && before is list
+        && after is list
+        && after.size() == after.toSet().size()
         && after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
         && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    }
+
+    function isChatParticipant(chatId) {
+      let chatPath = /databases/$(database)/documents/chats/$(chatId);
+      return isAuthenticated()
+        && exists(chatPath)
+        && get(chatPath).data.participants is list
+        && request.auth.uid in get(chatPath).data.participants;
+    }
+
+    function isOwnUsername(username) {
+      let profilePath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isAuthenticated()
+        && exists(profilePath)
+        && username == get(profilePath).data.username;
     }
 
     function leagueAfter(leagueId) {
@@ -110,7 +128,7 @@ service cloud.firestore {
             .hasOnly(['followers'])
           && resource.data.followers is list
           && request.resource.data.followers is list
-          && changesOnlyOwnUid(
+          && togglesOnlyOwnUid(
             resource.data.followers,
             request.resource.data.followers
           )
@@ -120,13 +138,13 @@ service cloud.firestore {
       // Achievement subcollection
       match /achievements/{seasonId} {
         allow read: if isAuthenticated();
-        allow write: if isOwner(userId);
+        allow write: if false;
       }
 
       // Feats subcollection (user accomplishments)
       match /feats/{featId} {
         allow read: if isAuthenticated();
-        allow write: if isOwner(userId);
+        allow write: if false;
       }
     }
 
@@ -137,8 +155,7 @@ service cloud.firestore {
     match /career_achievements/{userId} {
       // Users can read their own career achievements
       allow read: if isOwner(userId);
-      // Users can write their own career achievements (typically via Cloud Function)
-      allow write: if isOwner(userId);
+      allow write: if false;
     }
 
     // ============================================================================
@@ -244,25 +261,48 @@ service cloud.firestore {
     // ============================================================================
 
     match /chats/{chatId} {
-      // Simple rules - allow authenticated users full access to chats
-      // Security is provided by the fact that chatId is based on sorted user IDs
-      allow read, create, update: if isAuthenticated();
+      allow read: if isAuthenticated()
+        && resource.data.participants is list
+        && request.auth.uid in resource.data.participants;
+      allow create, delete: if false;
+      allow update: if isChatParticipant(chatId)
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessage',
+          'lastMessageAt',
+          'lastMessageTimestamp'
+        ]);
 
-      // Messages subcollection
       match /messages/{messageId} {
-        // Allow authenticated users to read messages
-        allow read: if isAuthenticated();
-        // Allow authenticated users to create messages (senderId must match)
-        allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
-        // Sender can update their message, OR anyone can update requestStatus for join requests
-        allow update: if isAuthenticated() && (
-          resource.data.senderId == request.auth.uid
-          || (
-            resource.data.isJoinRequest == true
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['requestStatus'])
-          )
-        );
-        allow delete: if false;
+        allow read: if isChatParticipant(chatId);
+        allow create: if isChatParticipant(chatId)
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.keys()
+            .hasAll(['senderId', 'senderUsername', 'createdAt'])
+          && request.resource.data.keys().hasOnly([
+            'senderId',
+            'senderUsername',
+            'text',
+            'createdAt',
+            'read',
+            'imageUrl'
+          ])
+          && request.resource.data.senderUsername is string
+          && request.resource.data.senderUsername.size() <= 128
+          && isOwnUsername(request.resource.data.senderUsername)
+          && (!('read' in request.resource.data)
+            || request.resource.data.read == false)
+          && (!('text' in request.resource.data)
+            || (request.resource.data.text is string
+              && request.resource.data.text.size() <= 500))
+          && (!('imageUrl' in request.resource.data)
+            || (request.resource.data.imageUrl is string
+              && request.resource.data.imageUrl.size() <= 2048))
+          && (('text' in request.resource.data
+              && request.resource.data.text.size() > 0)
+            || ('imageUrl' in request.resource.data
+              && request.resource.data.imageUrl.size() > 0));
+        allow update, delete: if false;
       }
     }
 
@@ -271,39 +311,106 @@ service cloud.firestore {
     // ============================================================================
 
     match /posts/{postId} {
-      // Public read for feed
       allow read: if true;
-      // Authenticated users can create posts
       allow create: if isAuthenticated()
-        && request.resource.data.keys().hasAll(['authorId', 'content', 'createdAt'])
-        && request.resource.data.authorId == request.auth.uid;
-      // Only author can update/delete their posts
-      allow update, delete: if isAuthenticated()
-        && resource.data.authorId == request.auth.uid;
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.keys()
+          .hasAll([
+            'authorId',
+            'authorUsername',
+            'content',
+            'createdAt',
+            'likes'
+          ])
+        && request.resource.data.keys().hasOnly([
+          'authorId',
+          'authorUsername',
+          'authorPhotoURL',
+          'content',
+          'imageURL',
+          'tags',
+          'createdAt',
+          'likes'
+        ])
+        && isOwnUsername(request.resource.data.authorUsername)
+        && request.resource.data.likes is list
+        && request.resource.data.likes.size() == 0;
+      allow update: if isAuthenticated()
+        && resource.data.authorId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['content', 'imageURL', 'tags']);
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likes'])
+        && togglesOnlyOwnUid(
+          resource.data.likes,
+          request.resource.data.likes
+        );
+      allow delete: if isAuthenticated()
+        && (resource.data.authorId == request.auth.uid || isSuperAdmin());
 
-      // Comments subcollection
       match /comments/{commentId} {
-        // Public read for comments
         allow read: if true;
-        // Authenticated users can create comments
         allow create: if isAuthenticated()
-          && request.resource.data.authorId == request.auth.uid;
-        // Only author can update their comment
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.keys()
+            .hasAll([
+              'authorId',
+              'authorUsername',
+              'content',
+              'createdAt',
+              'likes'
+            ])
+          && request.resource.data.keys().hasOnly([
+            'authorId',
+            'authorUsername',
+            'authorPhotoURL',
+            'content',
+            'createdAt',
+            'likes'
+          ])
+          && isOwnUsername(request.resource.data.authorUsername)
+          && request.resource.data.likes is list
+          && request.resource.data.likes.size() == 0;
         allow update: if isAuthenticated()
-          && resource.data.authorId == request.auth.uid;
-        // Only author can delete their comment
+          && resource.data.authorId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['content']);
+        allow update: if isAuthenticated()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['likes'])
+          && togglesOnlyOwnUid(
+            resource.data.likes,
+            request.resource.data.likes
+          );
         allow delete: if isAuthenticated()
-          && resource.data.authorId == request.auth.uid;
+          && (resource.data.authorId == request.auth.uid || isSuperAdmin());
 
-        // Replies subcollection (nested comments)
         match /replies/{replyId} {
           allow read: if true;
           allow create: if isAuthenticated()
-            && request.resource.data.authorId == request.auth.uid;
+            && request.resource.data.authorId == request.auth.uid
+            && request.resource.data.keys()
+              .hasAll([
+                'authorId',
+                'authorUsername',
+                'content',
+                'createdAt'
+              ])
+            && request.resource.data.keys().hasOnly([
+              'authorId',
+              'authorUsername',
+              'authorPhotoURL',
+              'content',
+              'createdAt'
+            ])
+            && isOwnUsername(request.resource.data.authorUsername);
           allow update: if isAuthenticated()
-            && resource.data.authorId == request.auth.uid;
+            && resource.data.authorId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['content']);
           allow delete: if isAuthenticated()
-            && resource.data.authorId == request.auth.uid;
+            && (resource.data.authorId == request.auth.uid || isSuperAdmin());
         }
       }
     }
