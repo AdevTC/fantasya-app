@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     deleteObject,
-    getDownloadURL,
     ref,
     uploadBytes,
 } from 'firebase/storage';
@@ -107,15 +106,13 @@ export default function CreatePost() {
             operationIdRef.current = pendingAttemptRef.current.operationId;
             let payload = pendingAttemptRef.current?.payload;
             if (!payload) {
-                let imageURL = null;
                 if (image) {
                     const imageRef = ref(storage, pendingAttemptRef.current.uploadPath);
                     await uploadBytes(imageRef, image);
-                    imageURL = await getDownloadURL(imageRef);
                 }
                 payload = {
                     content: content.trim(),
-                    imageURL,
+                    hasImage: Boolean(image),
                     tags: [...tags],
                 };
                 pendingAttemptRef.current.payload = payload;

@@ -41,6 +41,17 @@ test('post upload retries retain the same operation before a callable payload ex
   assert.doesNotMatch(postSource, /Date\.now\(\).*image\.name/);
 });
 
+test('post client sends image presence while Functions resolves the image URL', () => {
+  assert.doesNotMatch(postSource, /getDownloadURL/);
+  assert.doesNotMatch(postSource, /imageURL/);
+  assert.match(postSource, /if \(image\) \{[\s\S]*?await uploadBytes/);
+  assert.match(postSource, /hasImage: Boolean\(image\)/);
+
+  const uploadIndex = postSource.indexOf('await uploadBytes');
+  const payloadIndex = postSource.indexOf('payload = {');
+  assert.ok(uploadIndex >= 0 && uploadIndex < payloadIndex);
+});
+
 test('post replacement deletes only safely abandoned uploads before allocating a new attempt', () => {
   assert.match(postSource, /deleteObject/);
   assert.match(postSource, /isSamePostAttempt/);
@@ -92,6 +103,9 @@ test('callable creation payloads exclude server-owned identity and XP fields', (
 
   assert.notEqual(postCall, '');
   assert.notEqual(transferCall, '');
-  assert.doesNotMatch(postCall, /authorId|authorUsername|authorPhotoURL|likes|createdAt|xp/i);
+  assert.doesNotMatch(
+    postCall,
+    /authorId|authorUsername|authorPhotoURL|imageURL|likes|createdAt|xp/i,
+  );
   assert.doesNotMatch(transferCall, /buyerName|sellerName|xp|role/i);
 });
