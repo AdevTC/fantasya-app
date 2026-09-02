@@ -273,11 +273,23 @@ test('runbook preserves additive Functions and states billing limitations', () =
   )[0];
   assert.match(
     introduction,
-    /controles y\s+el cliente nuevo de sync permanecen desactivados/,
+    /fixture y los\s+controles de sync del cliente nuevo se usan exclusivamente[\s\S]*desarrollo con\s+emuladores/,
+  );
+  assert.doesNotMatch(
+    productionRunbook,
+    /\bel sync\s+s[oó]lo\b[\s\S]{0,120}(?:desarrollo|emuladores)/i,
+  );
+  assert.match(
+    introduction,
+    /frontend de producción no solicita sync/,
   );
   assert.match(
     introduction,
     /syncLaLigaPlayers[\s\S]*getLaLigaSyncStatus[\s\S]*clearLaLigaPlayers[\s\S]*siguen desplegados temporalmente/,
+  );
+  assert.match(
+    introduction,
+    /endpoints legacy[\s\S]*no deben invocarse ni retirarse[\s\S]*gate/,
   );
   assert.doesNotMatch(
     productionRunbook,
