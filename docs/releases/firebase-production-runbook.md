@@ -215,7 +215,11 @@ de Vercel pendiente. Definir `T0` sólo después de comprobar en Vercel que el
 frontend nuevo está activo en producción con el SHA exacto del merge y de
 registrar ese SHA, la URL del deployment y la hora de confirmación en UTC. Las
 llamadas anteriores a `T0`, incluidas las del frontend legacy antes del merge,
-no invalidan la observación; tampoco cuentan como parte de ella.
+no cuentan semánticamente para elegir `T0` ni forman parte de la ventana mínima.
+Sin embargo, si una llamada iniciada antes de `T0` termina o se muestrea en un
+punto posterior a `START_UTC`, el gate la trata como positiva y exige un nuevo
+`T0`. Este falso positivo conservador es deliberado: la métrica `DELTA` prevalece
+sobre la hora de inicio que se atribuya a la llamada.
 
 Fijar `START_UTC = T0` y `END_UTC = T0 + 24 horas`, ambos como timestamps RFC
 3339 terminados en `Z`, por ejemplo `2026-09-03T10:00:00Z` y

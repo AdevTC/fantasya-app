@@ -16,7 +16,19 @@ test('starts the legacy zero-call gate only after the exact frontend SHA is acti
     runbook,
     /Definir `T0` sólo después[\s\S]*frontend nuevo está activo[\s\S]*SHA exacto/i,
   );
-  assert.match(runbook, /llamadas anteriores a `T0`[\s\S]*no invalidan/i);
+  assert.match(
+    runbook,
+    /llamadas anteriores a `T0`[\s\S]*no cuentan semánticamente[\s\S]*elegir `T0`/i,
+  );
+  assert.match(
+    runbook,
+    /iniciada antes de `T0`[\s\S]*punto posterior a `START_UTC`[\s\S]*nuevo\s+`T0`/i,
+  );
+  assert.match(runbook, /falso positivo conservador/i);
+  assert.doesNotMatch(
+    runbook,
+    /llamadas anteriores a `T0`[\s\S]{0,120}no invalidan/i,
+  );
 });
 
 test('pins a reproducible Gen2 request-count observation before legacy deletion', () => {
