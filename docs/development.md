@@ -122,7 +122,7 @@ del runtime desplegado; se mantienen actualizadas y se revisan por separado.
 | Auth, Firestore, Functions y Storage Emulator | Sí | Disponible sin login cloud | Proyecto ficticio `demo-fantasya` |
 | Firebase producción | Sólo para release | Login y proyecto visibles; el test IAM de solo lectura pasó para Functions, reglas, índices, metadatos de secretos, `iam.serviceAccounts.actAs` y ajustes IAM | `jordisumba@gmail.com`, proyecto `tictaktools` |
 | Sincronización real de LaLiga | Sólo para sync real en producción | Bloqueada: falta el secreto `FOOTBALL_DATA_API_KEY` | Preparar una clave existente o una cuenta en football-data.org antes de esa release |
-| Despliegue fuente en Vercel | Sólo tras merge/push aprobado | No disponible directamente para Jordi en el proyecto Hobby | El owner de Vercel debe disparar o autorizar el despliegue del commit |
+| Preview automático de Vercel | Sólo tras push/PR aprobado | Disponible; la integración GitHub existente desplegó correctamente la PR #3 | No requiere login en Vercel ni una plaza Pro; tratar el preview como producción mientras use `tictaktools` |
 | Variables, dominio y ajustes de Vercel | Sólo si cambian | Sin acceso local: no hay Vercel CLI ni vínculo `.vercel/project.json` | Lo realiza el owner del proyecto Vercel |
 | Gmail | No | No conectado ni inspeccionado | No hace falta; Firebase CLI ya está autenticado |
 
@@ -131,11 +131,13 @@ leyó datos de usuarios, valores de secretos ni políticas; sólo preguntó qué
 acciones permite la identidad activa.
 
 No hace falta iniciar ninguna sesión adicional para desarrollar. Antes de la
-sincronización real hará falta la clave de football-data.org. Para publicar, el
-owner de Vercel debe estar disponible; añadir a Jordi como miembro de un proyecto
-Hobby no es la solución y Vercel reserva esa colaboración de equipo para Pro.
-La [documentación actual de Vercel sobre colaboración](https://vercel.com/docs/deployments/troubleshoot-project-collaboration)
-indica que, en Hobby, el autor que dispara el despliegue debe ser el owner.
+sincronización real hará falta la clave de football-data.org. La
+[integración Git de Vercel](https://vercel.com/docs/git) existente genera los
+previews de las ramas y PR del repositorio público: quedó comprobado con la PR
+#3 y un commit de Jordi. Esto no concede a Jordi acceso al dashboard del
+proyecto. El owner sigue siendo necesario para variables, dominio, ajustes,
+promociones manuales o para autorizar un preview si Vercel lo solicita. El flujo
+Git actual no necesita añadir una plaza Pro.
 
 ## Frontera de producción
 

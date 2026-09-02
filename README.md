@@ -103,10 +103,11 @@ puede repetir sin dejar servicios escuchando ni duplicar datos.
 ## Producción
 
 El desarrollo local no requiere iniciar sesión en Firebase, Google o Vercel.
-Los despliegues son manuales, requieren autorización separada y siempre deben
-nombrar el proyecto real `tictaktools` explícitamente. Mientras no exista un
-entorno de staging aislado, cualquier preview de Vercel debe tratarse como
-producción.
+Los despliegues de Firebase y las promociones a producción requieren
+autorización separada y siempre deben nombrar el proyecto real `tictaktools`
+explícitamente. La integración Git existente puede crear previews automáticos
+al abrir una PR; mientras no exista un entorno de staging aislado, cualquier
+preview de Vercel debe tratarse como producción.
 
 Consulta [el setup diario y la matriz de accesos](docs/development.md). El orden
 de publicación, las comprobaciones y el rollback se documentan en el

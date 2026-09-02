@@ -28,7 +28,9 @@ No empezar mientras falte cualquiera de estos puntos:
    desplegar el grupo de sync.
 8. Hay una pestaña de Firebase Console abierta sólo para observar Functions y
    logs. Nunca se muestra el valor del secreto.
-9. El owner de Vercel confirma que puede publicar el SHA y observar el build.
+9. La integración Git de Vercel puede publicar el SHA y su check permite
+   observar el build; quedó comprobado con la PR #3. El owner está disponible
+   sólo si hacen falta ajustes o autorización.
 10. Existe aprobación explícita para la fase concreta y un responsable disponible
     durante la comprobación y posible rollback.
 
@@ -96,21 +98,20 @@ Comprobar el inventario sin cambiarlo:
 Observar logs y cold starts. No avanzar ante error de carga, secreto, permisos,
 región o runtime.
 
-## Fase B: frontend mediante GitHub y el owner de Vercel
+## Fase B: frontend mediante GitHub y Vercel
 
-El código del repositorio público puede revisarse y modificarse con el permiso
-GitHub `WRITE` de Jordi. Eso no concede acceso al proyecto Vercel. Según la
-[documentación de colaboración de Vercel](https://vercel.com/docs/deployments/troubleshoot-project-collaboration),
-en un equipo Hobby el autor que dispara despliegues debe ser el owner. No es
-necesario pagar Pro si el owner conserva ese paso; tampoco se crea un segundo
+El permiso GitHub `WRITE` de Jordi no concede acceso al dashboard de Vercel,
+pero la [integración Git de Vercel](https://vercel.com/docs/git) del repositorio
+público sí generó correctamente el preview de la PR #3. El flujo habitual no
+requiere una plaza Pro ni que el owner dispare cada preview. El owner conserva
+variables, dominio, ajustes y promociones manuales; tampoco se crea un segundo
 proyecto Vercel como atajo.
 
 1. Tras aprobación, abrir la PR o hacer el push previsto y registrar
    `git rev-parse HEAD`.
 2. Esperar la CI verde del SHA exacto.
-3. El owner comprueba su conexión GitHub en Vercel y dispara, autoriza o
-   redespliega ese SHA desde el proyecto existente. Si un commit de Jordi no
-   genera deployment, tratarlo como la restricción esperada de Hobby.
+3. Esperar el check automático de Vercel. Si no aparece o solicita autorización,
+   pedir al owner que revise la conexión GitHub o autorice ese deployment.
 4. Confirmar que el deployment resultante declara el SHA esperado. No basta con
    que la URL responda.
 5. Si faltan variables `VITE_*`, detenerse y pedir al owner que restaure las del
@@ -168,7 +169,8 @@ No usar `git reset --hard`, borrar historial ni editar producción desde la
 consola para improvisar una reparación.
 
 - Frontend: crear un `git revert` del commit o merge problemático, revisar la
-  CI y pedir al owner de Vercel que publique el revert.
+  CI y dejar que la integración Git publique el revert. Pedir ayuda al owner si
+  el check no aparece o requiere una acción de dashboard.
 - Firestore/Storage/índices: restaurar los archivos desde el último commit bueno
   mediante un nuevo revert y desplegar únicamente el grupo guardado afectado.
 - Functions: conservar los endpoints legacy, revertir los handlers en Git y
