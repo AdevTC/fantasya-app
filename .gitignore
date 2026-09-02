@@ -24,6 +24,7 @@ Thumbs.db
 .claude/
 .serena/
 .playwright-mcp/
+.worktrees/
 CLAUDE.md
 docs/
 
