@@ -176,7 +176,7 @@ Se añadirá un helper de reglas `isSuperAdmin()` basado en el documento del usu
 
 #### Ligas y membresía
 
-- Crear una liga exige que `creatorId` coincida con el usuario autenticado.
+- Crear una liga exige que `ownerId` coincida con el usuario autenticado; las reglas dejarán de consultar el campo inexistente `creatorId`.
 - Crear una temporada exige que el creador quede como administrador inicial y que la forma mínima del documento sea válida.
 - Un miembro normal sólo puede cambiar sus campos permitidos dentro de `members.{uid}` —por ejemplo `teamName` y `finances`— sin tocar `role`, puntos, otros miembros ni el resto de la temporada.
 - Abandonar una temporada sólo puede eliminar la entrada propia y nunca la de terceros.
@@ -279,10 +279,10 @@ El emulador de Firestore no reproduce IAM ni exige índices compuestos como prod
 
 ## 6. CI y versiones
 
-- Se añade `.nvmrc` con Node 22 y `engines.node` en el `package.json` raíz; se documenta `nvm use 22` para las sesiones del proyecto en Windows. Node 24 global no se desinstala.
+- Se añaden `.nvmrc` y `.node-version` con Node 22 y `engines.node` en el `package.json` raíz; `fnm` activa Node 22 mediante un script versionado sólo en la sesión del proyecto. Node 24 global no se desinstala.
 - GitHub Actions usa Node 22 y ejecuta instalación limpia, build, comprobación de Functions y pruebas con emuladores.
 - `firestore.indexes.json` deja de estar ignorado y se versiona.
-- El pipeline inicial muestra el lint completo como informe no bloqueante y sí bloquea build y tests. Cada archivo JavaScript modificado en esta implementación debe quedar sin nuevos errores; la deuda global se resolverá en un trabajo separado antes de convertir el lint completo en gate.
+- El pipeline bloquea cualquier aumento sobre la deuda lint auditada de 83 errores y 12 avisos, además de bloquear build y tests. Una reducción pasa y permite bajar el presupuesto en un cambio posterior; la deuda histórica no vuelve rojo el primer CI por sí sola.
 - Firebase no se despliega automáticamente desde CI. Los comandos de producción son manuales y explícitos.
 
 ## 7. Estrategia de entrega sin interrupciones
