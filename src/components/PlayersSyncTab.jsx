@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { app, db, isUsingEmulators } from '../config/firebase';
-import { resolvePlayerSyncRuntime } from '../config/player-sync-runtime';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { db, isUsingEmulators } from '../config/firebase';
+import {
+    getLaLigaSyncStatus,
+    syncLaLigaPlayers,
+} from '../services/admin-api';
 import toast from 'react-hot-toast';
-import { RefreshCw, Clock, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, Users, Database, AlertCircle, Filter, X, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 const POSITION_MAP_DISPLAY = {
     'POR': 'Portero',
@@ -30,7 +32,6 @@ export default function PlayersSyncTab() {
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 20;
-    const playerSyncRuntime = resolvePlayerSyncRuntime(isUsingEmulators);
 
     // Fetch sync status on mount
     useEffect(() => {
@@ -56,8 +57,6 @@ export default function PlayersSyncTab() {
 
     // Filtered & Sorted players
     const filteredPlayers = useMemo(() => {
-        setCurrentPage(1); // Reset to first page on filter change
-
         let result = syncedPlayers.filter(player => {
             const matchesTeam = !teamFilter || player.team === teamFilter;
             const matchesPosition = !positionFilter || player.position === positionFilter;
@@ -91,6 +90,7 @@ export default function PlayersSyncTab() {
 
     // Handle sort
     const handleSort = (key) => {
+        setCurrentPage(1);
         setSortConfig(current => ({
             key,
             direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
@@ -119,50 +119,7 @@ export default function PlayersSyncTab() {
 
     const fetchSyncStatus = async () => {
         try {
-            if (playerSyncRuntime.legacyRemoteEnabled) {
-                const auth = getAuth(app);
-                const token = await auth.currentUser?.getIdToken();
-
-                if (token) {
-                    try {
-                        const statusResponse = await fetch('https://getlaligasyncstatus-6co4rpvhqa-uc.a.run.app', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${token}`
-                            }
-                        });
-
-                        if (statusResponse.ok) {
-                            const statusData = await statusResponse.json();
-                            setSyncStatus(statusData);
-                            return;
-                        }
-                    } catch {
-                        console.log('Status Cloud Function not available, using Firestore');
-                    }
-                }
-            }
-
-            // Fallback to Firestore directly
-            const statusDoc = await getDoc(doc(db, "config", "laLigaSync"));
-
-            if (statusDoc.exists()) {
-                const data = statusDoc.data();
-                setSyncStatus({
-                    status: data.status || 'unknown',
-                    lastSync: data.lastSync || data.startedAt || null,
-                    playersCount: data.playersCount || 0,
-                    lastError: data.lastError || null
-                });
-            } else {
-                setSyncStatus({
-                    status: 'never_synced',
-                    lastSync: null,
-                    playersCount: 0,
-                    lastError: null
-                });
-            }
+            setSyncStatus(await getLaLigaSyncStatus());
         } catch (error) {
             console.error("Error fetching sync status:", error);
             setSyncStatus({
@@ -184,51 +141,26 @@ export default function PlayersSyncTab() {
                 ...doc.data()
             }));
             setSyncedPlayers(players);
+            setCurrentPage(1);
         } catch (error) {
             console.error("Error fetching synced players:", error);
         }
     };
 
     const handleSync = async () => {
-        if (!playerSyncRuntime.legacyRemoteEnabled) {
-            toast.error(
-                'La sincronización remota está bloqueada en modo local. ' +
-                'Se habilitará mediante el fixture del emulador.',
-            );
-            return;
-        }
-
         if (isSyncing) return;
 
         setIsSyncing(true);
         setSyncProgress({ message: 'Iniciando sincronización...', stage: 'init' });
 
         try {
-            const auth = getAuth(app);
-            const token = await auth.currentUser?.getIdToken();
-
-            if (!token) {
-                throw new Error('No estás autenticado');
-            }
-
-            const response = await fetch('https://synclaligaplayers-6co4rpvhqa-uc.a.run.app', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `Error ${response.status}`);
-            }
-
-            const result = await response.json();
+            const result = await syncLaLigaPlayers();
 
             if (result.success) {
-                toast.success(result.message);
-                setSyncProgress({ message: result.message, stage: 'complete' });
+                const message = result.message ||
+                    `Sincronización completada: ${result.playersSynced} jugadores actualizados.`;
+                toast.success(message);
+                setSyncProgress({ message, stage: 'complete' });
                 await fetchSyncStatus();
                 await fetchSyncedPlayers();
             } else {
@@ -238,11 +170,10 @@ export default function PlayersSyncTab() {
             console.error("Error syncing players:", error);
             let errorMsg = error.message;
 
-            // Check for specific IAM/CORS errors
-            if (error.code === 'permission-denied' || error.code === 'unauthenticated' || errorMsg.includes('Unauthorized')) {
+            if (error.code?.endsWith('permission-denied') || error.code?.endsWith('unauthenticated')) {
                 errorMsg = "No tienes permiso para sincronizar jugadores. Contacta al administrador.";
-            } else if (error.message.includes('CORS') || error.message.includes('fetch')) {
-                errorMsg = "Error de configuración CORS. Verifica que las funciones tengan IAM policy configurada.";
+            } else if (error.code?.endsWith('failed-precondition')) {
+                errorMsg = "La clave de football-data.org no está configurada en el servidor.";
             }
 
             toast.error(`Error: ${errorMsg}`);
@@ -359,15 +290,15 @@ export default function PlayersSyncTab() {
                 {/* Sync Button */}
                 <button
                     onClick={handleSync}
-                    disabled={isSyncing || !playerSyncRuntime.legacyRemoteEnabled}
+                    disabled={isSyncing}
                     className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
                     {isSyncing
                         ? 'Sincronizando...'
-                        : playerSyncRuntime.legacyRemoteEnabled
-                            ? 'Sincronizar Ahora'
-                            : 'Sincronización remota bloqueada'}
+                        : isUsingEmulators
+                            ? 'Sincronizar fixture local'
+                            : 'Sincronizar Ahora'}
                 </button>
 
                 {/* Progress Message */}
@@ -403,12 +334,12 @@ export default function PlayersSyncTab() {
                             {isUsingEmulators ? (
                                 <p>
                                     Ninguna acción de esta pantalla contacta con producción.
-                                    La sincronización se habilitará con un fixture local protegido.
+                                    La sincronización usa un fixture local determinista y protegido.
                                 </p>
                             ) : (
                                 <ul className="list-disc list-inside space-y-1">
                                     <li>La API de football-data.org tiene un límite de 10 solicitudes por minuto</li>
-                                    <li>La sincronización puede tardar varios minutos (aprox. 13-15 minutos para 20 equipos)</li>
+                                    <li>La sincronización puede tardar varios minutos</li>
                                     <li>Los jugadores se almacenan en la colección <code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">laLigaPlayers</code></li>
                                     <li>El historial de equipos y posiciones se preserva automáticamente</li>
                                 </ul>
@@ -459,7 +390,10 @@ export default function PlayersSyncTab() {
                                         type="text"
                                         placeholder="Buscar por nombre..."
                                         value={searchName}
-                                        onChange={(e) => setSearchName(e.target.value)}
+                                        onChange={(e) => {
+                                            setSearchName(e.target.value);
+                                            setCurrentPage(1);
+                                        }}
                                         className="pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent w-full sm:w-48"
                                     />
                                 </div>
@@ -467,7 +401,10 @@ export default function PlayersSyncTab() {
                                 {/* Team Filter */}
                                 <select
                                     value={teamFilter}
-                                    onChange={(e) => setTeamFilter(e.target.value)}
+                                    onChange={(e) => {
+                                        setTeamFilter(e.target.value);
+                                        setCurrentPage(1);
+                                    }}
                                     className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                                 >
                                     <option value="">Todos los equipos</option>
@@ -479,7 +416,10 @@ export default function PlayersSyncTab() {
                                 {/* Position Filter */}
                                 <select
                                     value={positionFilter}
-                                    onChange={(e) => setPositionFilter(e.target.value)}
+                                    onChange={(e) => {
+                                        setPositionFilter(e.target.value);
+                                        setCurrentPage(1);
+                                    }}
                                     className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                                 >
                                     <option value="">Todas las posiciones</option>
@@ -493,7 +433,10 @@ export default function PlayersSyncTab() {
                                 {/* Nationality Filter */}
                                 <select
                                     value={nationalityFilter}
-                                    onChange={(e) => setNationalityFilter(e.target.value)}
+                                    onChange={(e) => {
+                                        setNationalityFilter(e.target.value);
+                                        setCurrentPage(1);
+                                    }}
                                     className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                                 >
                                     <option value="">Todas las nacionalidades</option>

@@ -1,0 +1,43 @@
+{
+  "teams": [
+    {
+      "id": 86,
+      "name": "Real Madrid CF",
+      "squad": [
+        {
+          "id": 1,
+          "name": "Delantero Local",
+          "firstName": "Delantero",
+          "lastName": "Local",
+          "dateOfBirth": "2000-01-01",
+          "nationality": "Spain",
+          "position": "Centre-Forward"
+        },
+        {
+          "id": 2,
+          "name": "Portero Local",
+          "firstName": "Portero",
+          "lastName": "Local",
+          "dateOfBirth": "1998-01-01",
+          "nationality": "Spain",
+          "position": "Goalkeeper"
+        }
+      ]
+    },
+    {
+      "id": 81,
+      "name": "FC Barcelona",
+      "squad": [
+        {
+          "id": 3,
+          "name": "Medio Local",
+          "firstName": "Medio",
+          "lastName": "Local",
+          "dateOfBirth": "2001-01-01",
+          "nationality": "Spain",
+          "position": "Central Midfield"
+        }
+      ]
+    }
+  ]
+}
