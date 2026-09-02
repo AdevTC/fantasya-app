@@ -1,6 +1,7 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { Timestamp } = require('firebase-admin/firestore');
 const { db } = require('../lib/firebase');
+const trophyCatalog = require('../lib/trophy-catalog.json');
 const {
   requireDocumentId,
   requireSeasonAdmin,
@@ -72,19 +73,51 @@ async function readContext(transaction, refs) {
 }
 
 function validateTrophies(value) {
-  return requireBoundedArray(
+  const trophies = requireBoundedArray(
     value,
     MAX_TROPHIES_PER_USER,
     'La lista de trofeos no es válida.',
-  ).map((trophy) => {
+  );
+  const seen = new Set();
+  return trophies.map((trophy) => {
     if (!trophy || typeof trophy !== 'object' || Array.isArray(trophy)) {
       throw new HttpsError(
         'invalid-argument',
         'Un trofeo no es válido.',
       );
     }
-    requireDocumentId(trophy.trophyId, 'trophyId');
-    return { ...trophy };
+    const trophyId = requireDocumentId(trophy.trophyId, 'trophyId');
+    const definition = trophyCatalog[trophyId];
+    if (!definition || seen.has(trophyId)) {
+      throw new HttpsError(
+        'invalid-argument',
+        'La lista contiene un trofeo desconocido o duplicado.',
+      );
+    }
+    seen.add(trophyId);
+    let value;
+    if (trophy.value !== undefined) {
+      if (typeof trophy.value === 'number' && Number.isFinite(trophy.value)) {
+        value = trophy.value;
+      } else if (
+        typeof trophy.value === 'string'
+        && trophy.value.trim().length > 0
+        && trophy.value.trim().length <= 200
+      ) {
+        value = trophy.value.trim();
+      } else {
+        throw new HttpsError(
+          'invalid-argument',
+          'El valor de un trofeo no es válido.',
+        );
+      }
+    }
+    return {
+      trophyId,
+      name: definition.name,
+      description: definition.description,
+      ...(value !== undefined ? { value } : {}),
+    };
   });
 }
 
@@ -252,7 +285,7 @@ function validateChallenge(value, context) {
       'La descripción',
     ),
     targetType,
-    targetUsers,
+    targetUsers: [...targetUsers].sort(),
     title: cleanText(value.title, MAX_CHALLENGE_TITLE, 'El título'),
   };
 }
@@ -292,6 +325,26 @@ function realWinnerIds(winners, context) {
       && context.season.members[userId].isPlaceholder !== true))];
 }
 
+function persistedWinnerIds(winners) {
+  const values = Array.isArray(winners) ? winners : [];
+  if (values.length > MAX_WINNERS) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'El reto tiene demasiados ganadores históricos para migrarlo.',
+    );
+  }
+  return [...new Set(values.map((winner) =>
+    requireDocumentId(winner?.uid, 'persistedWinner.uid')))];
+}
+
+function sameChallengeData(existing, expected) {
+  return existing?.title === expected.title
+    && existing?.description === expected.description
+    && existing?.targetType === expected.targetType
+    && JSON.stringify(existing?.targetUsers || [])
+      === JSON.stringify(expected.targetUsers);
+}
+
 function updatedFeatInstances(snapshot, context, challenge, shouldWin) {
   const existing = snapshot.exists && Array.isArray(snapshot.data().instances)
     ? snapshot.data().instances
@@ -317,11 +370,17 @@ function writeFeatInstances(transaction, snapshot, instances) {
 async function saveSeasonChallengeHandler(request, firestore = db) {
   const uid = requireDocumentId(request?.uid, 'uid');
   const refs = refsForSeason(firestore, request?.data);
-  const suppliedId = request?.data?.challengeId;
-  const isEdit = suppliedId != null;
-  const challengeId = isEdit
-    ? requireDocumentId(suppliedId, 'challengeId')
-    : refs.seasonRef.collection('challenges').doc().id;
+  const mode = request?.data?.mode;
+  if (mode !== 'create' && mode !== 'update') {
+    throw new HttpsError(
+      'invalid-argument',
+      'El modo del reto debe ser create o update.',
+    );
+  }
+  const challengeId = requireDocumentId(
+    request?.data?.challengeId,
+    'challengeId',
+  );
   const challengeRef = refs.seasonRef
     .collection('challenges')
     .doc(challengeId);
@@ -331,15 +390,23 @@ async function saveSeasonChallengeHandler(request, firestore = db) {
     requireSeasonAdmin(uid, context);
     const challenge = validateChallenge(request?.data?.challenge, context);
     const challengeSnapshot = await transaction.get(challengeRef);
-    if (isEdit && !challengeSnapshot.exists) {
+    if (mode === 'update' && !challengeSnapshot.exists) {
       throw new HttpsError('not-found', 'El reto no existe.');
     }
-    if (!isEdit && challengeSnapshot.exists) {
+    if (mode === 'create' && challengeSnapshot.exists) {
+      if (sameChallengeData(challengeSnapshot.data(), challenge)) {
+        return {
+          challengeId,
+          created: false,
+          updated: false,
+          alreadySaved: true,
+        };
+      }
       throw new HttpsError('already-exists', 'El reto ya existe.');
     }
 
-    const winnerIds = isEdit
-      ? realWinnerIds(challengeSnapshot.data().winners, context)
+    const winnerIds = mode === 'update'
+      ? persistedWinnerIds(challengeSnapshot.data().winners)
       : [];
     const featSnapshots = await Promise.all(winnerIds.map((winnerId) =>
       transaction.get(firestore.doc(
@@ -347,9 +414,10 @@ async function saveSeasonChallengeHandler(request, firestore = db) {
       ))));
     assertWriteLimit(1 + featSnapshots.length);
 
-    if (isEdit) {
+    if (mode === 'update') {
       transaction.update(challengeRef, challenge);
       featSnapshots.forEach((snapshot) => {
+        if (!snapshot.exists) return;
         const instances = updatedFeatInstances(
           snapshot,
           context,
@@ -367,7 +435,12 @@ async function saveSeasonChallengeHandler(request, firestore = db) {
       });
     }
 
-    return { challengeId, created: !isEdit, updated: isEdit };
+    return {
+      challengeId,
+      created: mode === 'create',
+      updated: mode === 'update',
+      alreadySaved: false,
+    };
   });
 }
 
@@ -424,7 +497,7 @@ async function setChallengeWinnersHandler(request, firestore = db) {
     const winners = validateWinners(request.data.winners, context, challenge);
     const desiredIds = new Set(winners.map((winner) => winner.uid));
     const affectedIds = [...new Set([
-      ...realWinnerIds(challenge.winners, context),
+      ...persistedWinnerIds(challenge.winners),
       ...realWinnerIds(winners, context),
     ])];
     const featSnapshots = await Promise.all(affectedIds.map((winnerId) =>
@@ -469,9 +542,8 @@ async function deleteSeasonChallengeHandler(request, firestore = db) {
     if (!challengeSnapshot.exists) {
       return { challengeId, deleted: false, alreadyDeleted: true };
     }
-    const affectedIds = realWinnerIds(
+    const affectedIds = persistedWinnerIds(
       challengeSnapshot.data().winners,
-      context,
     );
     const featSnapshots = await Promise.all(affectedIds.map((winnerId) =>
       transaction.get(firestore.doc(

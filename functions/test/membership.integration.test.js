@@ -383,6 +383,51 @@ test('review rejects invalid action, wrong message and non-admin actor', async (
   assert.equal(request.data().status, 'pending');
 });
 
+test('same-action retry supports a processed legacy request without messageId', async () => {
+  const submitted = await submitJoinRequestHandler({
+    uid: 'dev-superadmin',
+    data: requestInput(),
+  });
+  const seasonRef = db.doc(
+    'leagues/dev-league-active/seasons/season-1',
+  );
+  const requestRef = seasonRef.collection('joinRequests')
+    .doc(submitted.requestId);
+  const batch = db.batch();
+  batch.update(seasonRef, {
+    'members.dev-superadmin': {
+      username: 'superadmin',
+      teamName: 'Request FC',
+      photoURL: '',
+      role: 'member',
+      isPlaceholder: false,
+      totalPoints: 0,
+      finances: { budget: 200, teamValue: 0 },
+    },
+  });
+  batch.update(requestRef, {
+    status: 'approved',
+    messageId: require('../lib/firebase').FieldValue.delete(),
+  });
+  batch.update(db.doc(
+    `chats/${submitted.chatId}/messages/${submitted.messageId}`,
+  ), { requestStatus: 'approved' });
+  await batch.commit();
+
+  const retried = await reviewJoinRequestHandler({
+    uid: 'dev-league-admin',
+    data: {
+      leagueId: 'dev-league-active',
+      seasonId: 'season-1',
+      requestId: submitted.requestId,
+      action: 'approve',
+      messageId: submitted.messageId,
+    },
+  });
+  assert.equal(retried.status, 'approved');
+  assert.equal(retried.messageId, submitted.messageId);
+});
+
 test('approval rechecks duplicate team names without partial writes', async () => {
   const submitted = await submitJoinRequestHandler({
     uid: 'dev-superadmin',

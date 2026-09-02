@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { X, Send, User, Users, UserCheck } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import { saveSeasonChallenge } from '../services/league-api';
 
 export default function ChallengeModal({ isOpen, onClose, league, season, existingChallenge }) {
@@ -9,6 +10,7 @@ export default function ChallengeModal({ isOpen, onClose, league, season, existi
     const [targetType, setTargetType] = useState('all'); // all, selection, single
     const [targetUsers, setTargetUsers] = useState([]);
     const [loading, setLoading] = useState(false);
+    const createChallengeId = useRef(uuidv4());
 
     useEffect(() => {
         if (isOpen) {
@@ -18,6 +20,7 @@ export default function ChallengeModal({ isOpen, onClose, league, season, existi
                 setTargetType(existingChallenge.targetType || 'all');
                 setTargetUsers(existingChallenge.targetUsers || []);
             } else {
+                createChallengeId.current = uuidv4();
                 setTitle('');
                 setDescription('');
                 setTargetType('all');
@@ -60,7 +63,8 @@ export default function ChallengeModal({ isOpen, onClose, league, season, existi
             await saveSeasonChallenge({
                 leagueId: league.id,
                 seasonId: season.id,
-                ...(existingChallenge ? { challengeId: existingChallenge.id } : {}),
+                mode: existingChallenge ? 'update' : 'create',
+                challengeId: existingChallenge?.id || createChallengeId.current,
                 challenge: challengeData,
             });
             toast.success(

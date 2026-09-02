@@ -561,22 +561,80 @@ async function reviewJoinRequestHandler(request, firestore = db) {
       throw new HttpsError('not-found', 'La solicitud no existe.');
     }
     const joinRequest = requestSnapshot.data();
+    const requestedUserId = requireDocumentId(
+      joinRequest.userId,
+      'request.userId',
+    );
+    const adminId = requireDocumentId(joinRequest.adminId, 'request.adminId');
+    const chatId = requireDocumentId(joinRequest.chatId, 'request.chatId');
+    const chatRef = firestore.doc('chats/' + chatId);
+    const expectedParticipants = [requestedUserId, adminId].sort();
+    if (chatId !== expectedParticipants.join('_')) {
+      throw new HttpsError(
+        'failed-precondition',
+        'La solicitud apunta a un chat no canónico.',
+      );
+    }
     if (joinRequest.status !== 'pending') {
       if (joinRequest.status === status) {
-        const stableMessageId = requireDocumentId(
-          joinRequest.messageId,
-          'request.messageId',
-        );
-        if (suppliedMessageId && suppliedMessageId !== stableMessageId) {
+        let stableMessageId = joinRequest.messageId
+          ? requireDocumentId(joinRequest.messageId, 'request.messageId')
+          : suppliedMessageId;
+        if (joinRequest.messageId && suppliedMessageId
+            && suppliedMessageId !== stableMessageId) {
           throw new HttpsError(
             'invalid-argument',
             'El mensaje no corresponde a la solicitud.',
           );
         }
+        const chatSnapshot = await transaction.get(chatRef);
+        if (!chatSnapshot.exists || !exactParticipants(
+          chatSnapshot.data().participants,
+          expectedParticipants,
+        )) {
+          throw new HttpsError(
+            'failed-precondition',
+            'El chat de la solicitud no es válido.',
+          );
+        }
+        let messageSnapshot;
+        if (stableMessageId) {
+          messageSnapshot = await transaction.get(
+            chatRef.collection('messages').doc(stableMessageId),
+          );
+        } else {
+          const legacyMessages = await transaction.get(
+            chatRef.collection('messages')
+              .where('requestId', '==', requestId)
+              .limit(2),
+          );
+          if (legacyMessages.size !== 1) {
+            throw new HttpsError(
+              'failed-precondition',
+              'No se pudo identificar el mensaje original de la solicitud.',
+            );
+          }
+          messageSnapshot = legacyMessages.docs[0];
+          stableMessageId = messageSnapshot.id;
+        }
+        const originalMessage = messageSnapshot.data();
+        if (
+          !messageSnapshot.exists
+          || originalMessage.requestId !== requestId
+          || originalMessage.senderId !== requestedUserId
+          || originalMessage.leagueId !== refs.leagueId
+          || originalMessage.seasonId !== refs.seasonId
+          || originalMessage.isJoinRequest !== true
+        ) {
+          throw new HttpsError(
+            'failed-precondition',
+            'El mensaje original no corresponde a la solicitud.',
+          );
+        }
         return {
           requestId,
           status,
-          chatId: requireDocumentId(joinRequest.chatId, 'request.chatId'),
+          chatId,
           messageId: stableMessageId,
           notificationMessageId:
             typeof joinRequest.notificationMessageId === 'string'
@@ -590,20 +648,6 @@ async function reviewJoinRequestHandler(request, firestore = db) {
       throw new HttpsError(
         'failed-precondition',
         'La solicitud ya fue procesada.',
-      );
-    }
-    const requestedUserId = requireDocumentId(
-      joinRequest.userId,
-      'request.userId',
-    );
-    const adminId = requireDocumentId(joinRequest.adminId, 'request.adminId');
-    const chatId = requireDocumentId(joinRequest.chatId, 'request.chatId');
-    const chatRef = firestore.doc('chats/' + chatId);
-    const expectedParticipants = [requestedUserId, adminId].sort();
-    if (chatId !== expectedParticipants.join('_')) {
-      throw new HttpsError(
-        'failed-precondition',
-        'La solicitud apunta a un chat no canónico.',
       );
     }
 

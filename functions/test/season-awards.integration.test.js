@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { db } = require('../lib/firebase');
+const { db, FieldValue } = require('../lib/firebase');
 const {
   deleteSeasonChallengeHandler,
   refreshCareerAchievementsHandler,
@@ -56,7 +56,11 @@ test('season admin atomically replaces trophy mirrors and stale awards', async (
           data: {
             seasonName: 'Temporada Local',
             leagueName: 'Liga Local Activa',
-            trophies: [{ trophyId: 'CHAMPION', value: 100 }],
+            trophies: [{
+              trophyId: 'CHAMPION',
+              value: 100,
+              forged: true,
+            }],
           },
         },
         {
@@ -92,6 +96,8 @@ test('season admin atomically replaces trophy mirrors and stale awards', async (
   ]);
   assert.deepEqual(leagueAward.data(), userAward.data());
   assert.equal(leagueAward.data().teamName, 'Usuarios FC');
+  assert.equal(leagueAward.data().trophies[0].name, 'Campeón de Liga');
+  assert.equal(leagueAward.data().trophies[0].forged, undefined);
   assert.equal(placeholderAward.data().isPlaceholder, true);
   assert.equal(placeholderUser.exists, false);
   assert.equal(staleLeague.exists, false);
@@ -128,13 +134,44 @@ test('trophy replacement rejects outsiders and malformed recipients', async () =
       }],
     },
   }), 'invalid-argument');
-});
-
-test('challenge lifecycle keeps one stable feat instance per season', async () => {
-  const created = await saveSeasonChallengeHandler({
+  await rejectsCode(replaceSeasonTrophiesHandler({
     uid: 'dev-league-admin',
     data: {
       ...seasonInput,
+      awards: [{
+        ...validAward,
+        data: {
+          ...validAward.data,
+          trophies: [
+            { trophyId: 'CHAMPION' },
+            { trophyId: 'CHAMPION' },
+          ],
+        },
+      }],
+    },
+  }), 'invalid-argument');
+  await rejectsCode(replaceSeasonTrophiesHandler({
+    uid: 'dev-league-admin',
+    data: {
+      ...seasonInput,
+      awards: [{
+        ...validAward,
+        data: {
+          ...validAward.data,
+          trophies: [{ trophyId: 'MADE_UP_TROPHY' }],
+        },
+      }],
+    },
+  }), 'invalid-argument');
+});
+
+test('challenge lifecycle keeps one stable feat instance per season', async () => {
+  const createRequest = {
+    uid: 'dev-league-admin',
+    data: {
+      ...seasonInput,
+      mode: 'create',
+      challengeId: 'atomic-challenge',
       challenge: {
         title: 'Reto atómico',
         description: 'Haz algo memorable.',
@@ -142,7 +179,10 @@ test('challenge lifecycle keeps one stable feat instance per season', async () =
         targetUsers: [],
       },
     },
-  });
+  };
+  const created = await saveSeasonChallengeHandler(createRequest);
+  const retried = await saveSeasonChallengeHandler(createRequest);
+  assert.equal(retried.alreadySaved, true);
 
   const winnersInput = {
     ...seasonInput,
@@ -174,6 +214,7 @@ test('challenge lifecycle keeps one stable feat instance per season', async () =
     uid: 'dev-league-admin',
     data: {
       ...seasonInput,
+      mode: 'update',
       challengeId: created.challengeId,
       challenge: {
         title: 'Reto renombrado',
@@ -211,12 +252,55 @@ test('challenge writes reject non-admins and unknown targets', async () => {
   };
   await rejectsCode(saveSeasonChallengeHandler({
     uid: 'dev-user',
-    data: { ...seasonInput, challenge },
+    data: {
+      ...seasonInput,
+      mode: 'create',
+      challengeId: 'outsider-challenge',
+      challenge,
+    },
   }), 'permission-denied');
   await rejectsCode(saveSeasonChallengeHandler({
     uid: 'dev-league-admin',
-    data: { ...seasonInput, challenge },
+    data: {
+      ...seasonInput,
+      mode: 'create',
+      challengeId: 'invalid-target-challenge',
+      challenge,
+    },
   }), 'invalid-argument');
+});
+
+test('challenge cleanup still reaches a winner who left the season', async () => {
+  await db.doc('leagues/dev-league-active/seasons/season-1').update({
+    'members.dev-user': FieldValue.delete(),
+  });
+
+  await saveSeasonChallengeHandler({
+    uid: 'dev-league-admin',
+    data: {
+      ...seasonInput,
+      mode: 'update',
+      challengeId: 'dev-challenge',
+      challenge: {
+        title: 'Reto legacy corregido',
+        description: 'Descripción actualizada.',
+        targetType: 'all',
+        targetUsers: [],
+      },
+    },
+  });
+  let feat = await db.doc('users/dev-user/feats/dev-challenge').get();
+  assert.equal(
+    feat.data().instances[0].challengeTitle,
+    'Reto legacy corregido',
+  );
+
+  await deleteSeasonChallengeHandler({
+    uid: 'dev-league-admin',
+    data: { ...seasonInput, challengeId: 'dev-challenge' },
+  });
+  feat = await db.doc('users/dev-user/feats/dev-challenge').get();
+  assert.equal(feat.exists, false);
 });
 
 test('career refresh computes and writes only the authenticated user', async () => {
