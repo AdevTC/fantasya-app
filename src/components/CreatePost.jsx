@@ -101,6 +101,7 @@ export default function CreatePost() {
                             value={currentTag}
                             onChange={(e) => setCurrentTag(e.target.value)}
                             onKeyDown={handleTagInput}
+                            maxLength="32"
                             className="input !w-auto flex-grow !py-1 text-sm bg-gray-100/50 dark:bg-gray-700/50"
                             placeholder="Añade hasta 5 etiquetas (pulsa espacio)"
                             disabled={tags.length >= 5}
@@ -136,7 +137,7 @@ export default function CreatePost() {
                         <label htmlFor="imageUpload" className="cursor-pointer text-emerald-500 hover:text-emerald-600">
                             <ImageIcon size={24} />
                         </label>
-                        <input id="imageUpload" type="file" accept="image/*" onChange={handleImageChange} className="hidden"/>
+                        <input id="imageUpload" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleImageChange} className="hidden"/>
                         <p className="text-xs text-gray-500">{content.length}/280</p>
                     </div>
                     <button type="submit" disabled={loading} className="btn-primary">

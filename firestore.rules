@@ -46,6 +46,63 @@ service cloud.firestore {
         && username == get(profilePath).data.username;
     }
 
+    function isOptionalUrl(value) {
+      return value == null
+        || (value is string && value.size() <= 2048);
+    }
+
+    function isValidSocialAuthor(data) {
+      return data.authorUsername is string
+        && data.authorUsername.size() >= 3
+        && data.authorUsername.size() <= 16
+        && isOwnUsername(data.authorUsername)
+        && isOptionalUrl(data.authorPhotoURL);
+    }
+
+    function isValidTag(tag) {
+      return tag is string && tag.matches('[a-z0-9]{1,32}');
+    }
+
+    function areValidTags(tags) {
+      return tags is list
+        && tags.size() <= 5
+        && tags.size() == tags.toSet().size()
+        && (tags.size() < 1 || isValidTag(tags[0]))
+        && (tags.size() < 2 || isValidTag(tags[1]))
+        && (tags.size() < 3 || isValidTag(tags[2]))
+        && (tags.size() < 4 || isValidTag(tags[3]))
+        && (tags.size() < 5 || isValidTag(tags[4]));
+    }
+
+    function isValidPostData(data) {
+      return isValidSocialAuthor(data)
+        && data.content is string
+        && data.content.size() <= 280
+        && isOptionalUrl(data.imageURL)
+        && (data.content.size() > 0
+          || (data.imageURL is string && data.imageURL.size() > 0))
+        && areValidTags(data.tags)
+        && data.likes is list
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCommentData(data) {
+      return isValidSocialAuthor(data)
+        && data.content is string
+        && data.content.size() > 0
+        && data.content.size() <= 1000
+        && data.likes is list
+        && data.createdAt is timestamp;
+    }
+
+    function isValidReplyData(data) {
+      return isValidSocialAuthor(data)
+        && data.content is string
+        && data.content.size() > 0
+        && data.content.size() <= 1000
+        && data.createdAt is timestamp;
+    }
+
     function leagueAfter(leagueId) {
       return getAfter(
         /databases/$(database)/documents/leagues/$(leagueId)
@@ -318,7 +375,10 @@ service cloud.firestore {
           .hasAll([
             'authorId',
             'authorUsername',
+            'authorPhotoURL',
             'content',
+            'imageURL',
+            'tags',
             'createdAt',
             'likes'
           ])
@@ -332,13 +392,13 @@ service cloud.firestore {
           'createdAt',
           'likes'
         ])
-        && isOwnUsername(request.resource.data.authorUsername)
-        && request.resource.data.likes is list
+        && isValidPostData(request.resource.data)
         && request.resource.data.likes.size() == 0;
       allow update: if isAuthenticated()
         && resource.data.authorId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['content', 'imageURL', 'tags']);
+          .hasOnly(['content', 'imageURL', 'tags'])
+        && isValidPostData(request.resource.data);
       allow update: if isAuthenticated()
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['likes'])
@@ -357,6 +417,7 @@ service cloud.firestore {
             .hasAll([
               'authorId',
               'authorUsername',
+              'authorPhotoURL',
               'content',
               'createdAt',
               'likes'
@@ -369,13 +430,13 @@ service cloud.firestore {
             'createdAt',
             'likes'
           ])
-          && isOwnUsername(request.resource.data.authorUsername)
-          && request.resource.data.likes is list
+          && isValidCommentData(request.resource.data)
           && request.resource.data.likes.size() == 0;
         allow update: if isAuthenticated()
           && resource.data.authorId == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['content']);
+            .hasOnly(['content'])
+          && isValidCommentData(request.resource.data);
         allow update: if isAuthenticated()
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['likes'])
@@ -394,6 +455,7 @@ service cloud.firestore {
               .hasAll([
                 'authorId',
                 'authorUsername',
+                'authorPhotoURL',
                 'content',
                 'createdAt'
               ])
@@ -404,11 +466,12 @@ service cloud.firestore {
               'content',
               'createdAt'
             ])
-            && isOwnUsername(request.resource.data.authorUsername);
+            && isValidReplyData(request.resource.data);
           allow update: if isAuthenticated()
             && resource.data.authorId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['content']);
+              .hasOnly(['content'])
+            && isValidReplyData(request.resource.data);
           allow delete: if isAuthenticated()
             && (resource.data.authorId == request.auth.uid || isSuperAdmin());
         }

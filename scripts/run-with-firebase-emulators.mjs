@@ -7,6 +7,7 @@ import {
   terminateWindowsProcessTree,
   waitForLocalPortsAvailable,
 } from './emulator-processes.mjs';
+import { assertNodeVersion } from './check-node-version.mjs';
 
 const PROJECT_ID = 'demo-fantasya';
 const EMULATORS = 'auth,firestore,functions,storage';
@@ -77,6 +78,7 @@ function startWindowsCleanupWatchdog({
 }
 
 async function main() {
+  assertNodeVersion();
   const { command, withUi } = parseArguments(process.argv.slice(2));
   const projectRoot = process.cwd();
   const firebaseCli = resolve(

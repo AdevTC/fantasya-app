@@ -296,6 +296,67 @@ test('post creation, author edits and reactions preserve ownership', async () =>
   }));
 });
 
+test('social payloads reject oversized or malformed client data', async () => {
+  const memberDb = env.authenticatedContext(IDS.member).firestore();
+  const validPost = {
+    authorId: IDS.member,
+    authorUsername: 'member',
+    authorPhotoURL: null,
+    content: 'Contenido válido',
+    imageURL: null,
+    tags: ['local'],
+    likes: [],
+    createdAt: new Date(),
+  };
+
+  await assertFails(setDoc(doc(memberDb, 'posts', 'oversized-post'), {
+    ...validPost,
+    content: 'x'.repeat(281),
+  }));
+  await assertFails(setDoc(doc(memberDb, 'posts', 'malformed-tags'), {
+    ...validPost,
+    tags: 'local',
+  }));
+  await assertFails(setDoc(doc(memberDb, 'posts', 'too-many-tags'), {
+    ...validPost,
+    tags: ['one', 'two', 'three', 'four', 'five', 'six'],
+  }));
+  await assertFails(setDoc(doc(memberDb, 'posts', 'invalid-photo'), {
+    ...validPost,
+    authorPhotoURL: 42,
+  }));
+
+  await assertFails(setDoc(doc(
+    memberDb,
+    'posts',
+    POST_ID,
+    'comments',
+    'oversized-comment',
+  ), {
+    authorId: IDS.member,
+    authorUsername: 'member',
+    authorPhotoURL: null,
+    content: 'x'.repeat(1001),
+    likes: [],
+    createdAt: new Date(),
+  }));
+  await assertFails(setDoc(doc(
+    memberDb,
+    'posts',
+    POST_ID,
+    'comments',
+    COMMENT_ID,
+    'replies',
+    'malformed-reply',
+  ), {
+    authorId: IDS.member,
+    authorUsername: 'member',
+    authorPhotoURL: null,
+    content: ['not', 'text'],
+    createdAt: new Date(),
+  }));
+});
+
 test('superadmin can moderate posts while a normal outsider cannot', async () => {
   const outsiderDb = env.authenticatedContext(IDS.outsider).firestore();
   await assertFails(deleteDoc(doc(outsiderDb, 'posts', POST_ID)));

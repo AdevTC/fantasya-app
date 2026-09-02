@@ -17,7 +17,6 @@ export default function Comment({ comment, postId }) {
     const [showReplyInput, setShowReplyInput] = useState(false);
     const [replyContent, setReplyContent] = useState('');
     const [replies, setReplies] = useState([]);
-    const [loadingReplies, setLoadingReplies] = useState(true);
 
     const isLiked = user ? likes.includes(user.uid) : false;
 
@@ -39,7 +38,6 @@ export default function Comment({ comment, postId }) {
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             setReplies(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            setLoadingReplies(false);
         });
 
         return () => unsubscribe();
@@ -122,6 +120,7 @@ export default function Comment({ comment, postId }) {
                             onChange={e => setReplyContent(e.target.value)}
                             className="input flex-1 !py-1 !px-2 text-sm dark:bg-gray-600"
                             placeholder="Escribe una respuesta..."
+                            maxLength="1000"
                         />
                     </form>
                 )}

@@ -7,10 +7,12 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "check": "node --check index.js",
     "seed:emulators": "node scripts/seed-emulators.js",
     "test:unit": "node --test test/emulator-guard.test.js",
     "test:seed": "node --test test/seed-emulators.integration.test.js",
     "test:integrity": "node --test --test-concurrency=1 test/season-authz.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js",
+    "test:all": "node --test --test-concurrency=1 test/emulator-guard.test.js test/seed-emulators.integration.test.js test/emulator-reset.integration.test.js test/authz.integration.test.js test/profile.integration.test.js test/roles.integration.test.js test/team-unlink.integration.test.js test/xp.integration.test.js test/player-sync.integration.test.js test/season-authz.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js",
     "test:admin": "node --test --test-concurrency=1 test/emulator-reset.integration.test.js test/authz.integration.test.js test/season-authz.integration.test.js test/profile.integration.test.js test/roles.integration.test.js test/team-unlink.integration.test.js test/xp.integration.test.js test/player-sync.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js"
   },
   "engines": {
