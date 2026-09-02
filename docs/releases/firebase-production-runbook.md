@@ -14,13 +14,18 @@ Producción está fijada a:
 
 La sincronización de Football Data queda fuera de esta release. El fixture y los
 controles de sync del cliente nuevo se usan exclusivamente en desarrollo con
-emuladores. El frontend de producción no solicita sync: lee el catálogo de
-jugadores desde Firestore en modo de sólo lectura. Aun así, los tres endpoints
-legacy relacionados con esta capacidad —`syncLaLigaPlayers`,
+emuladores. Cuando Vercel haya activado el frontend nuevo para su SHA exacto,
+éste no solicitará sync: leerá el catálogo de jugadores desde Firestore en modo
+de sólo lectura. Antes del merge y mientras producción todavía sirva el frontend
+legacy, éste puede seguir invocando las Functions legacy. Por eso esas llamadas
+previas son esperables y no pueden usarse para iniciar ni evaluar la ventana de
+retirada.
+
+Los tres endpoints relacionados con esta capacidad —`syncLaLigaPlayers`,
 `getLaLigaSyncStatus` y `clearLaLigaPlayers`— siguen desplegados temporalmente
-para mantener la compatibilidad. Estos endpoints legacy no deben invocarse ni
-retirarse hasta superar el gate de observación de 24 horas y la aprobación
-separada de la fase 7.
+para mantener la compatibilidad. No deben invocarse manualmente ni retirarse
+hasta superar el gate de observación de 24 horas y la aprobación separada de la
+fase 7.
 
 ## Puertas obligatorias antes de empezar
 
@@ -204,13 +209,102 @@ y conservar logs y tiempos sin copiar datos personales ni secretos.
 
 ## Fase 7: retirada posterior de las Functions legacy
 
-Esta fase no forma parte del despliegue inicial. Tras al menos 24 horas de
-producción estable, observar individualmente durante una ventana continua de
-24 horas estas tres Functions:
+Esta fase no forma parte del despliegue inicial. La ventana válida no empieza
+con el despliegue de Functions, con la apertura o merge de la PR ni con un check
+de Vercel pendiente. Definir `T0` sólo después de comprobar en Vercel que el
+frontend nuevo está activo en producción con el SHA exacto del merge y de
+registrar ese SHA, la URL del deployment y la hora de confirmación en UTC. Las
+llamadas anteriores a `T0`, incluidas las del frontend legacy antes del merge,
+no invalidan la observación; tampoco cuentan como parte de ella.
+
+Fijar `START_UTC = T0` y `END_UTC = T0 + 24 horas`, ambos como timestamps RFC
+3339 terminados en `Z`, por ejemplo `2026-09-03T10:00:00Z` y
+`2026-09-04T10:00:00Z`. No mover los extremos después de iniciar la ventana.
+La consulta de Cloud Monitoring usa el intervalo exacto
+(`startTime`, `endTime`], por lo que la ventana observada empieza inmediatamente
+después de la confirmación `T0` y termina incluyendo `END_UTC`.
+
+Observar individualmente durante esa ventana continua estas tres Functions:
 
 - `syncLaLigaPlayers`;
 - `getLaLigaSyncStatus`;
 - `clearLaLigaPlayers`.
+
+Son Functions de 2nd gen. La evidencia de invocaciones se obtiene de la métrica
+GA `run.googleapis.com/request_count`, tipo `DELTA`/`INT64`, sobre el recurso
+`cloud_run_revision`; no se debe sustituir por una métrica de Functions 1st gen.
+La métrica cuenta las solicitudes que alcanzan la revisión, se muestrea cada 60
+segundos y puede tardar hasta 120 segundos en aparecer. Esperar, por tanto, hasta
+al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
+
+### Procedimiento de observación reproducible y de sólo lectura
+
+1. Resolver primero el nombre real de servicio Cloud Run de cada Function, sin
+   asumir que coincide con el nombre exportado. Este comando es de sólo lectura
+   y proyecta únicamente el nombre de Function y `serviceConfig.service`; no usar
+   JSON completo ni ampliar la proyección:
+
+   ```powershell
+   $FunctionNames = @(
+     'syncLaLigaPlayers',
+     'getLaLigaSyncStatus',
+     'clearLaLigaPlayers'
+   )
+   foreach ($FunctionName in $FunctionNames) {
+     gcloud functions describe $FunctionName `
+       --v2 `
+       --project=tictaktools `
+       --region=us-central1 `
+       --format='csv[no-heading](name,serviceConfig.service)'
+   }
+   ```
+
+   Conservar la salida sanitizada. El último segmento de
+   `projects/tictaktools/locations/us-central1/services/SERVICE_NAME` es el valor
+   `SERVICE_NAME` que se consultará. La API v2 documenta
+   [`serviceConfig.service`](https://cloud.google.com/functions/docs/reference/rest/v2/projects.locations.functions#ServiceConfig)
+   como el servicio asociado a una Function.
+
+2. Para cada uno de los tres `SERVICE_NAME`, abrir el método de sólo lectura
+   [`projects.timeSeries.list`](https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list)
+   en APIs Explorer y ejecutar una consulta independiente con:
+
+   - `name`: `projects/tictaktools`;
+   - `interval.startTime`: el `START_UTC` registrado;
+   - `interval.endTime`: el `END_UTC` registrado;
+   - `view`: `FULL`;
+   - `filter`, sin filtrar código de respuesta ni revisión:
+
+     ```text
+     metric.type = "run.googleapis.com/request_count" AND
+     resource.type = "cloud_run_revision" AND
+     resource.labels.location = "us-central1" AND
+     resource.labels.service_name = "SERVICE_NAME"
+     ```
+
+   Seguir cada `nextPageToken` hasta que no exista otro. Así entran todas las
+   revisiones y todas las clases/códigos de respuesta del servicio en la ventana.
+   La referencia oficial de
+   [métricas de Cloud Run](https://cloud.google.com/monitoring/api/metrics_gcp_p_z#run/request_count)
+   define la métrica y sus etiquetas; la guía de
+   [lectura de series](https://cloud.google.com/monitoring/custom-metrics/reading-metrics)
+   define el intervalo y explica que sólo se devuelven series con puntos dentro
+   de él.
+
+3. Sumar `points[].value.int64Value` de todas las páginas para cada servicio.
+   Cualquier valor positivo bloquea la retirada y obliga a iniciar una nueva
+   ventana desde otro `T0` posterior. Una respuesta satisfactoria y completa sin
+   `timeSeries` equivale a cero solicitudes registradas para ese filtro e
+   intervalo; un error, una respuesta no paginada por completo o una consulta
+   distinta no equivale a cero. La captura de Metrics Explorer que muestre `No
+   data` por sí sola tampoco basta.
+
+4. Conservar en la PR o ticket un artefacto de evidencia con: SHA y URL de Vercel,
+   `START_UTC`/`END_UTC`, salida sanitizada de los tres mapeos Function-servicio,
+   filtro literal, respuesta JSON de todas las páginas por servicio, suma final
+   individual y una captura donde sean visibles proyecto, métrica, filtros y
+   rango UTC. No guardar tokens, cabeceras de autorización, secretos ni datos
+   personales.
 
 No borrar ninguna si cualquiera registra una llamada, faltan datos de
 observación, el frontend del SHA nuevo no está confirmado o existe una anomalía
