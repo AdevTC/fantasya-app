@@ -12,3 +12,18 @@ export const submitJoinRequest = (input) =>
 
 export const reviewJoinRequest = (input) =>
   call('reviewJoinRequest', input);
+
+export const replaceSeasonTrophies = (input) =>
+  call('replaceSeasonTrophies', input);
+
+export const saveSeasonChallenge = (input) =>
+  call('saveSeasonChallenge', input);
+
+export const deleteSeasonChallenge = (input) =>
+  call('deleteSeasonChallenge', input);
+
+export const setChallengeWinners = (input) =>
+  call('setChallengeWinners', input);
+
+export const refreshCareerAchievements = () =>
+  call('refreshCareerAchievements', {});

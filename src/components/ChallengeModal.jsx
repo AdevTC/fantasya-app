@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { doc, setDoc, collection, serverTimestamp, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { X, Send, User, Users, UserCheck } from 'lucide-react';
+import { saveSeasonChallenge } from '../services/league-api';
 
 export default function ChallengeModal({ isOpen, onClose, league, season, existingChallenge }) {
     const [title, setTitle] = useState('');
@@ -58,50 +57,16 @@ export default function ChallengeModal({ isOpen, onClose, league, season, existi
                 targetUsers,
             };
 
-            const batch = writeBatch(db);
-
-            if (existingChallenge) {
-                // Actualizar el documento principal del reto
-                const challengeRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'challenges', existingChallenge.id);
-                batch.update(challengeRef, challengeData);
-
-                // Si el reto tiene ganadores, actualizar sus documentos de hazañas
-                if (existingChallenge.winners && existingChallenge.winners.length > 0) {
-                    for (const winner of existingChallenge.winners) {
-                        const featRef = doc(db, 'users', winner.uid, 'feats', existingChallenge.id);
-                        const featSnap = await getDoc(featRef); // Necesitamos leer el documento primero
-
-                        if (featSnap.exists()) {
-                            const featData = featSnap.data();
-                            const updatedInstances = featData.instances.map(instance => {
-                                // Actualizamos solo la instancia de esta temporada/liga específica
-                                if (instance.seasonName === season.name && instance.leagueName === league.name) {
-                                    return {
-                                        ...instance,
-                                        challengeTitle: title,
-                                        description: description
-                                    };
-                                }
-                                return instance;
-                            });
-                            batch.update(featRef, { instances: updatedInstances });
-                        }
-                    }
-                }
-                await batch.commit();
-                toast.success('¡Reto actualizado!', { id: loadingToast });
-
-            } else {
-                const challengesRef = collection(db, 'leagues', league.id, 'seasons', season.id, 'challenges');
-                const newChallengeRef = doc(challengesRef);
-                await setDoc(newChallengeRef, {
-                    ...challengeData,
-                    status: 'active',
-                    winners: [],
-                    createdAt: serverTimestamp(),
-                });
-                toast.success('¡Reto creado correctamente!', { id: loadingToast });
-            }
+            await saveSeasonChallenge({
+                leagueId: league.id,
+                seasonId: season.id,
+                ...(existingChallenge ? { challengeId: existingChallenge.id } : {}),
+                challenge: challengeData,
+            });
+            toast.success(
+                existingChallenge ? '¡Reto actualizado!' : '¡Reto creado correctamente!',
+                { id: loadingToast },
+            );
             onClose();
         } catch (error) {
             console.error("Error al guardar el reto:", error);

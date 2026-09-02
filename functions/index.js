@@ -31,6 +31,13 @@ const {
   reviewJoinRequestHandler,
   submitJoinRequestHandler,
 } = require('./handlers/membership');
+const {
+  deleteSeasonChallengeHandler,
+  refreshCareerAchievementsHandler,
+  replaceSeasonTrophiesHandler,
+  saveSeasonChallengeHandler,
+  setChallengeWinnersHandler,
+} = require('./handlers/season-awards');
 
 const browserOrigins = [
   'https://fantasya-app.vercel.app',
@@ -83,6 +90,46 @@ exports.submitJoinRequest = onCall(
 exports.reviewJoinRequest = onCall(
   { region: 'us-central1', cors: browserOrigins },
   (request) => reviewJoinRequestHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.replaceSeasonTrophies = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => replaceSeasonTrophiesHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.saveSeasonChallenge = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => saveSeasonChallengeHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.deleteSeasonChallenge = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => deleteSeasonChallengeHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.setChallengeWinners = onCall(
+  { region: 'us-central1', cors: browserOrigins },
+  (request) => setChallengeWinnersHandler({
+    uid: requireAuth(request),
+    data: request.data,
+  }),
+);
+
+exports.refreshCareerAchievements = onCall(
+  { region: 'us-central1', timeoutSeconds: 120, cors: browserOrigins },
+  (request) => refreshCareerAchievementsHandler({
     uid: requireAuth(request),
     data: request.data,
   }),
