@@ -103,8 +103,7 @@ Estado comprobado el 2 de septiembre de 2026 con `npm audit --omit=dev`:
 - Functions no tiene avisos altos ni críticos. npm informa de 7 avisos
   moderados que corresponden a una única vulnerabilidad transitiva de `uuid`
   incluida por la ruta de Cloud Storage de la versión más reciente de
-  `firebase-admin`. El código de Functions de Fantasya no usa ese cliente de
-  Storage.
+  `firebase-admin`.
 - npm sólo ofrece resolverlos con `--force`, bajando a
   `firebase-admin@10.3.0`. No se aplica: introduciría una versión antigua y un
   cambio incompatible. Debe reevaluarse cuando Google publique una cadena de
@@ -120,9 +119,9 @@ del runtime desplegado; se mantienen actualizadas y se revisan por separado.
 | --- | --- | --- | --- |
 | Clonar, crear ramas, push y PR | Sí para colaborar | Disponible; repositorio público y permiso `WRITE` | GitHub `JordiSRodriguez` sobre `AdevTC/fantasya-app` |
 | Auth, Firestore, Functions y Storage Emulator | Sí | Disponible sin login cloud | Proyecto ficticio `demo-fantasya` |
-| Firebase producción | Sólo para release | Login y proyecto visibles; el test IAM de solo lectura pasó para Functions, reglas, índices, metadatos de secretos, `iam.serviceAccounts.actAs` y ajustes IAM | `jordisumba@gmail.com`, proyecto `tictaktools` |
-| Sincronización real de LaLiga | Sólo para sync real en producción | Bloqueada: falta el secreto `FOOTBALL_DATA_API_KEY` | Preparar una clave existente o una cuenta en football-data.org antes de esa release |
-| Preview automático de Vercel | Sólo tras push/PR aprobado | Disponible; la integración GitHub existente desplegó correctamente la PR #3 | No requiere login en Vercel ni una plaza Pro; tratar el preview como producción mientras use `tictaktools` |
+| Firebase producción | Sólo para release | Firebase CLI autenticado y proyecto visible; los permisos fueron comprobados mediante consultas de solo lectura | `jordisumba@gmail.com`, proyecto `tictaktools`; revalidar en cada preflight |
+| Sincronización real de LaLiga | No en el rollout actual | Desactivada y diferida; producción consume el catálogo guardado en Firestore en modo de sólo lectura | No se necesita cuenta ni secreto ahora; rotar la credencial expuesta antes de diseñar cualquier reactivación |
+| Preview/deployment Git de Vercel | Sólo tras push/PR aprobado | Disponible mediante la integración del repositorio público; el check del SHA exacto debe confirmarlo en cada release | La colaboración pública no exige una plaza Pro; tratar el preview como producción mientras use `tictaktools` |
 | Variables, dominio y ajustes de Vercel | Sólo si cambian | Sin acceso local: no hay Vercel CLI ni vínculo `.vercel/project.json` | Lo realiza el owner del proyecto Vercel |
 | Gmail | No | No conectado ni inspeccionado | No hace falta; Firebase CLI ya está autenticado |
 
@@ -130,14 +129,20 @@ La prueba IAM es una fotografía puntual, no una concesión nueva de permisos. N
 leyó datos de usuarios, valores de secretos ni políticas; sólo preguntó qué
 acciones permite la identidad activa.
 
-No hace falta iniciar ninguna sesión adicional para desarrollar. Antes de la
-sincronización real hará falta la clave de football-data.org. La
-[integración Git de Vercel](https://vercel.com/docs/git) existente genera los
-previews de las ramas y PR del repositorio público: quedó comprobado con la PR
-#3 y un commit de Jordi. Esto no concede a Jordi acceso al dashboard del
-proyecto. El owner sigue siendo necesario para variables, dominio, ajustes,
-promociones manuales o para autorizar un preview si Vercel lo solicita. El flujo
-Git actual no necesita añadir una plaza Pro.
+No hace falta iniciar ninguna sesión adicional para desarrollar ni para la
+release sin sincronización. La credencial de Football Data expuesta
+anteriormente debe rotarse en una tarea dedicada antes de reactivar esa
+integración; no se consulta, comparte ni valida su valor en este setup.
+
+La [integración Git de Vercel](https://vercel.com/docs/git) permite deployments
+de ramas y PR. Vercel distingue la
+[colaboración gratuita en repositorios públicos](https://vercel.com/docs/deployments/troubleshoot-project-collaboration)
+de los proyectos Hobby privados, donde sólo puede desplegar el owner, y puede
+pedir autorización para forks públicos. Por eso la disponibilidad de esta
+release se confirma con el check de Vercel del SHA exacto, no se da por hecha
+por un acceso histórico. Esto no concede a Jordi acceso al dashboard. El owner
+sigue siendo necesario para variables, dominio, ajustes, promociones manuales
+o para autorizar un deployment si Vercel lo solicita.
 
 ## Frontera de producción
 

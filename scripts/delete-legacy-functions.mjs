@@ -10,12 +10,13 @@ import {
 } from './production-preflight.mjs';
 
 export const LEGACY_DELETE_CONFIRMATION =
-  'delete tictaktools syncLaLigaPlayers getLaLigaSyncStatus';
+  'delete tictaktools syncLaLigaPlayers getLaLigaSyncStatus clearLaLigaPlayers';
 
 export const LEGACY_DELETE_ARGUMENTS = Object.freeze([
   'functions:delete',
   'syncLaLigaPlayers',
   'getLaLigaSyncStatus',
+  'clearLaLigaPlayers',
   '--region',
   'us-central1',
   '--project',

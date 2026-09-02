@@ -1,138 +1,164 @@
 # Runbook de release Firebase y Vercel
 
-Este documento prepara una release compatible y reversible. No autoriza ningún
-push, merge, secreto, cambio IAM, despliegue ni escritura de prueba en
-producción. Cada fase necesita aprobación explícita en el momento de ejecutarla.
+Este procedimiento publica la migración V2 de forma aditiva, comprobable y
+reversible. No autoriza por sí mismo ningún push, merge, despliegue, cambio IAM
+ni escritura en producción: cada grupo mutable requiere aprobación explícita en
+el momento de ejecutarlo.
 
 Producción está fijada a:
 
 - repositorio `https://github.com/AdevTC/fantasya-app.git`;
-- rama `main`;
 - Firebase `tictaktools` con `jordisumba@gmail.com`;
-- integración Git/Vercel propiedad del owner actual.
+- región `us-central1` y runtime `nodejs22` para todas las Functions;
+- despliegue web mediante la integración Git de Vercel del repositorio.
 
-## Puerta obligatoria
+La sincronización de Football Data queda fuera de esta release. En producción
+el catálogo de jugadores se lee desde Firestore y no intenta sincronizarse. El
+fixture y el sync sólo permanecen activos en desarrollo con emuladores.
 
-No empezar mientras falte cualquiera de estos puntos:
+## Puertas obligatorias antes de empezar
 
-1. Node 22 y Java 21 o superior están activos.
-2. `npm ci` y `npm --prefix functions ci` parten de los lockfiles de la release.
-3. `npm run verify` termina con código 0 dos veces desde sesiones limpias si ha
-   cambiado infraestructura de emuladores.
-4. La CI de GitHub está verde para el SHA exacto que se pretende publicar.
-5. `main` está limpia, usa el `origin` canónico y coincide con `origin/main`.
-6. `npm run production:preflight` termina con código 0 y muestra exactamente
-   `jordisumba@gmail.com`, `tictaktools` visible y divergencia cero. El comando
-   hace `git fetch` y actualiza referencias locales, pero no escribe remotamente.
-7. El preflight muestra `FOOTBALL_DATA_API_KEY metadata: present` antes de
-   desplegar el grupo de sync.
-8. Hay una pestaña de Firebase Console abierta sólo para observar Functions y
-   logs. Nunca se muestra el valor del secreto.
-9. La integración Git de Vercel puede publicar el SHA y su check permite
-   observar el build; quedó comprobado con la PR #3. El owner está disponible
-   sólo si hacen falta ajustes o autorización.
-10. Existe aprobación explícita para la fase concreta y un responsable disponible
-    durante la comprobación y posible rollback.
+No iniciar la fase 1 mientras falte cualquiera de estas condiciones:
 
-Firebase documenta que el despliegue de Functions requiere Cloud Functions
-Admin y Service Account User, y que reglas e índices tienen permisos propios:
-[permisos IAM de Firebase](https://firebase.google.com/docs/projects/iam/permissions).
-La comprobación de solo lectura del 2 de septiembre de 2026 confirmó esos
-permisos para Jordi, pero se vuelve a validar el estado al preparar la release.
+1. Node 22 y Java 21 o superior están activos; los dos lockfiles están
+   instalados con `npm ci` y `npm --prefix functions ci`.
+2. `npm run verify` termina con código 0 y la rama de la PR está limpia y
+   publicada en su upstream.
+3. La CI de GitHub y el check de Vercel están verdes para el SHA exacto de la
+   PR. No vale un resultado de otro commit.
+4. El preflight confirma el repositorio canónico, una sola PR abierta no draft
+   contra `main`, SHA coincidente, estado mergeable limpio, Firebase
+   `tictaktools` visible y la cuenta esperada activa.
+5. Una persona con acceso de billing confirma que el proyecto tiene alertas de
+   presupuesto activas y destinatarios atendidos. Las alertas pueden retrasarse
+   y no son un límite de gasto; se comprueba también cualquier control de gasto
+   aplicable, incluido el spend cap de Cloud Run Functions si está disponible,
+   antes de publicar. Véase
+   [evitar facturas inesperadas](https://firebase.google.com/docs/projects/billing/avoid-surprise-bills).
+6. Functions, Cloud Logging y Vercel permiten observar invocaciones, errores y
+   el SHA publicado. Firebase documenta la consulta en
+   [escritura y visualización de logs](https://firebase.google.com/docs/functions/writing-and-viewing-logs).
+7. Hay una persona responsable durante toda la ventana, con el commit anterior
+   identificado y capacidad de parar o revertir.
 
-## Preparar el secreto de fútbol, sólo si falta
+No se inspecciona ningún valor ni metadato de secretos en este rollout. Está
+prohibido leer secretos y también usar la salida JSON de `functions:list`, ya
+que puede revelar información que no forma parte del inventario requerido. Los
+inventarios usan únicamente la proyección sanitizada de Cloud Functions v2:
+nombre, región, runtime y estado.
 
-El entorno local usa fixture y no necesita una clave real. Si el preflight de
-producción informa `missing`, detener la release y conseguir una clave legítima
-de football-data.org. No enviarla por chat ni guardarla en `.env`, historial de
-PowerShell, GitHub, Vercel, documentación o capturas.
+## Umbrales de pausa y rollback
 
-Después de una aprobación específica, crear o actualizar el secreto con el CLI
-local ya fijado por el lockfile:
+Mantener abiertos Functions/Cloud Logging, los checks de GitHub y el deployment
+de Vercel durante todas las fases. Registrar hora, SHA, grupo y conteos antes y
+después de cada cambio.
 
-```powershell
-& .\node_modules\.bin\firebase.cmd functions:secrets:set FOOTBALL_DATA_API_KEY --project tictaktools --account jordisumba@gmail.com
-```
+Pausar de inmediato y no iniciar el siguiente grupo si ocurre cualquiera:
 
-El valor se introduce únicamente en el prompt interactivo. Firebase explica
-este flujo en su guía de
-[Secret Manager para Functions](https://firebase.google.com/docs/functions/config-env#secret_parameters).
-Volver a ejecutar `npm run production:preflight` y exigir estado `present`; no
-usar `functions:secrets:access`, porque mostraría el valor.
+- falla un despliegue, un check o el inventario exacto;
+- una Function nueva no queda `ACTIVE` en `us-central1` con `nodejs22`;
+- el smoke controlado produce un error inesperado, una escritura parcial o un
+  `permission-denied`;
+- aparecen 5 o más errores de aplicación en 10 minutos en las rutas tocadas;
+- con al menos 100 invocaciones en 10 minutos, la tasa de error supera el 1 %;
+- las invocaciones de una ruta tocada superan 3 veces la misma ventana de la
+  semana anterior sin que el tráfico o el smoke lo expliquen, o superan 100 en
+  10 minutos cuando aún no existe una referencia comparable;
+- Vercel publica un SHA distinto o faltan variables necesarias.
 
-## Fase A: Functions aditivas y compatibles
+Hacer rollback, en vez de limitarse a pausar, ante datos incoherentes, acceso no
+autorizado, escritura parcial, crecimiento sostenido durante otros 10 minutos
+después de pausar el tráfico de prueba, o repetición del mismo error tras un
+reintento controlado. Ante una señal de coste, detener nuevas pruebas y avisar
+al responsable de billing; una alerta no garantiza que el gasto se detenga.
 
-Con aprobación explícita, ejecutar un grupo cada vez:
+App Check **no se fuerza en este rollout** porque el cliente aún no está
+preparado para aportar attestations verificables. Se acepta temporalmente el
+riesgo residual de abuso, mitigado por autenticación, validación y rate limits.
+Antes de ampliar la audiencia se deben instrumentar y observar las métricas de
+peticiones verificadas/no verificadas, preparar los clientes y decidir una
+activación gradual. Firebase recomienda revisar primero
+[métricas de App Check](https://firebase.google.com/docs/app-check/monitor-metrics)
+y después configurar su
+[aplicación en Cloud Functions](https://firebase.google.com/docs/app-check/cloud-functions).
 
-```powershell
-npm run deploy:prod:functions:core
-npm run deploy:prod:functions:sync
-npm run deploy:prod:functions:league
-```
+## Fase 1: Functions aditivas antes del merge
 
-Cada wrapper vuelve a comprobar Git/Firebase, exige una confirmación literal y
-fija cuenta, proyecto y lista de Functions. Si un grupo falla, detener la fase;
-no continuar con el siguiente. Los grupos tienen diez Functions o menos, como
-recomienda Firebase para evitar cuotas durante despliegues grandes:
-[gestión de Functions](https://firebase.google.com/docs/functions/manage-functions#deploy_functions).
-
-El resultado esperado es:
-
-| Grupo | Functions |
-| --- | --- |
-| core | `createProfileDocuments`, `unlinkUserFromTeam`, `setUserAppRole`, `createOrGetChat`, `onPostCreatedAwardXp`, `onTransferCreatedAwardXp`, `recalculateXp` |
-| sync | `syncLaLigaPlayersV2`, `getLaLigaSyncStatusV2`, `syncLaLigaPlayers`, `getLaLigaSyncStatus` |
-| league | `joinSeasonByInviteCode`, `submitJoinRequest`, `reviewJoinRequest`, `replaceSeasonTrophies`, `saveSeasonChallenge`, `deleteSeasonChallenge`, `setChallengeWinners`, `refreshCareerAchievements` |
-
-Los dos endpoints sync legacy se vuelven a desplegar con los handlers endurecidos
-para mantener el frontend anterior durante la ventana de compatibilidad. No
-existe una Function `onSeasonJoin`: el alta directa se sustituyó deliberadamente
-por `joinSeasonByInviteCode` y los flujos de solicitud/revisión.
-
-Comprobar el inventario sin cambiarlo:
+Trabajar desde la rama publicada de la PR. Registrar el SHA completo:
 
 ```powershell
-& .\node_modules\.bin\firebase.cmd functions:list --project tictaktools --account jordisumba@gmail.com
+git rev-parse HEAD
+npm run production:preflight:pr
+npm run production:functions:inventory -- baseline
 ```
 
-Observar logs y cold starts. No avanzar ante error de carga, secreto, permisos,
-región o runtime.
+El preflight exige el mismo SHA en Git, en la PR y en sus checks. Cada wrapper
+es interactivo, vuelve a comprobar ese estado tras la confirmación literal y
+valida inventarios exactos antes y después. Con una aprobación independiente
+por grupo, ejecutar en este orden y detenerse ante cualquier desviación:
 
-## Fase B: frontend mediante GitHub y Vercel
+```powershell
+npm run deploy:prod:pr:functions:core-v2
+npm run production:functions:inventory -- core-v2
 
-El permiso GitHub `WRITE` de Jordi no concede acceso al dashboard de Vercel,
-pero la [integración Git de Vercel](https://vercel.com/docs/git) del repositorio
-público sí generó correctamente el preview de la PR #3. El flujo habitual no
-requiere una plaza Pro ni que el owner dispare cada preview. El owner conserva
-variables, dominio, ajustes y promociones manuales; tampoco se crea un segundo
-proyecto Vercel como atajo.
+npm run deploy:prod:pr:functions:league
+npm run production:functions:inventory -- league
 
-1. Tras aprobación, abrir la PR o hacer el push previsto y registrar
-   `git rev-parse HEAD`.
-2. Esperar la CI verde del SHA exacto.
-3. Esperar el check automático de Vercel. Si no aparece o solicita autorización,
-   pedir al owner que revise la conexión GitHub o autorice ese deployment.
-4. Confirmar que el deployment resultante declara el SHA esperado. No basta con
-   que la URL responda.
-5. Si faltan variables `VITE_*`, detenerse y pedir al owner que restaure las del
-   proyecto actual. No copiar valores a chat ni inventar un proyecto nuevo.
+npm run deploy:prod:pr:functions:content-v2
+npm run production:functions:inventory -- content-v2
+```
 
-Primero hacer smoke de sólo lectura sobre la URL canónica indicada por Vercel:
+Los grupos sólo añaden Functions; no sustituyen ni eliminan las siete del
+inventario inicial. `onSeasonJoin` ya existe en producción y permanece intacta.
+Tras cada grupo revisar logs, los umbrales anteriores y el inventario completo.
 
-- cargar login y cerrar sesión;
-- abrir dashboard, una liga existente, perfil, feed y lista de chats;
-- revisar consola del navegador y errores de red;
-- confirmar que no aparece el banner de emuladores.
+## Fase 2: merge sólo tras los tres inventarios
 
-Las pruebas que escriban datos requieren una aprobación separada y una cuenta o
-escenario designado. Sólo usar cambios reversibles y consentidos, por ejemplo
-editar/restaurar una bio o crear/eliminar una publicación desechable. Nunca
-ejecutar el fixture local contra producción ni fabricar solicitudes, equipos o
-mensajes con datos reales para completar una checklist.
+No mergear hasta que `core-v2`, `league` y `content-v2` hayan terminado con
+sus inventarios exactos, la rama siga limpia y el SHA de la PR conserve todos
+sus checks verdes. Registrar los resultados en la PR o ticket y entonces
+solicitar la aprobación específica del merge.
 
-## Fase C: índices y reglas restrictivas
+## Fase 3: esperar `main` y Vercel
 
-Sólo después de que el frontend nuevo funcione con las reglas anteriores:
+Registrar el SHA del merge y esperar a que finalicen tanto la CI de `main` como
+el check/deployment de Vercel para ese SHA exacto. Una URL accesible o un check
+verde de un commit anterior no sirven. Si el check de Vercel no aparece, o el
+proceso solicita autorización o cambios de variables/dashboard, detenerse y
+pedir al owner que lo revise.
+
+La [integración Git de Vercel](https://vercel.com/docs/git) permite deployments
+desde Git. Su documentación de
+[colaboración en proyectos](https://vercel.com/docs/deployments/troubleshoot-project-collaboration)
+distingue la colaboración gratuita en repositorios públicos de los proyectos
+Hobby privados, restringidos al owner; los forks públicos pueden requerir
+autorización. Este repositorio/PR se acepta sólo cuando el check del SHA exacto
+lo confirma. Eso no demuestra acceso de Jordi al dashboard, variables, dominio
+o ajustes, que siguen siendo owner-only.
+
+## Fase 4: smoke de producción
+
+Primero realizar un smoke estrictamente de sólo lectura:
+
+- abrir login y cerrar sesión;
+- cargar dashboard, una liga existente, perfil, feed, chat y catálogo de
+  jugadores;
+- confirmar que el catálogo procede de Firestore y que no aparece control de
+  sync ni banner de emuladores;
+- revisar consola, red, logs de Functions y SHA mostrado por Vercel.
+
+Sólo si lo anterior está limpio y existe aprobación separada, realizar un smoke
+funcional controlado con cuentas y participantes designados: crear/eliminar una
+publicación desechable propia, editar/restaurar un campo seguro del perfil y,
+si hay consentimiento del receptor, enviar un mensaje normal. Verificar que un
+reintento no duplica contenido ni XP. No inventar solicitudes, equipos,
+transferencias o mensajes con datos reales para completar la checklist.
+
+## Fase 5: índices, reglas y Storage desde `main`
+
+Sincronizar un checkout limpio de `main` con `origin/main`, volver a ejecutar
+`npm run verify` y `npm run production:preflight`. Con una aprobación distinta
+para cada grupo, ejecutar en orden:
 
 ```powershell
 npm run deploy:prod:indexes
@@ -140,71 +166,74 @@ npm run deploy:prod:firestore
 npm run deploy:prod:storage
 ```
 
-Detenerse tras cada comando y comprobar logs y smoke. `storage.rules` consulta
-documentos de Firestore mediante `firestore.get`. La primera publicación puede
-pedir conceder a la cuenta de servicio de Storage el rol
-`roles/firebaserules.firestoreServiceAgent`. Firebase documenta ese enlace en
-[reglas cross-service de Storage](https://firebase.google.com/docs/rules/manage-deploy#manage_permissions_for_cross-service_cloud_storage_security_rules).
+Cada wrapper exige `main`, divergencia cero, terminal interactiva, proyecto y
+cuenta fijos, confirmación literal y recheck del estado. Después de cada grupo,
+repetir el smoke aplicable y revisar los umbrales. Si Storage solicita el rol
+cross-service documentado por Firebase, detenerse: verificar proyecto y
+principal, y aceptar sólo con una aprobación IAM específica.
 
-Aceptar ese prompt sólo con aprobación explícita, verificando que el principal
-termina en `@gcp-sa-firebasestorage.iam.gserviceaccount.com` y que el proyecto es
-`tictaktools`. El rol corresponde a la cuenta de servicio, no a un usuario.
+## Fase 6: rollback, especialmente después de reglas
 
-Repetir el smoke de lectura. Para validar escrituras, usar únicamente escenarios
-aprobados y reversibles:
+No usar `git reset --hard`, reescribir historial ni editar producción de forma
+improvisada desde la consola.
 
-- editar y restaurar campos seguros del perfil propio;
-- renombrar y restaurar el equipo propio si no afecta a otros participantes;
-- enviar y retirar una imagen propia;
-- enviar un mensaje normal sólo a un participante que lo consienta;
-- procesar una solicitud real únicamente si ya existe y su participante espera
-  esa acción.
+Si el fallo ocurre después de publicar Firestore o Storage, el orden de
+rollback es obligatorio:
 
-Una situación real ausente queda cubierta por las pruebas de emuladores; no es
-permiso para crear datos artificiales en producción.
+1. restaurar en Git los últimos archivos de reglas legacy conocidos como buenos
+   mediante un commit/revert revisado;
+2. desplegar y verificar primero esas reglas legacy mientras el frontend V2
+   sigue publicado;
+3. confirmar que las lecturas/escrituras compatibles vuelven a funcionar;
+4. sólo entonces crear, verificar y publicar el revert del frontend mediante
+   Git/Vercel.
 
-## Rollback
+Para índices o Functions, revertir los handlers/archivos en Git y desplegar sólo
+el grupo afectado. Mantener los endpoints legacy durante el incidente; no
+borrar Functions nuevas como reacción inicial. Conservar logs y tiempos sin
+copiar datos personales ni secretos.
 
-No usar `git reset --hard`, borrar historial ni editar producción desde la
-consola para improvisar una reparación.
+## Fase 7: retirada posterior de las Functions legacy
 
-- Frontend: crear un `git revert` del commit o merge problemático, revisar la
-  CI y dejar que la integración Git publique el revert. Pedir ayuda al owner si
-  el check no aparece o requiere una acción de dashboard.
-- Firestore/Storage/índices: restaurar los archivos desde el último commit bueno
-  mediante un nuevo revert y desplegar únicamente el grupo guardado afectado.
-- Functions: conservar los endpoints legacy, revertir los handlers en Git y
-  desplegar sólo el grupo afectado. No borrar Functions nuevas durante el
-  incidente hasta que el frontend anterior esté restaurado.
-- Si hay una denegación inesperada, parar escrituras, conservar logs y volver a
-  las reglas anteriores antes de investigar con datos reales.
+Esta fase no forma parte del despliegue inicial. Tras al menos 24 horas de
+producción estable, observar individualmente durante una ventana continua de
+24 horas estas tres Functions:
 
-## Fase D: retirar compatibilidad
+- `syncLaLigaPlayers`;
+- `getLaLigaSyncStatus`;
+- `clearLaLigaPlayers`.
 
-Esperar como mínimo 48 horas después de la Fase C y exigir todos estos puntos:
-
-- ningún uso de `syncLaLigaPlayers` ni `getLaLigaSyncStatus` en las últimas
-  24 horas de logs;
-- ninguna subida anómala de `permission-denied` asociada a las reglas nuevas;
-- el owner confirma que producción sigue ejecutando el frontend del SHA nuevo;
-- existe un commit revisado que elimina exports y cualquier cliente legacy;
-- `npm run verify` y la CI de ese commit están verdes.
-
-Tras una nueva aprobación explícita, ejecutar únicamente:
+No borrar ninguna si cualquiera registra una llamada, faltan datos de
+observación, el frontend del SHA nuevo no está confirmado o existe una anomalía
+de reglas. Exigir que las tres muestren exactamente cero invocaciones durante
+la ventana completa, repetir el inventario `content-v2` y obtener una nueva
+aprobación destructiva separada. Sólo entonces se puede ejecutar:
 
 ```powershell
 npm run delete:prod:functions:legacy-sync
 ```
 
-El prompt debe nombrar exactamente `syncLaLigaPlayers` y
-`getLaLigaSyncStatus`. No pasar argumentos adicionales ni aceptar otro recurso.
+El wrapper no acepta nombres arbitrarios; su confirmación literal y allowlist
+incluyen exactamente las tres Functions anteriores. Después debe validarse el
+inventario `legacy-players-removed`. Esta guía no autoriza ejecutar el borrado.
+
+## Fase 8: Football Data sigue diferido
+
+La credencial de Football Data expuesta anteriormente debe rotarse en una tarea
+dedicada antes de reactivar cualquier integración real. No registrar, pegar,
+leer ni verificar su valor en esta release. Después de rotarla habrá que diseñar
+y aprobar por separado el almacenamiento del secreto, la función de sync, sus
+cuotas, alertas y pruebas; hasta entonces producción conserva el catálogo
+Firestore en modo de sólo lectura.
 
 ## Registro mínimo de la release
 
-Guardar en la PR o ticket, sin secretos:
+Guardar en la PR o ticket, sin secretos ni datos personales:
 
-- SHA publicado y SHA del rollback;
-- resultado de CI y hora de cada fase;
-- identidad que realizó Firebase y owner que realizó Vercel;
-- grupos desplegados y resultado de smoke;
-- incidencias, decisiones de parada y hora de retirada legacy.
+- SHA de PR, SHA de merge y SHAs de rollback;
+- resultado y hora de CI, Vercel, preflights e inventarios;
+- identidad que realizó cada operación Firebase y owner implicado en Vercel;
+- aprobación, inicio/fin y resultado de cada grupo;
+- smoke de lectura y funcional, métricas observadas y cualquier umbral activado;
+- ventana completa de 24 horas de las tres Functions legacy antes de considerar
+  su retirada.

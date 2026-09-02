@@ -180,12 +180,13 @@ test('deploy arguments always pin project, account and allowlisted resources', (
 test('legacy deletion cannot accept arbitrary function names', () => {
   assert.equal(
     LEGACY_DELETE_CONFIRMATION,
-    'delete tictaktools syncLaLigaPlayers getLaLigaSyncStatus',
+    'delete tictaktools syncLaLigaPlayers getLaLigaSyncStatus clearLaLigaPlayers',
   );
   assert.deepEqual(LEGACY_DELETE_ARGUMENTS, [
     'functions:delete',
     'syncLaLigaPlayers',
     'getLaLigaSyncStatus',
+    'clearLaLigaPlayers',
     '--region',
     'us-central1',
     '--project',
