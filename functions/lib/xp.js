@@ -32,25 +32,43 @@ function validateAward({ userId, eventId, amount, source }) {
   return { amount, eventId: safeEventId, source, userId: safeUserId };
 }
 
+function xpAwardRefs(firestore, award) {
+  const safe = validateAward(award);
+  const userRef = firestore.doc(`users/${safe.userId}`);
+  return {
+    award: safe,
+    eventRef: userRef.collection('xpEvents').doc(safe.eventId),
+    userRef,
+  };
+}
+
+function applyXpAward(transaction, { user, event }, refs) {
+  if (!user.exists) {
+    throw new HttpsError('failed-precondition', 'El usuario no existe.');
+  }
+  if (event.exists) return false;
+
+  transaction.create(refs.eventRef, {
+    amount: refs.award.amount,
+    source: refs.award.source,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  transaction.update(refs.userRef, {
+    xp: FieldValue.increment(refs.award.amount),
+  });
+  return true;
+}
+
 async function awardXpOnce(award) {
-  const { amount, eventId, source, userId } = validateAward(award);
-  const userRef = db.doc('users/' + userId);
-  const eventRef = userRef.collection('xpEvents').doc(eventId);
+  const refs = xpAwardRefs(db, award);
 
   return db.runTransaction(async (transaction) => {
     const [user, event] = await Promise.all([
-      transaction.get(userRef),
-      transaction.get(eventRef),
+      transaction.get(refs.userRef),
+      transaction.get(refs.eventRef),
     ]);
     if (!user.exists || event.exists) return false;
-
-    transaction.set(eventRef, {
-      amount,
-      source,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-    transaction.update(userRef, { xp: FieldValue.increment(amount) });
-    return true;
+    return applyXpAward(transaction, { user, event }, refs);
   });
 }
 
@@ -130,7 +148,9 @@ async function recalculateAllXp() {
 
 module.exports = {
   XP_VALUES,
+  applyXpAward,
   awardXpOnce,
   calculateXpByUser,
   recalculateAllXp,
+  xpAwardRefs,
 };
