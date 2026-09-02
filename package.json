@@ -34,10 +34,14 @@
     "verify": "run-s test:ci build check:functions lint:budget",
     "preview": "vite preview",
     "firebase:login": "firebase login",
-    "firebase:deploy:rules": "firebase deploy --project tictaktools --only firestore:rules",
-    "firebase:deploy:firestore": "firebase deploy --project tictaktools --only firestore",
-    "firebase:deploy:functions": "firebase deploy --project tictaktools --only functions",
-    "firebase:deploy:all": "firebase deploy --project tictaktools"
+    "production:preflight": "node scripts/production-preflight.mjs",
+    "deploy:prod:functions:core": "node scripts/deploy-production.mjs functions-core",
+    "deploy:prod:functions:sync": "node scripts/deploy-production.mjs functions-sync",
+    "deploy:prod:functions:league": "node scripts/deploy-production.mjs functions-league",
+    "deploy:prod:firestore": "node scripts/deploy-production.mjs firestore",
+    "deploy:prod:indexes": "node scripts/deploy-production.mjs indexes",
+    "deploy:prod:storage": "node scripts/deploy-production.mjs storage",
+    "delete:prod:functions:legacy-sync": "node scripts/delete-legacy-functions.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
