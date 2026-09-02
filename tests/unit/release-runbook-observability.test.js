@@ -38,3 +38,22 @@ test('pins a reproducible Gen2 request-count observation before legacy deletion'
     assert.equal(runbook.includes(`\`${functionName}\``), true);
   }
 });
+
+test('extends the metric query beyond the minimum 24-hour window', () => {
+  assert.match(runbook, /`QUERY_END_UTC`/);
+  assert.match(runbook, /`MAX_TIMEOUT_SECONDS`/);
+  assert.match(
+    runbook,
+    /`QUERY_END_UTC = END_UTC \+ MAX_TIMEOUT_SECONDS \+ 60 \+ 120 segundos`/,
+  );
+  assert.match(
+    runbook,
+    /`interval\.endTime`:[\s\S]*`QUERY_END_UTC`/,
+  );
+  assert.match(runbook, /esperar[\s\S]*`QUERY_END_UTC`/i);
+  assert.match(runbook, /rango ampliado[\s\S]*falso positivo/i);
+  assert.doesNotMatch(
+    runbook,
+    /`interval\.endTime`: el `END_UTC` registrado/,
+  );
+});

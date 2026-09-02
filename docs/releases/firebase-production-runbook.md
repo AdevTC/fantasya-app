@@ -220,9 +220,10 @@ no invalidan la observación; tampoco cuentan como parte de ella.
 Fijar `START_UTC = T0` y `END_UTC = T0 + 24 horas`, ambos como timestamps RFC
 3339 terminados en `Z`, por ejemplo `2026-09-03T10:00:00Z` y
 `2026-09-04T10:00:00Z`. No mover los extremos después de iniciar la ventana.
-La consulta de Cloud Monitoring usa el intervalo exacto
-(`startTime`, `endTime`], por lo que la ventana observada empieza inmediatamente
-después de la confirmación `T0` y termina incluyendo `END_UTC`.
+`END_UTC` marca el fin de las 24 horas mínimas, pero no es el extremo final de
+la consulta de evidencia. Una solicitud anterior a `END_UTC` puede quedar en un
+punto `DELTA` con `endTime` posterior; consultar sólo hasta `END_UTC` no es una
+prueba válida de cero llamadas.
 
 Observar individualmente durante esa ventana continua estas tres Functions:
 
@@ -233,16 +234,17 @@ Observar individualmente durante esa ventana continua estas tres Functions:
 Son Functions de 2nd gen. La evidencia de invocaciones se obtiene de la métrica
 GA `run.googleapis.com/request_count`, tipo `DELTA`/`INT64`, sobre el recurso
 `cloud_run_revision`; no se debe sustituir por una métrica de Functions 1st gen.
-La métrica cuenta las solicitudes que alcanzan la revisión, se muestrea cada 60
-segundos y puede tardar hasta 120 segundos en aparecer. Esperar, por tanto, hasta
-al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
+La métrica cuenta al final de su ciclo las solicitudes que alcanzan la revisión,
+se muestrea cada 60 segundos y puede tardar hasta 120 segundos en aparecer. La
+consulta debe cubrir además el timeout real más alto de las tres Functions.
 
 ### Procedimiento de observación reproducible y de sólo lectura
 
-1. Resolver primero el nombre real de servicio Cloud Run de cada Function, sin
-   asumir que coincide con el nombre exportado. Este comando es de sólo lectura
-   y proyecta únicamente el nombre de Function y `serviceConfig.service`; no usar
-   JSON completo ni ampliar la proyección:
+1. Resolver primero el nombre real de servicio Cloud Run y el timeout de cada
+   Function, sin asumir que el servicio coincide con el nombre exportado. Este
+   comando es de sólo lectura y proyecta únicamente `name`,
+   `serviceConfig.service` y `serviceConfig.timeoutSeconds`; no usar JSON completo
+   ni ampliar la proyección:
 
    ```powershell
    $FunctionNames = @(
@@ -255,15 +257,30 @@ al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
        --v2 `
        --project=tictaktools `
        --region=us-central1 `
-       --format='csv[no-heading](name,serviceConfig.service)'
+       --format='csv[no-heading](name,serviceConfig.service,serviceConfig.timeoutSeconds)'
    }
    ```
 
    Conservar la salida sanitizada. El último segmento de
    `projects/tictaktools/locations/us-central1/services/SERVICE_NAME` es el valor
-   `SERVICE_NAME` que se consultará. La API v2 documenta
+   `SERVICE_NAME` que se consultará. Definir `MAX_TIMEOUT_SECONDS` como el mayor
+   `serviceConfig.timeoutSeconds` de las tres filas. Si falta un valor, no es un
+   entero positivo o no están las tres Functions, detener la retirada: no usar un
+   valor por defecto. La API v2 documenta
    [`serviceConfig.service`](https://cloud.google.com/functions/docs/reference/rest/v2/projects.locations.functions#ServiceConfig)
-   como el servicio asociado a una Function.
+   y `serviceConfig.timeoutSeconds` como el servicio asociado y su timeout.
+
+   Calcular y registrar en RFC 3339:
+
+   `QUERY_END_UTC = END_UTC + MAX_TIMEOUT_SECONDS + 60 + 120 segundos`.
+
+   El timeout cubre una solicitud que hubiera alcanzado la revisión justo antes
+   de `END_UTC`; los 60 segundos cubren el siguiente muestreo, y los 120 segundos
+   finales cubren el retraso máximo de visibilidad documentado. Por ejemplo, con
+   `MAX_TIMEOUT_SECONDS = 540`, `QUERY_END_UTC` es `END_UTC + 12 minutos`.
+   Esperar hasta que el reloj UTC alcance o supere `QUERY_END_UTC` antes de
+   consultar. `QUERY_END_UTC` es el extremo de evidencia; `END_UTC` sigue siendo
+   el fin de la ventana mínima de 24 horas.
 
 2. Para cada uno de los tres `SERVICE_NAME`, abrir el método de sólo lectura
    [`projects.timeSeries.list`](https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list)
@@ -271,7 +288,7 @@ al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
 
    - `name`: `projects/tictaktools`;
    - `interval.startTime`: el `START_UTC` registrado;
-   - `interval.endTime`: el `END_UTC` registrado;
+   - `interval.endTime`: el `QUERY_END_UTC` calculado;
    - `view`: `FULL`;
    - `filter`, sin filtrar código de respuesta ni revisión:
 
@@ -282,8 +299,10 @@ al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
      resource.labels.service_name = "SERVICE_NAME"
      ```
 
-   Seguir cada `nextPageToken` hasta que no exista otro. Así entran todas las
-   revisiones y todas las clases/códigos de respuesta del servicio en la ventana.
+   La consulta de Cloud Monitoring usa el intervalo (`startTime`, `endTime`]; en
+   este caso debe ser exactamente (`START_UTC`, `QUERY_END_UTC`]. Seguir cada
+   `nextPageToken` hasta que no exista otro. Así entran todas las revisiones y
+   todas las clases/códigos de respuesta del servicio en el rango ampliado.
    La referencia oficial de
    [métricas de Cloud Run](https://cloud.google.com/monitoring/api/metrics_gcp_p_z#run/request_count)
    define la métrica y sus etiquetas; la guía de
@@ -292,19 +311,21 @@ al menos `END_UTC + 120 segundos` antes de emitir el veredicto.
    de él.
 
 3. Sumar `points[].value.int64Value` de todas las páginas para cada servicio.
-   Cualquier valor positivo bloquea la retirada y obliga a iniciar una nueva
-   ventana desde otro `T0` posterior. Una respuesta satisfactoria y completa sin
-   `timeSeries` equivale a cero solicitudes registradas para ese filtro e
-   intervalo; un error, una respuesta no paginada por completo o una consulta
-   distinta no equivale a cero. La captura de Metrics Explorer que muestre `No
-   data` por sí sola tampoco basta.
+   Cualquier punto o valor positivo en el rango ampliado bloquea la retirada y
+   obliga a iniciar una nueva ventana desde otro `T0` posterior. Esto puede tratar
+   tráfico ocurrido después de `END_UTC` como un falso positivo; se acepta de
+   forma deliberada para que el gate falle de forma cerrada. Una respuesta
+   satisfactoria y completa sin `timeSeries` equivale a cero solicitudes
+   registradas para ese filtro e intervalo ampliado; un error, una respuesta no
+   paginada por completo o una consulta distinta no equivale a cero. La captura
+   de Metrics Explorer que muestre `No data` por sí sola tampoco basta.
 
-4. Conservar en la PR o ticket un artefacto de evidencia con: SHA y URL de Vercel,
-   `START_UTC`/`END_UTC`, salida sanitizada de los tres mapeos Function-servicio,
-   filtro literal, respuesta JSON de todas las páginas por servicio, suma final
-   individual y una captura donde sean visibles proyecto, métrica, filtros y
-   rango UTC. No guardar tokens, cabeceras de autorización, secretos ni datos
-   personales.
+4. Conservar en la PR o ticket un artefacto de evidencia con: SHA y URL de
+   Vercel, `START_UTC`/`END_UTC`/`QUERY_END_UTC`, timeout máximo y cálculo del
+   margen, salida sanitizada de los tres mapeos Function-servicio, filtro literal,
+   respuesta JSON de todas las páginas por servicio, suma final individual y una
+   captura donde sean visibles proyecto, métrica, filtros y rango UTC. No guardar
+   tokens, cabeceras de autorización, secretos ni datos personales.
 
 No borrar ninguna si cualquiera registra una llamada, faltan datos de
 observación, el frontend del SHA nuevo no está confirmado o existe una anomalía
