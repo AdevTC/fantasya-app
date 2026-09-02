@@ -35,6 +35,7 @@
     "preview": "vite preview",
     "firebase:login": "firebase login",
     "production:preflight": "node scripts/production-preflight.mjs",
+    "production:functions:inventory": "node scripts/production-functions-inventory.mjs",
     "deploy:prod:functions:core": "node scripts/deploy-production.mjs functions-core",
     "deploy:prod:functions:sync": "node scripts/deploy-production.mjs functions-sync",
     "deploy:prod:functions:league": "node scripts/deploy-production.mjs functions-league",
