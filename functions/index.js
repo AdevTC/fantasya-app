@@ -2,7 +2,6 @@ const {
   onCall,
   onRequest,
 } = require('firebase-functions/v2/https');
-const { defineSecret } = require('firebase-functions/params');
 const { requireAuth } = require('./lib/authz');
 const {
   createProfileDocumentsHandler,
@@ -14,12 +13,6 @@ const {
   createPostV2Handler,
   createTransferV2Handler,
 } = require('./handlers/content');
-const {
-  getLaLigaSyncStatusLegacyHandler,
-  getLaLigaSyncStatusV2Handler,
-  syncLaLigaPlayersLegacyHandler,
-  syncLaLigaPlayersV2Handler,
-} = require('./handlers/player-sync');
 const {
   joinSeasonByInviteCodeHandler,
   reviewJoinRequestHandler,
@@ -39,16 +32,15 @@ const browserOrigins = [
   'http://127.0.0.1:5173',
   'http://localhost:5173',
 ];
-const footballDataApiKey = defineSecret('FOOTBALL_DATA_API_KEY');
+const isDemoEmulator = process.env.FUNCTIONS_EMULATOR === 'true'
+  && process.env.GCLOUD_PROJECT === 'demo-fantasya';
 
-function footballApiKeyForRequest(request) {
-  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
+function localFootballApiKeyForRequest(request) {
   const explicitLiveRequest = request.data?.source === 'live';
   const localLiveEnabled = process.env.ALLOW_LIVE_FOOTBALL_API === 'true';
-  if (isEmulator && (!explicitLiveRequest || !localLiveEnabled)) {
-    return undefined;
-  }
-  return footballDataApiKey.value();
+  return explicitLiveRequest && localLiveEnabled
+    ? process.env.FOOTBALL_DATA_API_KEY
+    : undefined;
 }
 
 exports.createProfileDocuments = onCall(
@@ -177,41 +169,48 @@ exports.createOrGetChatV2 = onCall(
   }),
 );
 
-exports.syncLaLigaPlayersV2 = onCall(
-  {
-    region: 'us-central1',
-    timeoutSeconds: 540,
-    memory: '1GiB',
-    cors: browserOrigins,
-    secrets: [footballDataApiKey],
-  },
-  (request) => syncLaLigaPlayersV2Handler(
-    request,
-    footballApiKeyForRequest(request),
-  ),
-);
+if (isDemoEmulator) {
+  const {
+    getLaLigaSyncStatusLegacyHandler,
+    getLaLigaSyncStatusV2Handler,
+    syncLaLigaPlayersLegacyHandler,
+    syncLaLigaPlayersV2Handler,
+  } = require('./handlers/player-sync');
 
-exports.getLaLigaSyncStatusV2 = onCall(
-  { region: 'us-central1', cors: browserOrigins },
-  getLaLigaSyncStatusV2Handler,
-);
+  exports.syncLaLigaPlayersV2 = onCall(
+    {
+      region: 'us-central1',
+      timeoutSeconds: 540,
+      memory: '1GiB',
+      cors: browserOrigins,
+    },
+    (request) => syncLaLigaPlayersV2Handler(
+      request,
+      localFootballApiKeyForRequest(request),
+    ),
+  );
 
-exports.syncLaLigaPlayers = onRequest(
-  {
-    region: 'us-central1',
-    cors: browserOrigins,
-    timeoutSeconds: 540,
-    memory: '1GiB',
-    secrets: [footballDataApiKey],
-  },
-  (request, response) => syncLaLigaPlayersLegacyHandler(
-    request,
-    response,
-    footballApiKeyForRequest({ data: request.body || {} }),
-  ),
-);
+  exports.getLaLigaSyncStatusV2 = onCall(
+    { region: 'us-central1', cors: browserOrigins },
+    getLaLigaSyncStatusV2Handler,
+  );
 
-exports.getLaLigaSyncStatus = onRequest(
-  { region: 'us-central1', cors: browserOrigins },
-  getLaLigaSyncStatusLegacyHandler,
-);
+  exports.syncLaLigaPlayers = onRequest(
+    {
+      region: 'us-central1',
+      cors: browserOrigins,
+      timeoutSeconds: 540,
+      memory: '1GiB',
+    },
+    (request, response) => syncLaLigaPlayersLegacyHandler(
+      request,
+      response,
+      localFootballApiKeyForRequest({ data: request.body || {} }),
+    ),
+  );
+
+  exports.getLaLigaSyncStatus = onRequest(
+    { region: 'us-central1', cors: browserOrigins },
+    getLaLigaSyncStatusLegacyHandler,
+  );
+}

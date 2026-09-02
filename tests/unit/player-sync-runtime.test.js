@@ -1,8 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
+
+const localSyncFunctionNames = [
+  'syncLaLigaPlayers',
+  'syncLaLigaPlayersV2',
+  'getLaLigaSyncStatus',
+  'getLaLigaSyncStatusV2',
+];
+
+function generateFunctionsManifest(environment) {
+  const outputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'fantasya-functions-manifest-'),
+  );
+  const outputPath = path.join(outputDirectory, 'functions.json');
+  const manifestGenerator = path.resolve(
+    'functions/node_modules/firebase-functions/lib/bin/firebase-functions.js',
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [manifestGenerator],
+      {
+        cwd: path.resolve('functions'),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          FOOTBALL_DATA_API_KEY: 'local-test-key-that-must-not-be-bound',
+          FUNCTIONS_MANIFEST_OUTPUT_PATH: outputPath,
+          ...environment,
+        },
+      },
+    );
+
+    assert.equal(
+      result.status,
+      0,
+      `manifest generation failed:\n${result.stderr || result.stdout}`,
+    );
+    return JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  } finally {
+    fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+}
 
 test('player sync capability is enabled only in a development emulator', async () => {
   const policyUrl = new URL('../../src/config/capability-policy.js', import.meta.url);
@@ -195,13 +241,18 @@ test('local sync prevents duplicate runs and clears stale progress timers', () =
   assert.match(component, /finally \{\s*syncInFlightRef\.current = false;/s);
 });
 
-test('both player sync generations use the same protected server handlers', () => {
+test('player sync handlers remain shared without declaring a Firebase secret', () => {
   const index = read('functions/index.js');
   const handlers = read('functions/handlers/player-sync.js');
   const service = read('functions/lib/player-sync.js');
   const rules = read('firestore.rules');
 
-  assert.match(index, /defineSecret\('FOOTBALL_DATA_API_KEY'\)/);
+  assert.doesNotMatch(index, /defineSecret|secrets\s*:/);
+  assert.match(index, /process\.env\.FOOTBALL_DATA_API_KEY/);
+  assert.match(
+    index,
+    /FUNCTIONS_EMULATOR === 'true'[\s\S]*GCLOUD_PROJECT === 'demo-fantasya'/,
+  );
   assert.match(index, /exports\.syncLaLigaPlayersV2/);
   assert.match(index, /exports\.getLaLigaSyncStatusV2/);
   assert.match(index, /exports\.syncLaLigaPlayers/);
@@ -216,4 +267,39 @@ test('both player sync generations use the same protected server handlers', () =
   assert.match(service, /currentRunId/);
   assert.match(service, /laLigaSyncRuns/);
   assert.match(rules, /config\/laLigaSync\)\.data\.activeRunId == runId/);
+});
+
+test('every non-demo-emulator manifest excludes local sync and secrets', () => {
+  const nonLocalEnvironments = [
+    { FUNCTIONS_EMULATOR: '', GCLOUD_PROJECT: '' },
+    { FUNCTIONS_EMULATOR: 'false', GCLOUD_PROJECT: 'fantasya-production' },
+    { FUNCTIONS_EMULATOR: 'true', GCLOUD_PROJECT: 'fantasya-production' },
+    { FUNCTIONS_EMULATOR: 'false', GCLOUD_PROJECT: 'demo-fantasya' },
+  ];
+
+  for (const environment of nonLocalEnvironments) {
+    const manifest = generateFunctionsManifest(environment);
+    for (const functionName of localSyncFunctionNames) {
+      assert.equal(manifest.endpoints[functionName], undefined);
+    }
+    assert.doesNotMatch(JSON.stringify(manifest), /FOOTBALL_DATA_API_KEY/);
+    assert.ok(manifest.endpoints.createProfileDocuments);
+    assert.ok(manifest.endpoints.createOrGetChatV2);
+  }
+});
+
+test('demo emulator manifest exposes local player sync endpoints without secret bindings', () => {
+  const manifest = generateFunctionsManifest({
+    FUNCTIONS_EMULATOR: 'true',
+    GCLOUD_PROJECT: 'demo-fantasya',
+  });
+
+  for (const functionName of localSyncFunctionNames) {
+    assert.ok(manifest.endpoints[functionName], `${functionName} must be local`);
+    assert.equal(
+      manifest.endpoints[functionName].secretEnvironmentVariables,
+      undefined,
+    );
+  }
+  assert.doesNotMatch(JSON.stringify(manifest), /FOOTBALL_DATA_API_KEY/);
 });
