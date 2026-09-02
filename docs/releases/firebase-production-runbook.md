@@ -12,9 +12,14 @@ Producción está fijada a:
 - región `us-central1` y runtime `nodejs22` para todas las Functions;
 - despliegue web mediante la integración Git de Vercel del repositorio.
 
-La sincronización de Football Data queda fuera de esta release. En producción
-el catálogo de jugadores se lee desde Firestore y no intenta sincronizarse. El
-fixture y el sync sólo permanecen activos en desarrollo con emuladores.
+La sincronización de Football Data queda fuera de esta release. Los controles y
+el cliente nuevo de sync permanecen desactivados: en producción el catálogo de
+jugadores se lee desde Firestore en modo de sólo lectura y no intenta
+sincronizarse. El fixture y el sync sólo permanecen activos en desarrollo con
+emuladores. Los tres endpoints legacy `syncLaLigaPlayers`,
+`getLaLigaSyncStatus` y `clearLaLigaPlayers` siguen desplegados temporalmente
+para mantener la compatibilidad hasta superar la observación de 24 horas y la
+retirada con aprobación separada de la fase 7.
 
 ## Puertas obligatorias antes de empezar
 
@@ -33,7 +38,9 @@ No iniciar la fase 1 mientras falte cualquiera de estas condiciones:
    presupuesto activas y destinatarios atendidos. Las alertas pueden retrasarse
    y no son un límite de gasto; se comprueba también cualquier control de gasto
    aplicable, incluido el spend cap de Cloud Run Functions si está disponible,
-   antes de publicar. Véase
+   antes de publicar. Los spend caps de Cloud Run Functions no son un
+   límite duro ni instantáneo: puede existir overage por el retraso del
+   reporting. Véase
    [evitar facturas inesperadas](https://firebase.google.com/docs/projects/billing/avoid-surprise-bills).
 6. Functions, Cloud Logging y Vercel permiten observar invocaciones, errores y
    el SHA publicado. Firebase documenta la consulta en
@@ -188,10 +195,11 @@ rollback es obligatorio:
 4. sólo entonces crear, verificar y publicar el revert del frontend mediante
    Git/Vercel.
 
-Para índices o Functions, revertir los handlers/archivos en Git y desplegar sólo
-el grupo afectado. Mantener los endpoints legacy durante el incidente; no
-borrar Functions nuevas como reacción inicial. Conservar logs y tiempos sin
-copiar datos personales ni secretos.
+Después de restaurar las reglas legacy y publicar el revert del frontend, las
+Functions aditivas quedan desplegadas sin uso. Cualquier corrección o retirada
+del backend requiere una release separada, diseñada y aprobada; no se improvisa
+ningún comando de Functions durante el incidente. Mantener los endpoints legacy
+y conservar logs y tiempos sin copiar datos personales ni secretos.
 
 ## Fase 7: retirada posterior de las Functions legacy
 

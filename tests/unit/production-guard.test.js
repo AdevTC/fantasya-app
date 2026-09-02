@@ -31,6 +31,15 @@ const safe = {
   firebaseProjectIds: ['demo-fantasya', 'tictaktools'],
 };
 
+const developmentGuide = readFileSync(
+  new URL('../../docs/development.md', import.meta.url),
+  'utf8',
+);
+const productionRunbook = readFileSync(
+  new URL('../../docs/releases/firebase-production-runbook.md', import.meta.url),
+  'utf8',
+);
+
 test('accepts only the exact synchronized production identity', () => {
   assert.deepEqual(evaluateProductionState(safe), []);
   assert.deepEqual(evaluateProductionState({
@@ -236,4 +245,50 @@ test('package scripts expose no direct production deployment escape hatch', () =
   assert.equal(rootPackage.scripts['deploy:prod:functions:core'], undefined);
   assert.equal(rootPackage.scripts['deploy:prod:functions:sync'], undefined);
   assert.equal(rootPackage.scripts['deploy:prod:functions:league'], undefined);
+});
+
+test('development guide distinguishes PR Functions from main-only mutations', () => {
+  assert.doesNotMatch(developmentGuide, /deploy:prod:\*/);
+  assert.match(
+    developmentGuide,
+    /deploy:prod:pr:functions:core-v2[\s\S]*deploy:prod:pr:functions:league[\s\S]*deploy:prod:pr:functions:content-v2/,
+  );
+  assert.match(
+    developmentGuide,
+    /rama de la PR publicada[\s\S]*SHA exacto[\s\S]*no exige `main`/,
+  );
+  assert.match(
+    developmentGuide,
+    /deploy:prod:indexes[\s\S]*deploy:prod:firestore[\s\S]*deploy:prod:storage[\s\S]*delete:prod:functions:legacy-sync/,
+  );
+  assert.match(
+    developmentGuide,
+    /`main` limpia y sincronizada con `origin\/main`/,
+  );
+});
+
+test('runbook preserves additive Functions and states billing limitations', () => {
+  const introduction = productionRunbook.split(
+    '## Puertas obligatorias antes de empezar',
+  )[0];
+  assert.match(
+    introduction,
+    /controles y\s+el cliente nuevo de sync permanecen desactivados/,
+  );
+  assert.match(
+    introduction,
+    /syncLaLigaPlayers[\s\S]*getLaLigaSyncStatus[\s\S]*clearLaLigaPlayers[\s\S]*siguen desplegados temporalmente/,
+  );
+  assert.doesNotMatch(
+    productionRunbook,
+    /revertir los handlers\/archivos en Git y desplegar sólo el grupo afectado/,
+  );
+  assert.match(
+    productionRunbook,
+    /Functions aditivas quedan desplegadas sin uso[\s\S]*release separada, diseñada y aprobada/,
+  );
+  assert.match(
+    productionRunbook,
+    /spend caps?[\s\S]{0,300}no (?:es|son) un\s+límite duro ni instantáneo[\s\S]{0,300}retraso[\s\S]*reporting/,
+  );
 });

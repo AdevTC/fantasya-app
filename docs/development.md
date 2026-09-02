@@ -150,9 +150,19 @@ Los comandos de desarrollo, seed, pruebas y CI sólo aceptan `demo-fantasya` y
 los hosts locales esperados. No pueden desactivarse mediante una variable de
 entorno.
 
-Los comandos `deploy:prod:*` son otra ruta: exigen Node 22, `main`, árbol limpio,
-`origin` canónico, igualdad con `origin/main`, cuenta y proyecto fijos, terminal
-interactiva y una confirmación literal. `production:preflight` ejecuta un
+Los comandos `deploy:prod:pr:functions:core-v2`,
+`deploy:prod:pr:functions:league` y
+`deploy:prod:pr:functions:content-v2` operan desde la rama de la PR publicada:
+exigen árbol limpio, upstream exacto sin commits pendientes, una única PR apta
+y checks verdes para el SHA exacto. Esta ruta no exige `main`; bloquea
+esa rama porque las Functions aditivas deben existir antes del merge.
+
+Los comandos `deploy:prod:indexes`, `deploy:prod:firestore`,
+`deploy:prod:storage` y `delete:prod:functions:legacy-sync` pertenecen a la
+ruta posterior: exigen `main` limpia y sincronizada con `origin/main`. Tanto
+esta ruta como la premerge fijan Node 22, `origin` canónico, cuenta y proyecto,
+terminal interactiva y confirmaciones literales; además, vuelven a comprobar el
+estado después de confirmar. `production:preflight` ejecuta un
 `git fetch origin main`, por lo que actualiza esa referencia Git local, pero no
 escribe en GitHub, Firebase ni Vercel.
 
