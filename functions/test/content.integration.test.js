@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { getStorage } = require('firebase-admin/storage');
 const { db } = require('../lib/firebase');
 const { describeOperation } = require('../lib/operations');
 const { seedEmulators } = require('../scripts/seed-emulators');
@@ -12,6 +13,8 @@ const {
 } = require('../handlers/content');
 const { unlinkUserFromTeamHandler } = require('../handlers/teams');
 
+const TEST_BUCKET = 'demo-fantasya.appspot.com';
+
 test.beforeEach(async () => {
   await resetTestEmulators();
   await seedEmulators();
@@ -23,7 +26,7 @@ function postRequest(overrides = {}, uid = 'dev-user') {
     data: {
       operationId: 'post-op',
       content: 'Hola',
-      imageURL: null,
+      hasImage: false,
       tags: ['local'],
       ...overrides,
     },
@@ -61,9 +64,45 @@ function operationFor(request, operationType, payload) {
 function postPayload(request) {
   return {
     content: request.data.content.trim(),
-    imageURL: request.data.imageURL,
+    hasImage: request.data.hasImage,
     tags: request.data.tags,
   };
+}
+
+function postObjectPath(request) {
+  return `posts/${request.uid}/${request.data.operationId}`;
+}
+
+async function uploadPostObject(
+  request,
+  body = Buffer.from('valid-image'),
+  contentType = 'image/png',
+) {
+  const file = getStorage().bucket(TEST_BUCKET).file(postObjectPath(request));
+  await file.save(body, {
+    resumable: false,
+    metadata: {
+      contentType,
+      metadata: { firebaseStorageDownloadTokens: 'local-download-token' },
+    },
+  });
+  return file;
+}
+
+async function assertNoPostResidues(request) {
+  const operation = operationFor(request, 'post.create.v2', postPayload(request));
+  const [post, ledger, event, user, counters] = await Promise.all([
+    db.doc(`posts/${operation.key}`).get(),
+    db.doc(`serverOperations/${operation.key}`).get(),
+    db.doc(`users/${request.uid}/xpEvents/post:${operation.key}`).get(),
+    db.doc(`users/${request.uid}`).get(),
+    db.collection('serverRateLimits').where('scope', '==', 'post-hour').get(),
+  ]);
+  assert.equal(post.exists, false);
+  assert.equal(ledger.exists, false);
+  assert.equal(event.exists, false);
+  assert.equal(user.data().xp, request.uid === 'dev-user' ? 100 : 10);
+  assert.equal(counters.empty, true);
 }
 
 function transferPayload(request) {
@@ -135,6 +174,16 @@ function failingFirestore(failOnCreatePath) {
   };
 }
 
+function firestoreDeletingBeforeTransaction(path) {
+  return {
+    doc: db.doc.bind(db),
+    async runTransaction(updateFunction) {
+      await db.doc(path).delete();
+      return db.runTransaction(updateFunction);
+    },
+  };
+}
+
 test('post creation is idempotent and derives its author identity', async () => {
   const first = await createPostV2Handler(postRequest());
   const retry = await createPostV2Handler(postRequest());
@@ -165,16 +214,19 @@ test('post creation is idempotent and derives its author identity', async () => 
   assert.equal(counters.docs[0].data().count, 1);
 });
 
-test('post payload normalization is stable and image posts award 15 XP', async () => {
+test('verified post images use their canonical object URL and award 15 XP', async () => {
   const request = postRequest({
+    operationId: 'post-image',
     content: '  Imagen  ',
-    imageURL: ' https://example.com/image.png ',
+    hasImage: true,
     tags: ['LOCAL', 'foto'],
   });
+  await uploadPostObject(request);
   const created = await createPostV2Handler(request);
   const retried = await createPostV2Handler(postRequest({
+    operationId: 'post-image',
     content: 'Imagen',
-    imageURL: 'https://example.com/image.png',
+    hasImage: true,
     tags: ['local', 'foto'],
   }));
 
@@ -183,8 +235,112 @@ test('post payload normalization is stable and image posts award 15 XP', async (
   assert.equal((await db.doc('users/dev-user').get()).data().xp, 115);
   const post = (await db.doc(`posts/${created.postId}`).get()).data();
   assert.equal(post.content, 'Imagen');
-  assert.equal(post.imageURL, 'https://example.com/image.png');
+  assert.equal(
+    decodeURIComponent(new URL(post.imageURL).pathname).endsWith(
+      `/o/${postObjectPath(request)}`,
+    ),
+    true,
+  );
   assert.deepEqual(post.tags, ['local', 'foto']);
+});
+
+test('image posts reject a missing upload without Firestore or XP residues', async () => {
+  const request = postRequest({ operationId: 'missing-image', hasImage: true });
+
+  await assert.rejects(
+    createPostV2Handler(request),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertNoPostResidues(request);
+});
+
+test('image posts reject empty, oversized and unsupported upload metadata', async () => {
+  const invalidUploads = [
+    ['empty-image', Buffer.alloc(0), 'image/png'],
+    ['oversized-image', Buffer.alloc((5 * 1024 * 1024) + 1), 'image/png'],
+    ['wrong-type-image', Buffer.from('plain text'), 'text/plain'],
+  ];
+
+  for (const [operationId, body, contentType] of invalidUploads) {
+    const request = postRequest({ operationId, hasImage: true });
+    await uploadPostObject(request, body, contentType);
+    await assert.rejects(
+      createPostV2Handler(request),
+      (error) => error.code === 'failed-precondition',
+    );
+    await assertNoPostResidues(request);
+  }
+});
+
+test('an authenticated user cannot reuse another user post upload path', async () => {
+  const ownerRequest = postRequest({
+    operationId: 'isolated-image-path',
+    hasImage: true,
+  });
+  await uploadPostObject(ownerRequest);
+  const attackerRequest = postRequest(
+    { operationId: 'isolated-image-path', hasImage: true },
+    'dev-league-admin',
+  );
+
+  await assert.rejects(
+    createPostV2Handler(attackerRequest),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertNoPostResidues(attackerRequest);
+});
+
+test('post retry does not reverify an upload deleted after creation', async () => {
+  const request = postRequest({ operationId: 'deleted-image-retry', hasImage: true });
+  const file = await uploadPostObject(request);
+  const first = await createPostV2Handler(request);
+  await file.delete();
+
+  const retry = await createPostV2Handler(request, db, {
+    verifyPostUpload: async () => {
+      throw new Error('retry must not verify Storage');
+    },
+  });
+
+  assert.deepEqual(retry, { postId: first.postId, created: false });
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 115);
+  const counters = await db.collection('serverRateLimits')
+    .where('scope', '==', 'post-hour')
+    .get();
+  assert.equal(counters.size, 1);
+  assert.equal(counters.docs[0].data().count, 1);
+});
+
+test('post retry fails closed when its prechecked ledger disappears', async () => {
+  const request = postRequest({ operationId: 'deleted-ledger-retry' });
+  const first = await createPostV2Handler(request);
+  const ledgerPath = `serverOperations/${first.postId}`;
+
+  await assert.rejects(
+    createPostV2Handler(
+      request,
+      firestoreDeletingBeforeTransaction(ledgerPath),
+    ),
+    (error) => error.code === 'data-loss',
+  );
+
+  assert.equal((await db.doc(ledgerPath).get()).exists, false);
+  assert.equal((await db.doc(`posts/${first.postId}`).get()).exists, true);
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 110);
+});
+
+test('post verifier failure leaves no content, operation, XP or quota', async () => {
+  const request = postRequest({ operationId: 'verifier-failure', hasImage: true });
+
+  await assert.rejects(
+    createPostV2Handler(request, db, {
+      verifyPostUpload: async () => {
+        throw new Error('forced verifier failure');
+      },
+    }),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertNoPostResidues(request);
 });
 
 test('post retries fail closed when the XP source or amount is corrupt', async () => {
@@ -223,9 +379,10 @@ test('post operation IDs reject changed payloads and isolate users', async () =>
 
 test('post validation rejects missing content, unsafe URLs and invalid tags', async () => {
   for (const data of [
-    { content: '', imageURL: null },
+    { content: '', hasImage: false },
     { content: 'x'.repeat(281) },
-    { imageURL: 'javascript:alert(1)' },
+    { imageURL: 'https://attacker.example/image.png' },
+    { hasImage: 'true' },
     { tags: ['uno', 'uno'] },
     { tags: ['tag-incorrecto'] },
     { tags: ['1', '2', '3', '4', '5', '6'] },
@@ -258,7 +415,7 @@ test('a forced post transaction failure leaves no content, operation or XP', asy
   const request = postRequest({ operationId: 'post-failure' });
   const payload = {
     content: 'Hola',
-    imageURL: null,
+    hasImage: false,
     tags: ['local'],
   };
   const operation = operationFor(request, 'post.create.v2', payload);
@@ -437,6 +594,31 @@ test('transfer validation rejects missing participants, self-trades and bad data
   }
 });
 
+test('out-of-range transfer timestamps are invalid and leave zero residues', async () => {
+  const request = transferRequest({
+    operationId: 'out-of-range-transfer',
+    timestamp: '0000-01-01T00:00:00.000Z',
+  });
+
+  await assert.rejects(
+    createTransferV2Handler(request),
+    (error) => error.code === 'invalid-argument',
+  );
+
+  const [transfers, operations, counters, user] = await Promise.all([
+    db.collection(
+      'leagues/dev-league-active/seasons/season-1/transfers',
+    ).get(),
+    db.collection('serverOperations').get(),
+    db.collection('serverRateLimits').get(),
+    db.doc('users/dev-user').get(),
+  ]);
+  assert.equal(transfers.empty, true);
+  assert.equal(operations.empty, true);
+  assert.equal(counters.empty, true);
+  assert.equal(user.data().xp, 100);
+});
+
 test('market and placeholder buyers are valid but never receive XP', async () => {
   const market = await createTransferV2Handler(transferRequest({
     operationId: 'market-buyer',
@@ -468,6 +650,38 @@ test('market and placeholder buyers are valid but never receive XP', async () =>
     assert.equal(operation.xpRecipientId, null);
     assert.equal(operation.xpEventId, null);
   }
+});
+
+test('a legacy real member without a user document receives no XP', async () => {
+  await db.doc('leagues/dev-league-active/seasons/season-1').update({
+    'members.legacy-user': {
+      username: 'legacy',
+      teamName: 'Legado FC',
+      role: 'member',
+      isPlaceholder: false,
+    },
+  });
+  const request = transferRequest({
+    operationId: 'legacy-buyer',
+    buyerId: 'legacy-user',
+  });
+
+  const first = await createTransferV2Handler(request);
+  const retry = await createTransferV2Handler(request);
+
+  assert.deepEqual(retry, { transferId: first.transferId, created: false });
+  const [operation, event, counters] = await Promise.all([
+    db.doc(`serverOperations/${first.transferId}`).get(),
+    db.doc(`users/legacy-user/xpEvents/transfer:${first.transferId}`).get(),
+    db.collection('serverRateLimits').get(),
+  ]);
+  assert.equal(operation.data().xpRecipientId, null);
+  assert.equal(operation.data().xpEventId, null);
+  assert.equal(event.exists, false);
+  assert.deepEqual(
+    counters.docs.map((item) => [item.data().scope, item.data().count]),
+    [['transfer-actor-league-hour', 1]],
+  );
 });
 
 test('transfer retries fail closed when awarded XP metadata or event is corrupt', async () => {

@@ -1,5 +1,6 @@
 const { getApps, initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
+const { getStorage } = require('firebase-admin/storage');
 const {
   FieldPath,
   FieldValue,
@@ -13,4 +14,5 @@ module.exports = {
   db: getFirestore(),
   FieldPath,
   FieldValue,
+  storage: getStorage(),
 };

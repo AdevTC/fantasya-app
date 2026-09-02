@@ -1,7 +1,8 @@
 const { createHash } = require('node:crypto');
 const { Timestamp } = require('firebase-admin/firestore');
+const { getDownloadURL } = require('firebase-admin/storage');
 const { HttpsError } = require('firebase-functions/v2/https');
-const { db, FieldValue } = require('../lib/firebase');
+const { db, FieldValue, storage } = require('../lib/firebase');
 const {
   requireDocumentId,
   requireSeasonAdmin,
@@ -16,7 +17,7 @@ const {
   xpAwardRefs,
 } = require('../lib/xp');
 
-const POST_KEYS = new Set(['operationId', 'content', 'imageURL', 'tags']);
+const POST_KEYS = new Set(['operationId', 'content', 'hasImage', 'tags']);
 const TRANSFER_KEYS = new Set([
   'operationId',
   'leagueId',
@@ -32,6 +33,13 @@ const TRANSFER_KEYS = new Set([
 const TRANSFER_TYPES = new Set(['puja', 'clausulazo', 'acuerdo']);
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+const MAX_POST_IMAGE_BYTES = 5 * 1024 * 1024;
+const POST_IMAGE_TYPES = new Set([
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
 const DEFAULT_LIMITS = Object.freeze({
   postsPerHour: 12,
   transfersPerActorLeagueHour: 60,
@@ -93,8 +101,10 @@ function normalizePostData(data) {
   if (content.length > 280) {
     invalidArgument('El contenido no puede superar 280 caracteres.');
   }
-  const imageURL = normalizeOptionalHttpUrl(input.imageURL, 'La imagen');
-  if (!content && !imageURL) {
+  if (typeof input.hasImage !== 'boolean') {
+    invalidArgument('El indicador de imagen no es válido.');
+  }
+  if (!content && !input.hasImage) {
     invalidArgument('La publicación debe tener texto o una imagen.');
   }
   if (!Array.isArray(input.tags) || input.tags.length > 5) {
@@ -111,7 +121,58 @@ function normalizePostData(data) {
   if (new Set(tags).size !== tags.length) {
     invalidArgument('Las etiquetas deben ser únicas.');
   }
-  return { content, imageURL, tags };
+  return { content, hasImage: input.hasImage, tags };
+}
+
+function postUploadError(message) {
+  return new HttpsError('failed-precondition', message);
+}
+
+async function verifyPostUpload(objectPath, storageService = storage) {
+  const file = storageService.bucket().file(objectPath);
+  let metadata;
+  try {
+    [metadata] = await file.getMetadata();
+  } catch {
+    throw postUploadError('La imagen indicada no existe o no está disponible.');
+  }
+  const size = Number(metadata.size);
+  if (
+    !Number.isSafeInteger(size)
+    || size <= 0
+    || size > MAX_POST_IMAGE_BYTES
+  ) {
+    throw postUploadError('La imagen no tiene un tamaño permitido.');
+  }
+  if (!POST_IMAGE_TYPES.has(metadata.contentType)) {
+    throw postUploadError('El tipo de la imagen no está permitido.');
+  }
+  try {
+    const downloadURL = await getDownloadURL(file);
+    const parsed = new URL(downloadURL);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      || !downloadURL
+    ) {
+      throw new Error('invalid download URL');
+    }
+    return downloadURL;
+  } catch {
+    throw postUploadError('No se pudo obtener la URL canónica de la imagen.');
+  }
+}
+
+async function resolvePostUpload(verifier, objectPath) {
+  try {
+    const downloadURL = await verifier(objectPath);
+    if (typeof downloadURL !== 'string' || downloadURL.length === 0) {
+      throw new Error('invalid verifier result');
+    }
+    return downloadURL;
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    throw postUploadError('No se pudo verificar la imagen de la publicación.');
+  }
 }
 
 function normalizeParticipantId(value, name) {
@@ -149,6 +210,12 @@ function normalizeTransferData(data) {
   const date = new Date(input.timestamp.trim());
   if (!Number.isFinite(date.getTime())) invalidArgument('La fecha no es válida.');
   const timestamp = date.toISOString();
+  let firestoreTimestamp;
+  try {
+    firestoreTimestamp = Timestamp.fromDate(date);
+  } catch {
+    invalidArgument('La fecha no está dentro del rango permitido.');
+  }
   if (buyerId === sellerId) {
     invalidArgument('Comprador y vendedor deben ser distintos.');
   }
@@ -156,15 +223,18 @@ function normalizeTransferData(data) {
     invalidArgument('Al menos un participante debe ser un equipo.');
   }
   return {
-    leagueId,
-    seasonId,
-    playerId,
-    playerName,
-    buyerId,
-    sellerId,
-    type,
-    price,
-    timestamp,
+    firestoreTimestamp,
+    payload: {
+      leagueId,
+      seasonId,
+      playerId,
+      playerName,
+      buyerId,
+      sellerId,
+      type,
+      price,
+      timestamp,
+    },
   };
 }
 
@@ -324,7 +394,7 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
   const xpRefs = xpAwardRefs(firestore, {
     userId: operation.uid,
     eventId: `post:${operation.key}`,
-    amount: payload.imageURL ? XP_VALUES.POST_WITH_IMAGE : XP_VALUES.POST,
+    amount: payload.hasImage ? XP_VALUES.POST_WITH_IMAGE : XP_VALUES.POST,
     source: 'post',
   });
   const hourlyQuota = rateLimit(firestore, {
@@ -334,6 +404,21 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
     limit: usage.limits.postsPerHour,
     nowMs: usage.nowMs,
   });
+  const precheckedOperation = await storedOperationRef.get();
+  if (precheckedOperation.exists) {
+    matchStoredOperation(precheckedOperation.data(), operation);
+  }
+  let imageURL = null;
+  if (payload.hasImage && !precheckedOperation.exists) {
+    const verifier = options.verifyPostUpload || verifyPostUpload;
+    if (typeof verifier !== 'function') {
+      invalidArgument('El verificador de imagen no es válido.');
+    }
+    imageURL = await resolvePostUpload(
+      verifier,
+      `posts/${operation.uid}/${operation.operationId}`,
+    );
+  }
 
   return firestore.runTransaction(async (transaction) => {
     const [
@@ -361,6 +446,12 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
       );
       return { postId: operation.key, created: false };
     }
+    if (precheckedOperation.exists) {
+      throw new HttpsError(
+        'data-loss',
+        'El registro de la publicación desapareció durante el reintento.',
+      );
+    }
     if (post.exists || xpEvent.exists) {
       throw new HttpsError(
         'already-exists',
@@ -381,7 +472,7 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
       authorUsername,
       authorPhotoURL: safeProfilePhoto(profile),
       content: payload.content,
-      imageURL: payload.imageURL,
+      imageURL,
       tags: payload.tags,
       likes: [],
       createdAt: FieldValue.serverTimestamp(),
@@ -398,7 +489,8 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
 
 async function createTransferV2Handler(request, firestore = db, options = {}) {
   const usage = rateContext(options);
-  const payload = normalizeTransferData(request?.data);
+  const normalized = normalizeTransferData(request?.data);
+  const { payload } = normalized;
   const operation = describeOperation({
     uid: request?.uid,
     operationType: 'transfer.create.v2',
@@ -488,7 +580,7 @@ async function createTransferV2Handler(request, firestore = db, options = {}) {
     const buyer = payload.buyerId === 'market'
       ? null
       : context.season.members[payload.buyerId];
-    const earnsXp = buyer && buyer.isPlaceholder !== true;
+    const earnsXp = buyer && buyer.isPlaceholder !== true && buyerUser.exists;
     const expectedXpRecipientId = earnsXp ? payload.buyerId : null;
     const expectedXpEventId = earnsXp ? xpEventId : null;
     if (transfer.exists) {
@@ -522,7 +614,7 @@ async function createTransferV2Handler(request, firestore = db, options = {}) {
       sellerId: payload.sellerId,
       sellerName,
       type: payload.type,
-      timestamp: Timestamp.fromDate(new Date(payload.timestamp)),
+      timestamp: normalized.firestoreTimestamp,
     });
     transaction.create(storedOperationRef, {
       ...operation,
