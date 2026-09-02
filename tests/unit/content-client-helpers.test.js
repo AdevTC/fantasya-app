@@ -85,18 +85,76 @@ test('Spanish price parser rejects invalid or unsafe values', () => {
 
 test('post attempts derive one deterministic upload path from uid and operation id', () => {
   assert.equal(typeof helpers.createPostAttempt, 'function');
+  const image = { name: 'photo.png', size: 10, type: 'image/png' };
   const attempt = helpers.createPostAttempt({
     fingerprint: 'draft-a',
+    image,
     operationId: 'operation-1',
     uid: 'user-1',
   });
 
   assert.deepEqual(attempt, {
+    callableStarted: false,
     fingerprint: 'draft-a',
+    image,
     operationId: 'operation-1',
     payload: null,
+    uid: 'user-1',
     uploadPath: 'posts/user-1/operation-1',
   });
+});
+
+test('post attempt equality requires the exact image object and uid', () => {
+  assert.equal(typeof helpers.isSamePostAttempt, 'function');
+  const firstImage = {
+    lastModified: 1,
+    name: 'photo.png',
+    size: 10,
+    type: 'image/png',
+  };
+  const sameMetadataNewObject = { ...firstImage };
+  const attempt = helpers.createPostAttempt({
+    fingerprint: 'draft-a',
+    image: firstImage,
+    operationId: 'operation-1',
+    uid: 'user-1',
+  });
+
+  assert.equal(helpers.isSamePostAttempt(attempt, {
+    fingerprint: 'draft-a',
+    image: firstImage,
+    uid: 'user-1',
+  }), true);
+  assert.equal(helpers.isSamePostAttempt(attempt, {
+    fingerprint: 'draft-a',
+    image: sameMetadataNewObject,
+    uid: 'user-1',
+  }), false);
+  assert.equal(helpers.isSamePostAttempt(attempt, {
+    fingerprint: 'draft-a',
+    image: firstImage,
+    uid: 'user-2',
+  }), false);
+});
+
+test('only an image upload that never reached its callable can be discarded', () => {
+  assert.equal(typeof helpers.shouldDiscardPostUpload, 'function');
+  const attempt = {
+    callableStarted: false,
+    image: {},
+    uploadPath: 'posts/user-1/operation-1',
+  };
+
+  assert.equal(helpers.shouldDiscardPostUpload(attempt), true);
+  assert.equal(helpers.shouldDiscardPostUpload({
+    ...attempt,
+    callableStarted: true,
+  }), false);
+  assert.equal(helpers.shouldDiscardPostUpload({
+    ...attempt,
+    image: null,
+  }), false);
+  assert.equal(helpers.shouldDiscardPostUpload(null), false);
 });
 
 test('blob preview cleanup revokes only blob URLs', () => {

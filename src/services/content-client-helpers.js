@@ -46,13 +46,33 @@ export function parseSpanishPrice(input) {
   return Number.isFinite(price) && price >= 0 ? price : null;
 }
 
-export function createPostAttempt({ fingerprint, operationId, uid }) {
+export function createPostAttempt({ fingerprint, image, operationId, uid }) {
   return {
+    callableStarted: false,
     fingerprint,
+    image,
     operationId,
     payload: null,
+    uid,
     uploadPath: `posts/${uid}/${operationId}`,
   };
+}
+
+export function isSamePostAttempt(attempt, { fingerprint, image, uid }) {
+  return Boolean(
+    attempt
+    && attempt.uid === uid
+    && attempt.fingerprint === fingerprint
+    && attempt.image === image,
+  );
+}
+
+export function shouldDiscardPostUpload(attempt) {
+  return Boolean(
+    attempt?.image
+    && attempt.callableStarted === false
+    && attempt.uploadPath,
+  );
 }
 
 export function revokeBlobUrl(

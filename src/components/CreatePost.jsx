@@ -1,12 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import {
+    deleteObject,
+    getDownloadURL,
+    ref,
+    uploadBytes,
+} from 'firebase/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { storage } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { createPost } from '../services/content-api';
 import {
     createPostAttempt,
+    isSamePostAttempt,
     revokeBlobUrl,
+    shouldDiscardPostUpload,
 } from '../services/content-client-helpers';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, X, Tag } from 'lucide-react';
@@ -63,20 +70,41 @@ export default function CreatePost() {
             image: image ? [image.name, image.size, image.type, image.lastModified] : null,
             tags,
         });
-        if (!pendingAttemptRef.current || pendingAttemptRef.current.fingerprint !== fingerprint) {
-            operationIdRef.current = uuidv4();
-            pendingAttemptRef.current = createPostAttempt({
-                fingerprint,
-                operationId: operationIdRef.current,
-                uid: user.uid,
-            });
-        }
-        operationIdRef.current = pendingAttemptRef.current.operationId;
+        const previousAttempt = pendingAttemptRef.current;
+        const sameAttempt = isSamePostAttempt(previousAttempt, {
+            fingerprint,
+            image,
+            uid: user.uid,
+        });
         submissionInFlightRef.current = true;
         setLoading(true);
         const loadingToast = toast.loading('Publicando...');
 
         try {
+            if (!sameAttempt) {
+                if (shouldDiscardPostUpload(previousAttempt)) {
+                    try {
+                        await deleteObject(ref(storage, previousAttempt.uploadPath));
+                    } catch (cleanupError) {
+                        if (cleanupError?.code !== 'storage/object-not-found') {
+                            console.error('Error al limpiar la imagen anterior:', cleanupError);
+                            toast.error(
+                                'No se pudo preparar el nuevo intento. Vuelve a intentarlo.',
+                                { id: loadingToast },
+                            );
+                            return;
+                        }
+                    }
+                }
+                operationIdRef.current = uuidv4();
+                pendingAttemptRef.current = createPostAttempt({
+                    fingerprint,
+                    image,
+                    operationId: operationIdRef.current,
+                    uid: user.uid,
+                });
+            }
+            operationIdRef.current = pendingAttemptRef.current.operationId;
             let payload = pendingAttemptRef.current?.payload;
             if (!payload) {
                 let imageURL = null;
@@ -93,6 +121,7 @@ export default function CreatePost() {
                 pendingAttemptRef.current.payload = payload;
             }
 
+            pendingAttemptRef.current.callableStarted = true;
             await createPost({
                 operationId: operationIdRef.current,
                 ...payload,
@@ -117,6 +146,7 @@ export default function CreatePost() {
     return (
         <div className="bento-card">
             <form onSubmit={handleCreatePost}>
+                <fieldset disabled={loading} className="min-w-0 border-0 p-0 m-0 disabled:pointer-events-none">
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
@@ -176,6 +206,7 @@ export default function CreatePost() {
                         {loading ? 'Publicando...' : 'Publicar'}
                     </button>
                 </div>
+                </fieldset>
             </form>
         </div>
     );

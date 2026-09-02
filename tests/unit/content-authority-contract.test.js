@@ -37,7 +37,26 @@ test('post upload retries retain the same operation before a callable payload ex
   );
   assert.match(postSource, /ref\(storage, pendingAttemptRef\.current\.uploadPath\)/);
   assert.match(postSource, /pendingAttemptRef\.current\.payload = payload/);
+  assert.match(postSource, /pendingAttemptRef\.current\.callableStarted = true/);
   assert.doesNotMatch(postSource, /Date\.now\(\).*image\.name/);
+});
+
+test('post replacement deletes only safely abandoned uploads before allocating a new attempt', () => {
+  assert.match(postSource, /deleteObject/);
+  assert.match(postSource, /isSamePostAttempt/);
+  assert.match(postSource, /shouldDiscardPostUpload/);
+  assert.match(postSource, /storage\/object-not-found/);
+
+  const guardIndex = postSource.indexOf('submissionInFlightRef.current = true');
+  const cleanupIndex = postSource.indexOf('await deleteObject');
+  const uploadIndex = postSource.indexOf('await uploadBytes');
+  const callableFlagIndex = postSource.indexOf(
+    'pendingAttemptRef.current.callableStarted = true',
+  );
+  const callableIndex = postSource.indexOf('await createPost');
+  assert.ok(guardIndex >= 0 && guardIndex < cleanupIndex);
+  assert.ok(cleanupIndex < uploadIndex);
+  assert.ok(callableFlagIndex >= 0 && callableFlagIndex < callableIndex);
 });
 
 test('transfer retries are scoped by stable modal identity and one parsed price', () => {
@@ -52,6 +71,17 @@ test('transfer retries are scoped by stable modal identity and one parsed price'
 test('post preview installs blob-only cleanup', () => {
   assert.match(postSource, /revokeBlobUrl/);
   assert.match(postSource, /useEffect\(\(\) => \(\) => revokeBlobUrl\(imagePreview\), \[imagePreview\]\)/);
+});
+
+test('all mutable content controls are disabled for the full async submission', () => {
+  assert.match(
+    postSource,
+    /<fieldset disabled=\{loading\}[^>]*disabled:pointer-events-none[\s\S]*?<\/fieldset>/,
+  );
+  assert.match(
+    transferSource,
+    /<fieldset disabled=\{loading\}[^>]*disabled:pointer-events-none[\s\S]*?<PlayerAutocomplete[\s\S]*?<\/fieldset>/,
+  );
 });
 
 test('callable creation payloads exclude server-owned identity and XP fields', () => {

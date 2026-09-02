@@ -185,7 +185,8 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-lg border dark:border-gray-700">
                 <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">{existingTransfer ? 'Editar Fichaje' : 'Registrar Nuevo Fichaje'}</h3>
                 {season ? (
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <form onSubmit={handleSubmit}>
+                        <fieldset disabled={loading} className="space-y-4 min-w-0 border-0 p-0 m-0 disabled:pointer-events-none">
                         <div><label className="label dark:text-gray-300">Jugador</label><PlayerAutocomplete onPlayerSelect={setPlayer} initialValue={player?.name}/></div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div><label className="label dark:text-gray-300">Fecha del Fichaje</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" /></div>
@@ -219,6 +220,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                             </div>
                         </div>
                         <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={handleClose} disabled={loading} className="btn-secondary disabled:opacity-50">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
+                        </fieldset>
                     </form>
                 ) : (
                     <p className="text-gray-500 dark:text-gray-400">Cargando datos de la temporada...</p>
