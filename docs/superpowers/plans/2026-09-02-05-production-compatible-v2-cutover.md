@@ -300,11 +300,11 @@ Add emulator cases for:
 ```js
 const first = await createPostV2Handler({
   uid: 'dev-user',
-  data: { operationId: 'post-op', content: 'Hola', imageURL: null, tags: ['local'] },
+  data: { operationId: 'post-op', content: 'Hola', hasImage: false, tags: ['local'] },
 });
 const retry = await createPostV2Handler({
   uid: 'dev-user',
-  data: { operationId: 'post-op', content: 'Hola', imageURL: null, tags: ['local'] },
+  data: { operationId: 'post-op', content: 'Hola', hasImage: false, tags: ['local'] },
 });
 assert.equal(first.created, true);
 assert.equal(retry.created, false);
@@ -324,7 +324,7 @@ Expected: missing handler/export failures.
 
 - [ ] **Step 3: Implement `createPostV2Handler`**
 
-Normalize content to at most 280 characters, at most five unique lowercase tags matching `^[a-z0-9]{1,32}$`, and an optional HTTP(S) image URL of at most 2048 characters. Require content or image. Inside one Firestore transaction read the operation, deterministic post, user and XP-event documents before any write; validate retries with `matchStoredOperation`; derive `authorUsername` and `authorPhotoURL` from the user document; create the post, operation record and XP event; increment the caller by `POST` or `POST_WITH_IMAGE`.
+Normalize content to at most 280 characters, at most five unique lowercase tags matching `^[a-z0-9]{1,32}$`, and require `hasImage` to be a boolean. Require content or image. For a new operation with `hasImage: true`, derive the exact Storage path `posts/{uid}/{operationId}`, require a non-empty object no larger than 5 MiB with an allowed image MIME type, and resolve its canonical URL with the Admin SDK. A matching completed-ledger retry must not depend on the mutable Storage object still existing. Inside one Firestore transaction read the operation, deterministic post, user and XP-event documents before any write; validate retries with `matchStoredOperation`; derive `authorUsername` and `authorPhotoURL` from the user document; create the post, operation record and XP event; increment the caller by `POST` or `POST_WITH_IMAGE`.
 
 Use result shape:
 
@@ -434,7 +434,7 @@ export const createTransfer = (input) => call('createTransferV2', input);
 
 - [ ] **Step 4: Replace direct creation in both components**
 
-Use `uuidv4()` before the first callable attempt. Keep the same operation ID in a `useRef` while a submission is unresolved, clear it on confirmed success, and clear it when the modal/form is intentionally reset. Send only user-entered canonical fields; do not send author name, participant names, XP or role.
+Use `uuidv4()` before the first callable attempt. Keep the same operation ID in a `useRef` while a submission is unresolved, clear it on confirmed success, and clear it when the modal/form is intentionally reset. If an image is present, upload it first to the deterministic path `posts/{uid}/{operationId}`. Send only user-entered canonical fields plus the boolean image declaration; do not send an image URL, author name, participant names, XP or role.
 
 For post:
 
@@ -442,7 +442,7 @@ For post:
 await createPost({
   operationId: operationIdRef.current,
   content: content.trim(),
-  imageURL,
+  hasImage: Boolean(image),
   tags,
 });
 ```
