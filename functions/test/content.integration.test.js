@@ -10,6 +10,7 @@ const {
   createPostV2Handler,
   createTransferV2Handler,
 } = require('../handlers/content');
+const { unlinkUserFromTeamHandler } = require('../handlers/teams');
 
 test.beforeEach(async () => {
   await resetTestEmulators();
@@ -98,6 +99,23 @@ function rejectedOperation(results, requests, operationType, payloadFor) {
   return operationFor(requests[index], operationType, payloadFor(requests[index]));
 }
 
+async function assertSingleTransferCharge(transferId) {
+  const [user, counters, operation] = await Promise.all([
+    db.doc('users/dev-user').get(),
+    db.collection('serverRateLimits').get(),
+    db.doc(`serverOperations/${transferId}`).get(),
+  ]);
+  assert.equal(user.data().xp, 105);
+  assert.deepEqual(
+    counters.docs.map((item) => [item.data().scope, item.data().count]).sort(),
+    [
+      ['transfer-actor-league-hour', 1],
+      ['transfer-buyer-day', 1],
+    ],
+  );
+  assert.equal(operation.data().transferId, transferId);
+}
+
 function failingFirestore(failOnCreatePath) {
   return {
     doc: db.doc.bind(db),
@@ -167,6 +185,25 @@ test('post payload normalization is stable and image posts award 15 XP', async (
   assert.equal(post.content, 'Imagen');
   assert.equal(post.imageURL, 'https://example.com/image.png');
   assert.deepEqual(post.tags, ['local', 'foto']);
+});
+
+test('post retries fail closed when the XP source or amount is corrupt', async () => {
+  const request = postRequest({ operationId: 'corrupt-post-xp' });
+  const result = await createPostV2Handler(request);
+  const eventRef = db.doc(`users/dev-user/xpEvents/post:${result.postId}`);
+
+  await eventRef.update({ source: 'transfer' });
+  await assert.rejects(
+    createPostV2Handler(request),
+    (error) => error.code === 'data-loss',
+  );
+
+  await eventRef.update({ source: 'post', amount: 15 });
+  await assert.rejects(
+    createPostV2Handler(request),
+    (error) => error.code === 'data-loss',
+  );
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 110);
 });
 
 test('post operation IDs reject changed payloads and isolate users', async () => {
@@ -320,6 +357,66 @@ test('a transfer retry rechecks current admin authority without mutating state',
   assert.equal((await db.doc(
     `serverOperations/${first.transferId}`,
   ).get()).data().transferId, first.transferId);
+});
+
+test('a transfer retry survives a participant team name change', async () => {
+  const request = transferRequest({ operationId: 'renamed-team-retry' });
+  const first = await createTransferV2Handler(request);
+  await db.doc('leagues/dev-league-active/seasons/season-1').update({
+    'members.dev-user.teamName': 'Usuarios Renombrados FC',
+  });
+
+  const retry = await createTransferV2Handler(request);
+
+  assert.deepEqual(retry, { transferId: first.transferId, created: false });
+  const ledger = (await db.doc(
+    `serverOperations/${first.transferId}`,
+  ).get()).data();
+  assert.equal(ledger.buyerName, 'Usuarios FC');
+  assert.equal(ledger.sellerName, 'Mercado');
+  await assertSingleTransferCharge(first.transferId);
+});
+
+test('a transfer retry survives legitimate edits to its mutable document', async () => {
+  const request = transferRequest({ operationId: 'edited-transfer-retry' });
+  const first = await createTransferV2Handler(request);
+  const transferRef = db.doc(
+    `leagues/dev-league-active/seasons/season-1/transfers/${first.transferId}`,
+  );
+  await transferRef.update({
+    playerName: 'Jugador Local Editado',
+    price: 99,
+    type: 'acuerdo',
+  });
+
+  const retry = await createTransferV2Handler(request);
+
+  assert.deepEqual(retry, { transferId: first.transferId, created: false });
+  assert.equal((await transferRef.get()).data().price, 99);
+  await assertSingleTransferCharge(first.transferId);
+});
+
+test('a transfer retry survives participant unlink migration', async () => {
+  const request = transferRequest({ operationId: 'unlinked-transfer-retry' });
+  const first = await createTransferV2Handler(request);
+  await unlinkUserFromTeamHandler({
+    auth: { uid: 'dev-league-admin' },
+    data: {
+      leagueId: 'dev-league-active',
+      seasonId: 'season-1',
+      userIdToUnlink: 'dev-user',
+    },
+  });
+
+  const retry = await createTransferV2Handler(request);
+
+  assert.deepEqual(retry, { transferId: first.transferId, created: false });
+  const transfer = (await db.doc(
+    `leagues/dev-league-active/seasons/season-1/transfers/${first.transferId}`,
+  ).get()).data();
+  assert.equal(transfer.buyerId, 'placeholder_dev-user');
+  assert.equal(transfer.buyerName, 'Usuarios FC');
+  await assertSingleTransferCharge(first.transferId);
 });
 
 test('transfer validation rejects missing participants, self-trades and bad data', async () => {

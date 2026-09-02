@@ -245,8 +245,14 @@ function requireStoredResult(snapshot, field, expectedId, contentSnapshot) {
   }
 }
 
-function transferTimestamp(data) {
-  return data?.timestamp?.toDate?.().toISOString?.();
+function requireXpEvent(snapshot, amount, source, message) {
+  if (
+    !snapshot.exists
+    || snapshot.data().amount !== amount
+    || snapshot.data().source !== source
+  ) {
+    throw new HttpsError('data-loss', message);
+  }
 }
 
 function requireStoredTransfer(
@@ -254,10 +260,6 @@ function requireStoredTransfer(
   transfer,
   operation,
   payload,
-  buyerName,
-  sellerName,
-  expectedXpRecipientId,
-  expectedXpEventId,
   xpEvent,
 ) {
   requireStoredResult(
@@ -267,24 +269,25 @@ function requireStoredTransfer(
     transfer,
   );
   const stored = storedOperation.data();
-  const result = transfer.data();
-  const fieldsMatch = result.playerId === payload.playerId
-    && result.playerName === payload.playerName
-    && result.price === payload.price
-    && result.buyerId === payload.buyerId
-    && result.buyerName === buyerName
-    && result.sellerId === payload.sellerId
-    && result.sellerName === sellerName
-    && result.type === payload.type
-    && transferTimestamp(result) === payload.timestamp;
-  const xpMetadataMatches = stored.xpRecipientId === expectedXpRecipientId
-    && stored.xpEventId === expectedXpEventId;
-  const xpEventMatches = expectedXpEventId === null
+  const validLedgerName = (value) => typeof value === 'string'
+    && value.trim() === value
+    && value.length > 0
+    && value.length <= 128;
+  const noXp = stored.xpRecipientId === null && stored.xpEventId === null;
+  const awardedXp = stored.xpRecipientId === payload.buyerId
+    && stored.xpEventId === `transfer:${operation.key}`;
+  const xpEventMatches = noXp
     ? !xpEvent.exists
-    : xpEvent.exists
+    : awardedXp
+      && xpEvent.exists
       && xpEvent.data().amount === XP_VALUES.TRANSFER
       && xpEvent.data().source === 'transfer';
-  if (!fieldsMatch || !xpMetadataMatches || !xpEventMatches) {
+  if (
+    !validLedgerName(stored.buyerName)
+    || !validLedgerName(stored.sellerName)
+    || (!noXp && !awardedXp)
+    || !xpEventMatches
+  ) {
     throw new HttpsError(
       'data-loss',
       'El fichaje guardado no conserva su contrato atómico.',
@@ -350,9 +353,12 @@ async function createPostV2Handler(request, firestore = db, options = {}) {
     if (storedOperation.exists) {
       matchStoredOperation(storedOperation.data(), operation);
       requireStoredResult(storedOperation, 'postId', operation.key, post);
-      if (!xpEvent.exists) {
-        throw new HttpsError('data-loss', 'Falta el evento XP de la operación.');
-      }
+      requireXpEvent(
+        xpEvent,
+        xpRefs.award.amount,
+        'post',
+        'El evento XP del post no conserva su contrato atómico.',
+      );
       return { postId: operation.key, created: false };
     }
     if (post.exists || xpEvent.exists) {
@@ -465,14 +471,6 @@ async function createTransferV2Handler(request, firestore = db, options = {}) {
       seasonRef,
     };
     requireSeasonAdmin(operation.uid, context);
-    const buyerName = memberTeamName(context.season, payload.buyerId);
-    const sellerName = memberTeamName(context.season, payload.sellerId);
-    const buyer = payload.buyerId === 'market'
-      ? null
-      : context.season.members[payload.buyerId];
-    const earnsXp = buyer && buyer.isPlaceholder !== true;
-    const expectedXpRecipientId = earnsXp ? payload.buyerId : null;
-    const expectedXpEventId = earnsXp ? xpEventId : null;
 
     if (storedOperation.exists) {
       matchStoredOperation(storedOperation.data(), operation);
@@ -481,14 +479,18 @@ async function createTransferV2Handler(request, firestore = db, options = {}) {
         transfer,
         operation,
         payload,
-        buyerName,
-        sellerName,
-        expectedXpRecipientId,
-        expectedXpEventId,
         xpEvent,
       );
       return { transferId: operation.key, created: false };
     }
+    const buyerName = memberTeamName(context.season, payload.buyerId);
+    const sellerName = memberTeamName(context.season, payload.sellerId);
+    const buyer = payload.buyerId === 'market'
+      ? null
+      : context.season.members[payload.buyerId];
+    const earnsXp = buyer && buyer.isPlaceholder !== true;
+    const expectedXpRecipientId = earnsXp ? payload.buyerId : null;
+    const expectedXpEventId = earnsXp ? xpEventId : null;
     if (transfer.exists) {
       throw new HttpsError(
         'already-exists',
@@ -525,6 +527,8 @@ async function createTransferV2Handler(request, firestore = db, options = {}) {
     transaction.create(storedOperationRef, {
       ...operation,
       transferId: operation.key,
+      buyerName,
+      sellerName,
       xpRecipientId: expectedXpRecipientId,
       xpEventId: expectedXpEventId,
       createdAt: FieldValue.serverTimestamp(),
