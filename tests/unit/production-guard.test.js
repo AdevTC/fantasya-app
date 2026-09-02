@@ -481,7 +481,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     introduction,
-    /endpoints\s+legacy relacionados con esta capacidad/,
+    /Los tres endpoints relacionados con esta capacidad/,
   );
   assert.equal(
     hasAmbiguousSyncGuidance(productionRunbook),
@@ -489,7 +489,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     introduction,
-    /frontend de producción no solicita sync/,
+    /frontend nuevo[\s\S]{0,100}no solicitará sync/,
   );
   assert.match(
     introduction,
@@ -497,7 +497,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     introduction,
-    /endpoints\s+legacy[\s\S]*no deben invocarse ni\s+retirarse[\s\S]*gate/,
+    /Los tres endpoints relacionados[\s\S]*No deben invocarse[\s\S]{0,40}ni retirarse[\s\S]*gate/,
   );
   assert.doesNotMatch(
     productionRunbook,
