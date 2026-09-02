@@ -28,6 +28,9 @@ Desde la raíz del repositorio:
 . .\scripts\activate-node22.ps1
 npm ci
 npm --prefix functions ci
+if (-not (Test-Path -LiteralPath functions\.secret.local)) {
+    Copy-Item -LiteralPath functions\.secret.local.example -Destination functions\.secret.local
+}
 ```
 
 El script comprueba que la sesión está usando Node.js 22. Los archivos
@@ -84,6 +87,7 @@ npm run test:unit
 npm run test:seed
 npm run test:integrity
 npm run build
+npm run verify
 ```
 
 `npm run test:seed` posee todo el ciclo de vida de los emuladores, así que se
@@ -96,3 +100,8 @@ Los despliegues son manuales, requieren autorización separada y siempre deben
 nombrar el proyecto real `tictaktools` explícitamente. Mientras no exista un
 entorno de staging aislado, cualquier preview de Vercel debe tratarse como
 producción.
+
+Consulta [el setup diario y la matriz de accesos](docs/development.md). El orden
+de publicación, las comprobaciones y el rollback se documentan en el
+[runbook de producción](docs/releases/firebase-production-runbook.md); el
+runbook no autoriza por sí mismo a ejecutar ninguna acción remota.
