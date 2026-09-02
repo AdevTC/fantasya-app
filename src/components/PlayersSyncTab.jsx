@@ -3,6 +3,10 @@ import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { playerSyncEnabled } from '../config/capabilities';
 import {
+    resolveCatalogueLoadPlan,
+    resolveCatalogueViewState,
+} from '../config/capability-policy';
+import {
     getLaLigaSyncStatus,
     syncLaLigaPlayers,
 } from '../services/admin-api';
@@ -27,6 +31,8 @@ export default function PlayersSyncTab() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncProgress, setSyncProgress] = useState(null);
     const [syncedPlayers, setSyncedPlayers] = useState([]);
+    const [catalogueError, setCatalogueError] = useState(null);
+    const [isCatalogueLoading, setIsCatalogueLoading] = useState(true);
     const [teamFilter, setTeamFilter] = useState('');
     const [positionFilter, setPositionFilter] = useState('');
     const [nationalityFilter, setNationalityFilter] = useState('');
@@ -36,6 +42,8 @@ export default function PlayersSyncTab() {
     const mountedRef = useRef(false);
     const progressTimeoutRef = useRef(null);
     const syncInFlightRef = useRef(false);
+    const catalogueRetryInFlightRef = useRef(false);
+    const catalogueRequestIdRef = useRef(0);
     const ITEMS_PER_PAGE = 20;
 
     // Get unique teams and positions for filters
@@ -140,6 +148,14 @@ export default function PlayersSyncTab() {
         activeRunId,
         isCurrent = () => mountedRef.current,
     ) => {
+        const requestId = ++catalogueRequestIdRef.current;
+        const isLatest = () => isCurrent()
+            && catalogueRequestIdRef.current === requestId;
+
+        if (!isLatest()) return false;
+        setCatalogueError(null);
+        setIsCatalogueLoading(true);
+
         try {
             const playersRef = activeRunId
                 ? collection(db, 'laLigaSyncRuns', activeRunId, 'players')
@@ -150,23 +166,33 @@ export default function PlayersSyncTab() {
                 id: doc.id,
                 ...doc.data()
             }));
-            if (!isCurrent()) return;
+            if (!isLatest()) return false;
             setSyncedPlayers(players);
             setCurrentPage(1);
+            setCatalogueError(null);
+            return true;
         } catch (error) {
             console.error("Error fetching synced players:", error);
+            if (!isCurrent()) return false;
+            if (!isLatest()) return false;
+            setCatalogueError('No se pudo cargar el catálogo de jugadores.');
+            return false;
+        } finally {
+            if (isLatest()) setIsCatalogueLoading(false);
         }
     }, []);
 
-    // Load saved players in every environment, but query sync state only locally.
-    useEffect(() => {
-        mountedRef.current = true;
-        let cancelled = false;
-        const isCurrent = () => !cancelled && mountedRef.current;
+    const loadPlayerSnapshot = useCallback(async (
+        isCurrent = () => mountedRef.current,
+    ) => {
+        if (!isCurrent()) return;
+        setCatalogueError(null);
+        setIsCatalogueLoading(true);
 
-        const loadPlayerSnapshot = async () => {
-            if (!playerSyncEnabled) {
-                if (cancelled) return;
+        const loadPlan = resolveCatalogueLoadPlan({ playerSyncEnabled });
+
+        if (!loadPlan.fetchSyncStatus) {
+            if (isCurrent()) {
                 setSyncStatus({
                     status: 'disabled',
                     lastSync: null,
@@ -174,16 +200,23 @@ export default function PlayersSyncTab() {
                     lastError: null,
                     activeRunId: null,
                 });
-                await fetchSyncedPlayers(null, isCurrent);
-                return;
             }
+            await fetchSyncedPlayers(loadPlan.activeRunId, isCurrent);
+            return;
+        }
 
-            const status = await fetchSyncStatus(isCurrent);
-            if (cancelled) return;
-            await fetchSyncedPlayers(status?.activeRunId, isCurrent);
-        };
+        const status = await fetchSyncStatus(isCurrent);
+        if (!isCurrent()) return;
+        await fetchSyncedPlayers(status?.activeRunId, isCurrent);
+    }, [fetchSyncStatus, fetchSyncedPlayers]);
 
-        void loadPlayerSnapshot();
+    // Load saved players in every environment, but query sync state only locally.
+    useEffect(() => {
+        mountedRef.current = true;
+        let cancelled = false;
+        const isCurrent = () => !cancelled && mountedRef.current;
+
+        void loadPlayerSnapshot(isCurrent);
 
         return () => {
             cancelled = true;
@@ -193,7 +226,18 @@ export default function PlayersSyncTab() {
                 progressTimeoutRef.current = null;
             }
         };
-    }, [fetchSyncStatus, fetchSyncedPlayers]);
+    }, [loadPlayerSnapshot]);
+
+    const handleCatalogueRetry = async () => {
+        if (catalogueRetryInFlightRef.current) return;
+        catalogueRetryInFlightRef.current = true;
+
+        try {
+            await loadPlayerSnapshot();
+        } finally {
+            catalogueRetryInFlightRef.current = false;
+        }
+    };
 
     const handleSync = async () => {
         if (!playerSyncEnabled || syncInFlightRef.current) return;
@@ -337,6 +381,12 @@ export default function PlayersSyncTab() {
             color: 'blue'
         }
     ];
+
+    const catalogueViewState = resolveCatalogueViewState({
+        error: catalogueError,
+        isLoading: isCatalogueLoading,
+        playersCount: syncedPlayers.length,
+    });
 
     return (
         <div className="space-y-6">
@@ -525,6 +575,26 @@ export default function PlayersSyncTab() {
                         </div>
                     </div>
                 </div>
+
+                {catalogueViewState === 'error' && syncedPlayers.length > 0 && (
+                    <div
+                        role="alert"
+                        className="mx-6 mt-4 flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <p className="text-sm font-medium">
+                            No se pudo cargar el catálogo de jugadores.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={handleCatalogueRetry}
+                            disabled={isCatalogueLoading}
+                            className="self-start rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-700 dark:hover:bg-red-900/50 sm:self-auto"
+                        >
+                            Reintentar
+                        </button>
+                    </div>
+                )}
+
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800">
@@ -564,7 +634,31 @@ export default function PlayersSyncTab() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                            {syncedPlayers.length === 0 ? (
+                            {catalogueViewState === 'error' && syncedPlayers.length === 0 ? (
+                                <tr>
+                                    <td colSpan="4" className="p-8 text-center">
+                                        <div role="alert" className="flex flex-col items-center gap-3 text-red-700 dark:text-red-300">
+                                            <p className="font-medium">
+                                                No se pudo cargar el catálogo de jugadores.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={handleCatalogueRetry}
+                                                disabled={isCatalogueLoading}
+                                                className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-700 dark:hover:bg-red-900/30"
+                                            >
+                                                Reintentar
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : catalogueViewState === 'loading' && syncedPlayers.length === 0 ? (
+                                <tr>
+                                    <td colSpan="4" className="p-8 text-center text-gray-500 dark:text-gray-400">
+                                        Cargando catálogo de jugadores...
+                                    </td>
+                                </tr>
+                            ) : catalogueViewState === 'empty' ? (
                                 <tr>
                                     <td colSpan="4" className="p-8 text-center text-gray-500 dark:text-gray-400">
                                         {playerSyncEnabled
