@@ -60,7 +60,6 @@ function hasAmbiguousSyncGuidance(value) {
       || tokens.some((word) => word.startsWith('exclusiv'));
     const mentionsLocalEnvironment = words.has('desarrollo')
       || tokens.some((word) => word.startsWith('emulador'));
-    const qualifiesFixture = words.has('fixture');
     const qualifiesClientControl = (
       (words.has('control') || words.has('controles'))
       && words.has('cliente')
@@ -68,7 +67,6 @@ function hasAmbiguousSyncGuidance(value) {
     return mentionsSync
       && restrictsScope
       && mentionsLocalEnvironment
-      && !qualifiesFixture
       && !qualifiesClientControl;
   });
 }
@@ -314,7 +312,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     introduction,
-    /endpoints\s+legacy relacionados/,
+    /endpoints\s+legacy relacionados con esta capacidad/,
   );
   assert.equal(
     hasAmbiguousSyncGuidance(productionRunbook),
@@ -330,7 +328,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     introduction,
-    /endpoints legacy[\s\S]*no deben invocarse ni retirarse[\s\S]*gate/,
+    /endpoints\s+legacy[\s\S]*no deben invocarse ni\s+retirarse[\s\S]*gate/,
   );
   assert.doesNotMatch(
     productionRunbook,
@@ -351,6 +349,7 @@ test('sync guidance classifier rejects only unqualified ambiguous phrases', () =
     'El sync sólo se usa en desarrollo con emuladores.',
     'LA SINCRONIZACIÓN   está disponible exclusivamente\n en desarrollo.',
     'La sincronizacion funciona solo con el emulador.',
+    'El fixture y el sync sólo permanecen activos en desarrollo con emuladores.',
   ];
   for (const sentence of ambiguous) {
     assert.equal(hasAmbiguousSyncGuidance(sentence), true, sentence);
