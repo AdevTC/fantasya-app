@@ -51,10 +51,17 @@ test('Firebase CLI defaults to demo-fantasya with fixed local ports', () => {
 test('local scripts name the demo project and own the emulator lifecycle', () => {
   const scripts = json('package.json').scripts;
 
-  assert.match(scripts.dev, /emulators:exec --project demo-fantasya/);
+  assert.equal(
+    scripts.dev,
+    'node scripts/run-with-firebase-emulators.mjs --ui "npm run dev:session"',
+  );
   assert.match(scripts['dev:emulators'], /emulators:start --project demo-fantasya/);
   assert.equal(scripts['dev:session'], 'run-s dev:seed dev:web');
-  assert.match(scripts['test:seed'], /emulators:exec --project demo-fantasya/);
+  assert.match(scripts['dev:web'], /--strictPort(?:\s|$)/);
+  assert.equal(
+    scripts['test:seed'],
+    'node scripts/run-with-firebase-emulators.mjs "npm --prefix functions run test:seed"',
+  );
 });
 
 test('Firestore indexes are versioned using the current schema', () => {
