@@ -18,21 +18,6 @@ async function rejectsCode(promise, code) {
   });
 }
 
-async function eventually(assertion, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      return await assertion();
-    } catch (error) {
-      if (!(error instanceof assert.AssertionError)) throw error;
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  throw lastError || new Error('Timed out waiting for assertion.');
-}
-
 function requestInput(overrides = {}) {
   return {
     leagueId: 'dev-league-active',
@@ -114,6 +99,25 @@ test('invite join rejects a wrong code, duplicate name and changed retry', async
 });
 
 test('placeholder claim preserves history and completes migration', async () => {
+  const seasonPath = 'leagues/dev-league-active/seasons/season-1';
+  const batch = db.batch();
+  batch.set(db.doc(`${seasonPath}/achievements/placeholder-rival`), {
+    trophies: [{ trophyId: 'CHAMPION' }],
+  });
+  batch.set(db.doc(`${seasonPath}/transfers/placeholder-transfer`), {
+    buyerId: 'placeholder-rival',
+    buyerName: 'Equipo Fantasma',
+    sellerId: 'placeholder-rival',
+    sellerName: 'Equipo Fantasma',
+  });
+  batch.set(db.doc(`${seasonPath}/rounds/round-1`), {
+    scores: { 'placeholder-rival': 42 },
+  });
+  batch.set(db.doc(`${seasonPath}/lineups/round-1-placeholder-rival`), {
+    players: ['dev-player'],
+  });
+  await batch.commit();
+
   const result = await joinSeasonByInviteCodeHandler({
     uid: 'dev-superadmin',
     data: {
@@ -126,18 +130,63 @@ test('placeholder claim preserves history and completes migration', async () => 
   });
   assert.equal(result.claimedPlaceholderId, 'placeholder-rival');
 
-  await eventually(async () => {
-    const season = await db.doc(
-      'leagues/dev-league-active/seasons/season-1',
-    ).get();
-    const member = season.data().members['dev-superadmin'];
-    assert.equal(member.totalPoints, 10);
-    assert.equal(member.teamName, 'Equipo Fantasma');
-    assert.equal(member.role, 'member');
-    assert.equal(member.isPlaceholder, false);
-    assert.equal(member.claimedPlaceholderId, undefined);
-    assert.equal(season.data().members['placeholder-rival'], undefined);
+  const [
+    season,
+    placeholderAchievement,
+    userAchievement,
+    transfer,
+    round,
+    oldLineup,
+    newLineup,
+  ] = await Promise.all([
+    db.doc(seasonPath).get(),
+    db.doc(`${seasonPath}/achievements/placeholder-rival`).get(),
+    db.doc('users/dev-superadmin/achievements/season-1').get(),
+    db.doc(`${seasonPath}/transfers/placeholder-transfer`).get(),
+    db.doc(`${seasonPath}/rounds/round-1`).get(),
+    db.doc(`${seasonPath}/lineups/round-1-placeholder-rival`).get(),
+    db.doc(`${seasonPath}/lineups/round-1-dev-superadmin`).get(),
+  ]);
+  const member = season.data().members['dev-superadmin'];
+  assert.equal(member.totalPoints, 10);
+  assert.equal(member.teamName, 'Equipo Fantasma');
+  assert.equal(member.role, 'member');
+  assert.equal(member.isPlaceholder, false);
+  assert.equal(member.claimedPlaceholderId, undefined);
+  assert.equal(season.data().members['placeholder-rival'], undefined);
+  assert.equal(placeholderAchievement.exists, false);
+  assert.equal(userAchievement.data().trophies[0].trophyId, 'CHAMPION');
+  assert.equal(transfer.data().buyerId, 'dev-superadmin');
+  assert.equal(transfer.data().sellerId, 'dev-superadmin');
+  assert.equal(round.data().scores['placeholder-rival'], undefined);
+  assert.equal(round.data().scores['dev-superadmin'], 42);
+  assert.equal(oldLineup.exists, false);
+  assert.deepEqual(newLineup.data().players, ['dev-player']);
+});
+
+test('oversized placeholder migration fails without publishing membership', async () => {
+  const seasonPath = 'leagues/dev-league-active/seasons/season-1';
+  await db.doc(`${seasonPath}/rounds/round-1`).set({
+    scores: { 'placeholder-rival': 42 },
   });
+
+  await rejectsCode(joinSeasonByInviteCodeHandler({
+    uid: 'dev-superadmin',
+    data: {
+      leagueId: 'dev-league-active',
+      seasonId: 'season-1',
+      inviteCode: 'LOCAL1',
+      mode: 'claim',
+      placeholderId: 'placeholder-rival',
+    },
+  }, db, { maxMigrationWrites: 1 }), 'resource-exhausted');
+
+  const season = await db.doc(seasonPath).get();
+  assert.equal(season.data().members['dev-superadmin'], undefined);
+  assert.equal(
+    season.data().members['placeholder-rival'].isPlaceholder,
+    true,
+  );
 });
 
 test('a claimed or missing placeholder cannot be stolen', async () => {
@@ -273,13 +322,33 @@ test('request review atomically changes request, membership and chat message', a
   assert.equal(message.data().requestStatus, 'approved');
   assert.equal(notification.data().isSystemMessage, true);
 
-  await rejectsCode(reviewJoinRequestHandler({
+  const retried = await reviewJoinRequestHandler({
     uid: 'dev-league-admin',
     data: {
       leagueId: 'dev-league-active',
       seasonId: 'season-1',
       requestId: submitted.requestId,
       action: 'approve',
+    },
+  });
+  assert.equal(retried.status, 'approved');
+  assert.equal(
+    retried.notificationMessageId,
+    reviewed.notificationMessageId,
+  );
+
+  const notificationMessages = await db.collection(
+    `chats/${submitted.chatId}/messages`,
+  ).where('relatedRequestId', '==', submitted.requestId).get();
+  assert.equal(notificationMessages.size, 1);
+
+  await rejectsCode(reviewJoinRequestHandler({
+    uid: 'dev-league-admin',
+    data: {
+      leagueId: 'dev-league-active',
+      seasonId: 'season-1',
+      requestId: submitted.requestId,
+      action: 'reject',
     },
   }), 'failed-precondition');
 });

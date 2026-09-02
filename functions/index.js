@@ -1,6 +1,5 @@
 const {
   onDocumentCreated,
-  onDocumentUpdated,
 } = require('firebase-functions/v2/firestore');
 const {
   HttpsError,
@@ -53,108 +52,6 @@ function footballApiKeyForRequest(request) {
 exports.createProfileDocuments = onCall(
   { region: 'us-central1', cors: browserOrigins },
   createProfileDocumentsHandler,
-);
-
-exports.onSeasonJoin = onDocumentUpdated(
-  'leagues/{leagueId}/seasons/{seasonId}',
-  async (event) => {
-    const afterData = event.data.after.data();
-    const beforeData = event.data.before.data();
-    const { leagueId, seasonId } = event.params;
-    const seasonRef = db.doc(`leagues/${leagueId}/seasons/${seasonId}`);
-    for (const userId in afterData.members) {
-      if (
-        !beforeData.members[userId] &&
-        afterData.members[userId].claimedPlaceholderId
-      ) {
-        const memberAfter = afterData.members[userId];
-        const placeholderId = memberAfter.claimedPlaceholderId;
-        if (
-          !beforeData.members[placeholderId] ||
-          !beforeData.members[placeholderId].isPlaceholder
-        ) {
-          logger.error(
-            `Migration FAILED for user ${userId}: Placeholder ` +
-              `${placeholderId} does not exist or is not a placeholder.`,
-          );
-          await seasonRef.update({
-            [`members.${userId}.claimedPlaceholderId`]: FieldValue.delete(),
-          });
-          return;
-        }
-        logger.info(
-          `MIGRATION START: User ${userId} claiming placeholder ` +
-            `${placeholderId}.`,
-        );
-        const batch = db.batch();
-        const newUserTeamName = memberAfter.teamName;
-        if (!newUserTeamName) {
-          logger.error(`Migration FAILED for ${userId}: New team name is missing.`);
-          return;
-        }
-        const placeholderAchievementRef = seasonRef
-          .collection('achievements')
-          .doc(placeholderId);
-        const userAchievementRef = db.doc(
-          `users/${userId}/achievements/${seasonId}`,
-        );
-        const placeholderAchievementDoc = await placeholderAchievementRef.get();
-        if (placeholderAchievementDoc.exists) {
-          batch.set(userAchievementRef, placeholderAchievementDoc.data());
-          batch.delete(placeholderAchievementRef);
-        }
-        const transfersRef = seasonRef.collection('transfers');
-        const buyerQuery = transfersRef.where('buyerId', '==', placeholderId);
-        const sellerQuery = transfersRef.where('sellerId', '==', placeholderId);
-        const [buyerSnapshot, sellerSnapshot] = await Promise.all([
-          buyerQuery.get(),
-          sellerQuery.get(),
-        ]);
-        buyerSnapshot.forEach((snapshot) => batch.update(snapshot.ref, {
-          buyerId: userId,
-          buyerName: newUserTeamName,
-        }));
-        sellerSnapshot.forEach((snapshot) => batch.update(snapshot.ref, {
-          sellerId: userId,
-          sellerName: newUserTeamName,
-        }));
-        const roundsSnapshot = await seasonRef.collection('rounds').get();
-        roundsSnapshot.forEach((roundDoc) => {
-          const roundData = roundDoc.data();
-          if (
-            roundData.scores &&
-            roundData.scores[placeholderId] !== undefined
-          ) {
-            batch.update(roundDoc.ref, {
-              [`scores.${userId}`]: roundData.scores[placeholderId],
-              [`scores.${placeholderId}`]: FieldValue.delete(),
-            });
-          }
-        });
-        const allLineupsSnapshot = await seasonRef.collection('lineups').get();
-        allLineupsSnapshot.forEach((lineupDoc) => {
-          if (lineupDoc.id.endsWith(`-${placeholderId}`)) {
-            const roundId = lineupDoc.id.substring(
-              0,
-              lineupDoc.id.lastIndexOf('-'),
-            );
-            const newLineupRef = seasonRef
-              .collection('lineups')
-              .doc(`${roundId}-${userId}`);
-            batch.set(newLineupRef, lineupDoc.data());
-            batch.delete(lineupDoc.ref);
-          }
-        });
-        batch.update(seasonRef, {
-          [`members.${placeholderId}`]: FieldValue.delete(),
-          [`members.${userId}.claimedPlaceholderId`]: FieldValue.delete(),
-        });
-        await batch.commit();
-        logger.info(`MIGRATION SUCCESS for user ${userId}.`);
-        return;
-      }
-    }
-  },
 );
 
 exports.unlinkUserFromTeam = onCall(

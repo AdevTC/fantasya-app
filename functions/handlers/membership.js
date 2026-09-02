@@ -7,6 +7,7 @@ const {
 
 const TEAM_NAME_MAX = 24;
 const MESSAGE_MAX = 500;
+const DEFAULT_MAX_CLAIM_MIGRATION_WRITES = 450;
 
 function cleanTeamName(value) {
   const teamName = typeof value === 'string' ? value.trim() : '';
@@ -127,7 +128,11 @@ function requireJoinableSeason(context) {
   }
 }
 
-async function joinSeasonByInviteCodeHandler(request, firestore = db) {
+async function joinSeasonByInviteCodeHandler(
+  request,
+  firestore = db,
+  options = {},
+) {
   const uid = requireDocumentId(request?.uid, 'uid');
   const refs = seasonRefs(firestore, request?.data);
   const inviteCode = cleanInviteCode(request?.data?.inviteCode);
@@ -144,6 +149,15 @@ async function joinSeasonByInviteCodeHandler(request, firestore = db) {
   const placeholderId = mode === 'claim'
     ? requireDocumentId(request?.data?.placeholderId, 'placeholderId')
     : null;
+  const maxMigrationWrites = options.maxMigrationWrites
+    ?? DEFAULT_MAX_CLAIM_MIGRATION_WRITES;
+  if (
+    !Number.isInteger(maxMigrationWrites)
+    || maxMigrationWrites < 1
+    || maxMigrationWrites > 500
+  ) {
+    throw new TypeError('maxMigrationWrites must be between 1 and 500.');
+  }
   const profileRef = firestore.doc('users/' + uid);
 
   return firestore.runTransaction(async (transaction) => {
@@ -216,7 +230,127 @@ async function joinSeasonByInviteCodeHandler(request, firestore = db) {
       newMember = memberFromProfile(
         profileSnapshot.data(),
         cleanTeamName(placeholder.teamName),
-        { ...placeholder, claimedPlaceholderId: placeholderId },
+        placeholder,
+      );
+
+      const placeholderAchievementRef = refs.seasonRef
+        .collection('achievements')
+        .doc(placeholderId);
+      const userAchievementRef = profileRef
+        .collection('achievements')
+        .doc(refs.seasonId);
+      const transfersRef = refs.seasonRef.collection('transfers');
+      const [
+        placeholderAchievementSnapshot,
+        userAchievementSnapshot,
+        buyerSnapshot,
+        sellerSnapshot,
+        roundsSnapshot,
+        lineupsSnapshot,
+      ] = await Promise.all([
+        transaction.get(placeholderAchievementRef),
+        transaction.get(userAchievementRef),
+        transaction.get(transfersRef.where('buyerId', '==', placeholderId)),
+        transaction.get(transfersRef.where('sellerId', '==', placeholderId)),
+        transaction.get(refs.seasonRef.collection('rounds')),
+        transaction.get(refs.seasonRef.collection('lineups')),
+      ]);
+
+      if (
+        placeholderAchievementSnapshot.exists
+        && userAchievementSnapshot.exists
+      ) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Ya existe un historial de trofeos para este usuario y temporada.',
+        );
+      }
+
+      const transferUpdates = new Map();
+      buyerSnapshot.docs.forEach((snapshot) => {
+        transferUpdates.set(snapshot.ref.path, {
+          ...(transferUpdates.get(snapshot.ref.path) || {}),
+          buyerId: uid,
+          buyerName: newMember.teamName,
+        });
+      });
+      sellerSnapshot.docs.forEach((snapshot) => {
+        transferUpdates.set(snapshot.ref.path, {
+          ...(transferUpdates.get(snapshot.ref.path) || {}),
+          sellerId: uid,
+          sellerName: newMember.teamName,
+        });
+      });
+
+      const affectedRounds = roundsSnapshot.docs.filter((snapshot) =>
+        Object.prototype.hasOwnProperty.call(
+          snapshot.data().scores || {},
+          placeholderId,
+        ));
+      const placeholderSuffix = '-' + placeholderId;
+      const existingLineupIds = new Set(
+        lineupsSnapshot.docs.map((snapshot) => snapshot.id),
+      );
+      const affectedLineups = lineupsSnapshot.docs
+        .filter((snapshot) => snapshot.id.endsWith(placeholderSuffix))
+        .map((snapshot) => {
+          const roundId = snapshot.id.slice(0, -placeholderSuffix.length);
+          const destinationId = roundId + '-' + uid;
+          if (!roundId || existingLineupIds.has(destinationId)) {
+            throw new HttpsError(
+              'failed-precondition',
+              'Ya existe una alineación incompatible para este usuario.',
+            );
+          }
+          return {
+            destinationRef: refs.seasonRef
+              .collection('lineups')
+              .doc(destinationId),
+            snapshot,
+          };
+        });
+
+      const migrationWriteCount = 1
+        + (placeholderAchievementSnapshot.exists ? 2 : 0)
+        + transferUpdates.size
+        + affectedRounds.length
+        + (affectedLineups.length * 2);
+      if (migrationWriteCount > maxMigrationWrites) {
+        throw new HttpsError(
+          'resource-exhausted',
+          'El historial es demasiado grande para migrarlo de forma atómica.',
+        );
+      }
+
+      if (placeholderAchievementSnapshot.exists) {
+        transaction.set(
+          userAchievementRef,
+          placeholderAchievementSnapshot.data(),
+        );
+        transaction.delete(placeholderAchievementRef);
+      }
+      transferUpdates.forEach((update, path) => {
+        transaction.update(firestore.doc(path), update);
+      });
+      affectedRounds.forEach((snapshot) => {
+        transaction.update(
+          snapshot.ref,
+          new FieldPath('scores', uid),
+          snapshot.data().scores[placeholderId],
+          new FieldPath('scores', placeholderId),
+          FieldValue.delete(),
+        );
+      });
+      affectedLineups.forEach(({ destinationRef, snapshot }) => {
+        transaction.set(destinationRef, snapshot.data());
+        transaction.delete(snapshot.ref);
+      });
+      transaction.update(
+        refs.seasonRef,
+        new FieldPath('members', uid),
+        newMember,
+        new FieldPath('members', placeholderId),
+        FieldValue.delete(),
       );
     } else {
       if (hasDuplicateTeamName(context.season.members, teamName)) {
@@ -231,11 +365,13 @@ async function joinSeasonByInviteCodeHandler(request, firestore = db) {
       });
     }
 
-    transaction.update(
-      refs.seasonRef,
-      new FieldPath('members', uid),
-      newMember,
-    );
+    if (mode === 'create') {
+      transaction.update(
+        refs.seasonRef,
+        new FieldPath('members', uid),
+        newMember,
+      );
+    }
     return {
       joined: true,
       alreadyMember: false,
@@ -404,6 +540,7 @@ async function reviewJoinRequestHandler(request, firestore = db) {
   const suppliedMessageId = request?.data?.messageId == null
     ? null
     : requireDocumentId(request.data.messageId, 'messageId');
+  const status = action === 'approve' ? 'approved' : 'rejected';
   const requestRef = refs.seasonRef.collection('joinRequests').doc(requestId);
   const notificationMessageId = firestore.collection('chats').doc().id;
 
@@ -425,6 +562,31 @@ async function reviewJoinRequestHandler(request, firestore = db) {
     }
     const joinRequest = requestSnapshot.data();
     if (joinRequest.status !== 'pending') {
+      if (joinRequest.status === status) {
+        const stableMessageId = requireDocumentId(
+          joinRequest.messageId,
+          'request.messageId',
+        );
+        if (suppliedMessageId && suppliedMessageId !== stableMessageId) {
+          throw new HttpsError(
+            'invalid-argument',
+            'El mensaje no corresponde a la solicitud.',
+          );
+        }
+        return {
+          requestId,
+          status,
+          chatId: requireDocumentId(joinRequest.chatId, 'request.chatId'),
+          messageId: stableMessageId,
+          notificationMessageId:
+            typeof joinRequest.notificationMessageId === 'string'
+              ? requireDocumentId(
+                joinRequest.notificationMessageId,
+                'request.notificationMessageId',
+              )
+              : null,
+        };
+      }
       throw new HttpsError(
         'failed-precondition',
         'La solicitud ya fue procesada.',
@@ -507,7 +669,6 @@ async function reviewJoinRequestHandler(request, firestore = db) {
       );
     }
 
-    const status = action === 'approve' ? 'approved' : 'rejected';
     const teamName = cleanTeamName(joinRequest.teamName);
     if (action === 'approve') {
       requireJoinableSeason(context);
@@ -537,6 +698,7 @@ async function reviewJoinRequestHandler(request, firestore = db) {
     transaction.update(requestRef, {
       status,
       messageId,
+      notificationMessageId,
       reviewedAt: FieldValue.serverTimestamp(),
       reviewedBy: uid,
     });
