@@ -1,3 +1,4 @@
+const { createHash } = require('node:crypto');
 const { Timestamp } = require('firebase-admin/firestore');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { db, FieldValue } = require('../lib/firebase');
@@ -29,6 +30,13 @@ const TRANSFER_KEYS = new Set([
   'timestamp',
 ]);
 const TRANSFER_TYPES = new Set(['puja', 'clausulazo', 'acuerdo']);
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const DEFAULT_LIMITS = Object.freeze({
+  postsPerHour: 12,
+  transfersPerActorLeagueHour: 60,
+  rewardedTransfersPerBuyerDay: 100,
+});
 
 function invalidArgument(message) {
   throw new HttpsError('invalid-argument', message);
@@ -164,6 +172,67 @@ function operationRef(firestore, operation) {
   return firestore.doc(`serverOperations/${operation.key}`);
 }
 
+function rateContext(options = {}) {
+  const clock = options.clock || (() => new Date());
+  if (typeof clock !== 'function') invalidArgument('El reloj no es válido.');
+  const now = clock();
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    invalidArgument('El reloj no es válido.');
+  }
+  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      invalidArgument(`El límite ${name} no es válido.`);
+    }
+  }
+  return { limits, nowMs: now.getTime() };
+}
+
+function rateLimit(firestore, { scope, subjects, windowMs, limit, nowMs }) {
+  const windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
+  const id = createHash('sha256')
+    .update(JSON.stringify([scope, subjects, windowStartMs]))
+    .digest('hex');
+  return {
+    limit,
+    ref: firestore.doc(`serverRateLimits/${id}`),
+    scope,
+    windowStartMs,
+  };
+}
+
+function counterValue(snapshot, quota) {
+  if (!snapshot.exists) return 0;
+  const data = snapshot.data();
+  if (
+    data.scope !== quota.scope
+    || data.windowStart?.toMillis?.() !== quota.windowStartMs
+    || !Number.isSafeInteger(data.count)
+    || data.count < 0
+  ) {
+    throw new HttpsError('data-loss', 'El contador de uso no es válido.');
+  }
+  return data.count;
+}
+
+function requireQuota(snapshot, quota) {
+  if (counterValue(snapshot, quota) >= quota.limit) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Se ha alcanzado el límite temporal de operaciones.',
+    );
+  }
+}
+
+function incrementQuota(transaction, quota) {
+  transaction.set(quota.ref, {
+    scope: quota.scope,
+    windowStart: Timestamp.fromMillis(quota.windowStartMs),
+    count: FieldValue.increment(1),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 function requireStoredResult(snapshot, field, expectedId, contentSnapshot) {
   if (
     snapshot.data()?.[field] !== expectedId
@@ -172,6 +241,53 @@ function requireStoredResult(snapshot, field, expectedId, contentSnapshot) {
     throw new HttpsError(
       'data-loss',
       'La operación guardada no coincide con su resultado.',
+    );
+  }
+}
+
+function transferTimestamp(data) {
+  return data?.timestamp?.toDate?.().toISOString?.();
+}
+
+function requireStoredTransfer(
+  storedOperation,
+  transfer,
+  operation,
+  payload,
+  buyerName,
+  sellerName,
+  expectedXpRecipientId,
+  expectedXpEventId,
+  xpEvent,
+) {
+  requireStoredResult(
+    storedOperation,
+    'transferId',
+    operation.key,
+    transfer,
+  );
+  const stored = storedOperation.data();
+  const result = transfer.data();
+  const fieldsMatch = result.playerId === payload.playerId
+    && result.playerName === payload.playerName
+    && result.price === payload.price
+    && result.buyerId === payload.buyerId
+    && result.buyerName === buyerName
+    && result.sellerId === payload.sellerId
+    && result.sellerName === sellerName
+    && result.type === payload.type
+    && transferTimestamp(result) === payload.timestamp;
+  const xpMetadataMatches = stored.xpRecipientId === expectedXpRecipientId
+    && stored.xpEventId === expectedXpEventId;
+  const xpEventMatches = expectedXpEventId === null
+    ? !xpEvent.exists
+    : xpEvent.exists
+      && xpEvent.data().amount === XP_VALUES.TRANSFER
+      && xpEvent.data().source === 'transfer';
+  if (!fieldsMatch || !xpMetadataMatches || !xpEventMatches) {
+    throw new HttpsError(
+      'data-loss',
+      'El fichaje guardado no conserva su contrato atómico.',
     );
   }
 }
@@ -191,7 +307,8 @@ function safeProfilePhoto(profile) {
   }
 }
 
-async function createPostV2Handler(request, firestore = db) {
+async function createPostV2Handler(request, firestore = db, options = {}) {
+  const usage = rateContext(options);
   const payload = normalizePostData(request?.data);
   const operation = describeOperation({
     uid: request?.uid,
@@ -207,13 +324,27 @@ async function createPostV2Handler(request, firestore = db) {
     amount: payload.imageURL ? XP_VALUES.POST_WITH_IMAGE : XP_VALUES.POST,
     source: 'post',
   });
+  const hourlyQuota = rateLimit(firestore, {
+    scope: 'post-hour',
+    subjects: [operation.uid],
+    windowMs: HOUR_MS,
+    limit: usage.limits.postsPerHour,
+    nowMs: usage.nowMs,
+  });
 
   return firestore.runTransaction(async (transaction) => {
-    const [storedOperation, post, user, xpEvent] = await Promise.all([
+    const [
+      storedOperation,
+      post,
+      user,
+      xpEvent,
+      hourlyCounter,
+    ] = await Promise.all([
       transaction.get(storedOperationRef),
       transaction.get(postRef),
       transaction.get(xpRefs.userRef),
       transaction.get(xpRefs.eventRef),
+      transaction.get(hourlyQuota.ref),
     ]);
 
     if (storedOperation.exists) {
@@ -230,6 +361,7 @@ async function createPostV2Handler(request, firestore = db) {
         'El resultado de la operación ya existe sin su registro.',
       );
     }
+    requireQuota(hourlyCounter, hourlyQuota);
 
     const profile = user.data();
     const authorUsername = normalizeText(
@@ -253,11 +385,13 @@ async function createPostV2Handler(request, firestore = db) {
       postId: operation.key,
       createdAt: FieldValue.serverTimestamp(),
     });
+    incrementQuota(transaction, hourlyQuota);
     return { postId: operation.key, created: true };
   });
 }
 
-async function createTransferV2Handler(request, firestore = db) {
+async function createTransferV2Handler(request, firestore = db, options = {}) {
+  const usage = rateContext(options);
   const payload = normalizeTransferData(request?.data);
   const operation = describeOperation({
     uid: request?.uid,
@@ -274,31 +408,49 @@ async function createTransferV2Handler(request, firestore = db) {
     `leagues/${payload.leagueId}/seasons/${payload.seasonId}`
       + `/transfers/${operation.key}`,
   );
+  const xpEventId = `transfer:${operation.key}`;
+  const candidateXpRefs = xpAwardRefs(firestore, {
+    userId: payload.buyerId,
+    eventId: xpEventId,
+    amount: XP_VALUES.TRANSFER,
+    source: 'transfer',
+  });
+  const actorHourlyQuota = rateLimit(firestore, {
+    scope: 'transfer-actor-league-hour',
+    subjects: [operation.uid, payload.leagueId],
+    windowMs: HOUR_MS,
+    limit: usage.limits.transfersPerActorLeagueHour,
+    nowMs: usage.nowMs,
+  });
+  const buyerDailyQuota = rateLimit(firestore, {
+    scope: 'transfer-buyer-day',
+    subjects: [payload.buyerId],
+    windowMs: DAY_MS,
+    limit: usage.limits.rewardedTransfersPerBuyerDay,
+    nowMs: usage.nowMs,
+  });
 
   return firestore.runTransaction(async (transaction) => {
-    const [storedOperation, transfer, league, season] = await Promise.all([
+    const [
+      storedOperation,
+      transfer,
+      league,
+      season,
+      buyerUser,
+      xpEvent,
+      actorHourlyCounter,
+      buyerDailyCounter,
+    ] = await Promise.all([
       transaction.get(storedOperationRef),
       transaction.get(transferRef),
       transaction.get(leagueRef),
       transaction.get(seasonRef),
+      transaction.get(candidateXpRefs.userRef),
+      transaction.get(candidateXpRefs.eventRef),
+      transaction.get(actorHourlyQuota.ref),
+      transaction.get(buyerDailyQuota.ref),
     ]);
 
-    if (storedOperation.exists) {
-      matchStoredOperation(storedOperation.data(), operation);
-      requireStoredResult(
-        storedOperation,
-        'transferId',
-        operation.key,
-        transfer,
-      );
-      return { transferId: operation.key, created: false };
-    }
-    if (transfer.exists) {
-      throw new HttpsError(
-        'already-exists',
-        'El fichaje ya existe sin su registro de operación.',
-      );
-    }
     if (!league.exists) throw new HttpsError('not-found', 'La liga no existe.');
     if (!season.exists) {
       throw new HttpsError('not-found', 'La temporada no existe.');
@@ -319,32 +471,44 @@ async function createTransferV2Handler(request, firestore = db) {
       ? null
       : context.season.members[payload.buyerId];
     const earnsXp = buyer && buyer.isPlaceholder !== true;
-    let xpRefs;
-    let xpSnapshots;
-    if (earnsXp) {
-      xpRefs = xpAwardRefs(firestore, {
-        userId: payload.buyerId,
-        eventId: `transfer:${operation.key}`,
-        amount: XP_VALUES.TRANSFER,
-        source: 'transfer',
-      });
-      xpSnapshots = await Promise.all([
-        transaction.get(xpRefs.userRef),
-        transaction.get(xpRefs.eventRef),
-      ]);
-      if (xpSnapshots[1].exists) {
-        throw new HttpsError(
-          'already-exists',
-          'El evento XP ya existe sin su operación.',
-        );
-      }
+    const expectedXpRecipientId = earnsXp ? payload.buyerId : null;
+    const expectedXpEventId = earnsXp ? xpEventId : null;
+
+    if (storedOperation.exists) {
+      matchStoredOperation(storedOperation.data(), operation);
+      requireStoredTransfer(
+        storedOperation,
+        transfer,
+        operation,
+        payload,
+        buyerName,
+        sellerName,
+        expectedXpRecipientId,
+        expectedXpEventId,
+        xpEvent,
+      );
+      return { transferId: operation.key, created: false };
     }
+    if (transfer.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'El fichaje ya existe sin su registro de operación.',
+      );
+    }
+    if (xpEvent.exists) {
+      throw new HttpsError(
+        'data-loss',
+        'Existe un evento XP sin su operación de fichaje.',
+      );
+    }
+    requireQuota(actorHourlyCounter, actorHourlyQuota);
+    if (earnsXp) requireQuota(buyerDailyCounter, buyerDailyQuota);
 
     if (earnsXp) {
       applyXpAward(
         transaction,
-        { user: xpSnapshots[0], event: xpSnapshots[1] },
-        xpRefs,
+        { user: buyerUser, event: xpEvent },
+        candidateXpRefs,
       );
     }
     transaction.create(transferRef, {
@@ -361,8 +525,12 @@ async function createTransferV2Handler(request, firestore = db) {
     transaction.create(storedOperationRef, {
       ...operation,
       transferId: operation.key,
+      xpRecipientId: expectedXpRecipientId,
+      xpEventId: expectedXpEventId,
       createdAt: FieldValue.serverTimestamp(),
     });
+    incrementQuota(transaction, actorHourlyQuota);
+    if (earnsXp) incrementQuota(transaction, buyerDailyQuota);
     return { transferId: operation.key, created: true };
   });
 }

@@ -57,6 +57,47 @@ function operationFor(request, operationType, payload) {
   });
 }
 
+function postPayload(request) {
+  return {
+    content: request.data.content.trim(),
+    imageURL: request.data.imageURL,
+    tags: request.data.tags,
+  };
+}
+
+function transferPayload(request) {
+  return {
+    leagueId: request.data.leagueId,
+    seasonId: request.data.seasonId,
+    playerId: request.data.playerId,
+    playerName: request.data.playerName,
+    buyerId: request.data.buyerId,
+    sellerId: request.data.sellerId,
+    type: request.data.type,
+    price: request.data.price,
+    timestamp: request.data.timestamp,
+  };
+}
+
+function fixedLimits(overrides = {}) {
+  return {
+    clock: () => new Date('2026-09-02T10:30:00.000Z'),
+    limits: {
+      postsPerHour: 100,
+      transfersPerActorLeagueHour: 100,
+      rewardedTransfersPerBuyerDay: 100,
+      ...overrides,
+    },
+  };
+}
+
+function rejectedOperation(results, requests, operationType, payloadFor) {
+  const index = results.findIndex((result) => result.status === 'rejected');
+  assert.notEqual(index, -1);
+  assert.equal(results[index].reason.code, 'resource-exhausted');
+  return operationFor(requests[index], operationType, payloadFor(requests[index]));
+}
+
 function failingFirestore(failOnCreatePath) {
   return {
     doc: db.doc.bind(db),
@@ -99,6 +140,11 @@ test('post creation is idempotent and derives its author identity', async () => 
   ).get();
   assert.equal(event.data().amount, 10);
   assert.equal(event.data().source, 'post');
+  const counters = await db.collection('serverRateLimits')
+    .where('scope', '==', 'post-hour')
+    .get();
+  assert.equal(counters.size, 1);
+  assert.equal(counters.docs[0].data().count, 1);
 });
 
 test('post payload normalization is stable and image posts award 15 XP', async () => {
@@ -214,6 +260,19 @@ test('league owner creates a transfer with server-derived names and buyer XP', a
   assert.equal(transfer.sellerName, 'Mercado');
   assert.equal(transfer.timestamp.toDate().toISOString(), '2026-09-02T10:15:00.000Z');
   assert.equal((await db.doc('users/dev-user').get()).data().xp, 105);
+  const operation = (await db.doc(
+    `serverOperations/${result.transferId}`,
+  ).get()).data();
+  assert.equal(operation.xpRecipientId, 'dev-user');
+  assert.equal(operation.xpEventId, `transfer:${result.transferId}`);
+  const counters = await db.collection('serverRateLimits').get();
+  assert.deepEqual(
+    counters.docs.map((item) => [item.data().scope, item.data().count]).sort(),
+    [
+      ['transfer-actor-league-hour', 1],
+      ['transfer-buyer-day', 1],
+    ],
+  );
 });
 
 test('a season admin who is not the owner can create a transfer', async () => {
@@ -234,6 +293,33 @@ test('a normal member cannot create a transfer', async () => {
     createTransferV2Handler(transferRequest({}, 'dev-user')),
     (error) => error.code === 'permission-denied',
   );
+});
+
+test('a transfer retry rechecks current admin authority without mutating state', async () => {
+  await db.doc('leagues/dev-league-active/seasons/season-1').update({
+    'members.dev-user.role': 'admin',
+  });
+  const request = transferRequest(
+    { operationId: 'reauthorized-transfer' },
+    'dev-user',
+  );
+  const first = await createTransferV2Handler(request);
+  await db.doc('leagues/dev-league-active/seasons/season-1').update({
+    'members.dev-user.role': 'member',
+  });
+
+  await assert.rejects(
+    createTransferV2Handler(request),
+    (error) => error.code === 'permission-denied',
+  );
+
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 105);
+  assert.equal((await db.doc(
+    `leagues/dev-league-active/seasons/season-1/transfers/${first.transferId}`,
+  ).get()).exists, true);
+  assert.equal((await db.doc(
+    `serverOperations/${first.transferId}`,
+  ).get()).data().transferId, first.transferId);
 });
 
 test('transfer validation rejects missing participants, self-trades and bad data', async () => {
@@ -278,6 +364,51 @@ test('market and placeholder buyers are valid but never receive XP', async () =>
   assert.equal(placeholderTransfer.sellerName, 'Mercado');
   assert.equal((await db.doc('users/dev-user').get()).data().xp, 100);
   assert.equal((await db.doc('users/placeholder-rival').get()).exists, false);
+  for (const result of [market, placeholder]) {
+    const operation = (await db.doc(
+      `serverOperations/${result.transferId}`,
+    ).get()).data();
+    assert.equal(operation.xpRecipientId, null);
+    assert.equal(operation.xpEventId, null);
+  }
+});
+
+test('transfer retries fail closed when awarded XP metadata or event is corrupt', async () => {
+  const request = transferRequest({ operationId: 'corrupt-awarded-transfer' });
+  const result = await createTransferV2Handler(request);
+  const eventPath = `users/dev-user/xpEvents/transfer:${result.transferId}`;
+  await db.doc(eventPath).delete();
+
+  await assert.rejects(
+    createTransferV2Handler(request),
+    (error) => error.code === 'data-loss',
+  );
+
+  await db.doc(eventPath).set({ amount: 5, source: 'transfer' });
+  await db.doc(`serverOperations/${result.transferId}`).update({
+    xpRecipientId: 'dev-league-admin',
+  });
+  await assert.rejects(
+    createTransferV2Handler(request),
+    (error) => error.code === 'data-loss',
+  );
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 105);
+});
+
+test('no-XP transfer retries reject an unexpected deterministic XP event', async () => {
+  const request = transferRequest({
+    operationId: 'corrupt-placeholder-transfer',
+    buyerId: 'placeholder-rival',
+  });
+  const result = await createTransferV2Handler(request);
+  const eventPath = `users/placeholder-rival/xpEvents/transfer:${result.transferId}`;
+  await db.doc(eventPath).set({ amount: 5, source: 'transfer' });
+
+  await assert.rejects(
+    createTransferV2Handler(request),
+    (error) => error.code === 'data-loss',
+  );
+  assert.equal((await db.doc('users/dev-user').get()).data().xp, 100);
 });
 
 test('concurrent identical transfer calls converge and changed payload is rejected', async () => {
@@ -334,4 +465,115 @@ test('a forced transfer transaction failure leaves no transfer, operation or XP'
   assert.equal(storedOperation.exists, false);
   assert.equal(event.exists, false);
   assert.equal(user.data().xp, 100);
+});
+
+test('concurrent distinct posts stop exactly at the injected hourly limit', async () => {
+  const requests = ['quota-post-1', 'quota-post-2', 'quota-post-3'].map(
+    (operationId) => postRequest({ operationId }),
+  );
+  const results = await Promise.allSettled(requests.map((request) => (
+    createPostV2Handler(request, db, fixedLimits({ postsPerHour: 2 }))
+  )));
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 2);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  const rejected = rejectedOperation(
+    results,
+    requests,
+    'post.create.v2',
+    postPayload,
+  );
+  const [post, operation, event, user, counters] = await Promise.all([
+    db.doc(`posts/${rejected.key}`).get(),
+    db.doc(`serverOperations/${rejected.key}`).get(),
+    db.doc(`users/dev-user/xpEvents/post:${rejected.key}`).get(),
+    db.doc('users/dev-user').get(),
+    db.collection('serverRateLimits').where('scope', '==', 'post-hour').get(),
+  ]);
+  assert.equal(post.exists, false);
+  assert.equal(operation.exists, false);
+  assert.equal(event.exists, false);
+  assert.equal(user.data().xp, 120);
+  assert.equal(counters.size, 1);
+  assert.match(counters.docs[0].id, /^[a-f0-9]{64}$/);
+  assert.equal(counters.docs[0].data().count, 2);
+});
+
+test('concurrent transfers stop exactly at the actor and league hourly limit', async () => {
+  const requests = ['quota-transfer-1', 'quota-transfer-2', 'quota-transfer-3']
+    .map((operationId) => transferRequest({ operationId }));
+  const results = await Promise.allSettled(requests.map((request) => (
+    createTransferV2Handler(
+      request,
+      db,
+      fixedLimits({ transfersPerActorLeagueHour: 2 }),
+    )
+  )));
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 2);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  const rejected = rejectedOperation(
+    results,
+    requests,
+    'transfer.create.v2',
+    transferPayload,
+  );
+  const transferPath = 'leagues/dev-league-active/seasons/season-1/'
+    + `transfers/${rejected.key}`;
+  const [transfer, operation, event, user, counters] = await Promise.all([
+    db.doc(transferPath).get(),
+    db.doc(`serverOperations/${rejected.key}`).get(),
+    db.doc(`users/dev-user/xpEvents/transfer:${rejected.key}`).get(),
+    db.doc('users/dev-user').get(),
+    db.collection('serverRateLimits')
+      .where('scope', '==', 'transfer-actor-league-hour')
+      .get(),
+  ]);
+  assert.equal(transfer.exists, false);
+  assert.equal(operation.exists, false);
+  assert.equal(event.exists, false);
+  assert.equal(user.data().xp, 110);
+  assert.equal(counters.size, 1);
+  assert.match(counters.docs[0].id, /^[a-f0-9]{64}$/);
+  assert.equal(counters.docs[0].data().count, 2);
+});
+
+test('concurrent rewarded transfers stop exactly at the buyer daily limit', async () => {
+  const requests = ['quota-buyer-1', 'quota-buyer-2'].map(
+    (operationId) => transferRequest({ operationId }),
+  );
+  const results = await Promise.allSettled(requests.map((request) => (
+    createTransferV2Handler(
+      request,
+      db,
+      fixedLimits({ rewardedTransfersPerBuyerDay: 1 }),
+    )
+  )));
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  const rejected = rejectedOperation(
+    results,
+    requests,
+    'transfer.create.v2',
+    transferPayload,
+  );
+  const transferPath = 'leagues/dev-league-active/seasons/season-1/'
+    + `transfers/${rejected.key}`;
+  const [transfer, operation, event, user, counters] = await Promise.all([
+    db.doc(transferPath).get(),
+    db.doc(`serverOperations/${rejected.key}`).get(),
+    db.doc(`users/dev-user/xpEvents/transfer:${rejected.key}`).get(),
+    db.doc('users/dev-user').get(),
+    db.collection('serverRateLimits')
+      .where('scope', '==', 'transfer-buyer-day')
+      .get(),
+  ]);
+  assert.equal(transfer.exists, false);
+  assert.equal(operation.exists, false);
+  assert.equal(event.exists, false);
+  assert.equal(user.data().xp, 105);
+  assert.equal(counters.size, 1);
+  assert.match(counters.docs[0].id, /^[a-f0-9]{64}$/);
+  assert.equal(counters.docs[0].data().count, 1);
 });
