@@ -1,38 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, where, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, deleteField, collection, query, onSnapshot, writeBatch, getDocs, where } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions'; // AÑADIDO
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import LoadingSpinner from './LoadingSpinner';
 import { Calendar, List, Award, UserCheck } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
 import JoinRequestCard from './JoinRequestCard';
+import { reviewJoinRequest } from '../services/league-api';
+import { unlinkUserFromTeam } from '../services/admin-api';
+import { TROPHY_DEFINITIONS } from '../constants/trophies';
 
-export const TROPHY_DEFINITIONS = {
-    CHAMPION: { name: 'Campeón de Liga', description: 'Ganador de la temporada con más puntos.' },
-    RUNNER_UP: { name: 'Medalla de Plata', description: 'Segundo clasificado de la temporada.' },
-    THIRD_PLACE: { name: 'Medalla de Bronce', description: 'Tercer clasificado de la temporada.' },
-    TOP_SCORER: { name: 'Pichichi', description: 'Equipo con la mayor puntuación en una sola jornada.' },
-    MARKET_KING: { name: 'Rey del Mercado', description: 'El que más ha gastado en fichajes durante la temporada.' },
-    LEAGUE_SHARK: { name: 'Tiburón de la Liga', description: 'El que ha obtenido mayor beneficio neto en el mercado.' },
-    MOST_WINS: { name: 'El Victorioso', description: 'El que ha ganado más jornadas.' },
-    MOST_PODIUMS: { name: 'Experiencia en Podios', description: 'El que ha terminado más veces en el podio (Top 3).' },
-    MOST_REGULAR: { name: 'Míster Regularidad', description: 'El jugador con la desviación estándar más baja en sus puntuaciones.'},
-    LANTERN_ROUGE: { name: 'Farolillo Rojo', description: 'El que ha terminado más veces en última posición.' },
-    STONE_HAND: { name: 'Mano de Piedra', description: 'Equipo con la peor puntuación en una sola jornada.' },
-    CAPTAIN_FANTASTIC: { name: 'Capitán Fantástico', description: 'El que más puntos extra ha conseguido gracias a sus capitanes.' },
-    GOLDEN_BENCH: { name: 'Banquillo de Oro', description: 'El que más puntos ha desperdiciado en el banquillo.' },
-    SPECULATOR: { name: 'El Especulador', description: 'El que ha realizado más fichajes durante la temporada.' },
-    // --- NUEVOS TROFEOS ---
-    GALACTIC_SIGNING: { name: 'Fichaje Galáctico', description: 'Por fichar a uno de los 5 jugadores más caros del mercado.' },
-    COMEBACK_KING: { name: 'Rey de la Remontada', description: 'Por ganar una jornada tras estar fuera del podio en la anterior.' },
-    STREAK_MASTER: { name: 'Racha Imparable', description: 'Por ganar 3 jornadas seguidas.' },
-};
-
-
-export default function AdminTab({ league, season, roundsData }) {
-    const { profile: adminProfile } = useAuth();
+export default function AdminTab({ league, season }) {
     const [viewMode, setViewMode] = useState('single');
     const [round, setRound] = useState(season?.currentRound || 1);
     const [totalRounds, setTotalRounds] = useState(season?.totalRounds || 38);
@@ -228,6 +206,7 @@ export default function AdminTab({ league, season, roundsData }) {
             });
             toast.success('Rol actualizado.', { id: loadingToast });
         } catch (error) {
+            console.error("Error changing member role:", error);
             toast.error('No se pudo cambiar el rol.', { id: loadingToast });
         }
     };
@@ -242,6 +221,7 @@ export default function AdminTab({ league, season, roundsData }) {
             });
             toast.success('Jugador expulsado.', { id: loadingToast });
         } catch (error) {
+            console.error("Error kicking member:", error);
             toast.error('No se pudo expulsar al jugador.', { id: loadingToast });
         }
     };
@@ -252,9 +232,7 @@ export default function AdminTab({ league, season, roundsData }) {
         if (window.confirm(confirmationMessage)) {
             const loadingToast = toast.loading(`Desvinculando a ${teamName}...`);
             try {
-                const functions = getFunctions();
-                const unlinkUser = httpsCallable(functions, 'unlinkUserFromTeam');
-                await unlinkUser({
+                await unlinkUserFromTeam({
                     leagueId: league.id,
                     seasonId: season.id,
                     userIdToUnlink: targetUid
@@ -275,41 +253,12 @@ export default function AdminTab({ league, season, roundsData }) {
         const loadingToast = toast.loading('Aprobando solicitud...');
 
         try {
-            const batch = writeBatch(db);
-
-            // 1. Update request status
-            const requestRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'joinRequests', request.id);
-            batch.update(requestRef, {
-                status: 'approved',
-                reviewedAt: serverTimestamp(),
-                reviewedBy: adminProfile?.uid || 'unknown'
+            await reviewJoinRequest({
+                leagueId: league.id,
+                seasonId: season.id,
+                requestId: request.id,
+                action: 'approve'
             });
-
-            // 2. Add user to members
-            const seasonRef = doc(db, 'leagues', league.id, 'seasons', season.id);
-            batch.update(seasonRef, {
-                [`members.${request.userId}`]: {
-                    teamName: request.teamName,
-                    username: request.username,
-                    role: 'member',
-                    totalPoints: 0,
-                    finances: { budget: 200, teamValue: 0 }
-                }
-            });
-
-            await batch.commit();
-
-            // 3. Send notification message to chat
-            if (request.chatId) {
-                const notificationMessage = `¡Felicidades! Tu solicitud para unirte a la liga ha sido aprobada. Bienvenido "${request.teamName}" a la temporada!`;
-                await addDoc(collection(db, 'chats', request.chatId, 'messages'), {
-                    senderId: adminProfile?.uid || 'system',
-                    text: notificationMessage,
-                    createdAt: serverTimestamp(),
-                    read: false,
-                    isSystemMessage: true
-                });
-            }
 
             toast.success(`¡${request.username} ha sido aprobado!`, { id: loadingToast });
         } catch (error) {
@@ -327,25 +276,12 @@ export default function AdminTab({ league, season, roundsData }) {
         const loadingToast = toast.loading('Rechazando solicitud...');
 
         try {
-            // 1. Update request status
-            const requestRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'joinRequests', request.id);
-            await updateDoc(requestRef, {
-                status: 'rejected',
-                reviewedAt: serverTimestamp(),
-                reviewedBy: adminProfile?.uid || 'unknown'
+            await reviewJoinRequest({
+                leagueId: league.id,
+                seasonId: season.id,
+                requestId: request.id,
+                action: 'reject'
             });
-
-            // 2. Send notification message to chat
-            if (request.chatId) {
-                const notificationMessage = `Lo sentimos, tu solicitud para unirte a la liga con el equipo "${request.teamName}" ha sido rechazada.`;
-                await addDoc(collection(db, 'chats', request.chatId, 'messages'), {
-                    senderId: adminProfile?.uid || 'system',
-                    text: notificationMessage,
-                    createdAt: serverTimestamp(),
-                    read: false,
-                    isSystemMessage: true
-                });
-            }
 
             toast.success('Solicitud rechazada.', { id: loadingToast });
         } catch (error) {

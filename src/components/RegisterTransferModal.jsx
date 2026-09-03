@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../config/firebase';
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, doc, updateDoc } from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import PlayerAutocomplete from './PlayerAutocomplete';
-import { grantXp } from '../utils/xp';
 import { useAuth } from '../hooks/useAuth';
+import { createTransfer } from '../services/content-api';
+import {
+    getTransferSessionIdentity,
+    parseSpanishPrice,
+} from '../services/content-client-helpers';
 
 export default function RegisterTransferModal({ isOpen, onClose, league, season, onTransferRegistered, existingTransfer }) {
     const { user } = useAuth();
@@ -16,12 +21,29 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
     const [loading, setLoading] = useState(false);
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
+    const operationIdRef = useRef(null);
+    const pendingAttemptRef = useRef(null);
+    const submissionInFlightRef = useRef(false);
+    const sessionIdentityRef = useRef(null);
 
     useEffect(() => {
-        // Solo ejecutar si el modal está abierto y tenemos datos de la temporada
-        if (!isOpen || !season?.members) {
+        const nextIdentity = getTransferSessionIdentity({
+            isOpen,
+            league,
+            season,
+            existingTransfer,
+            user,
+        });
+        if (nextIdentity === null) {
+            sessionIdentityRef.current = null;
+            operationIdRef.current = null;
+            pendingAttemptRef.current = null;
             return;
         }
+        if (!season?.members || !league?.id || !season?.id || !user?.uid) return;
+        if (sessionIdentityRef.current === nextIdentity) return;
+
+        sessionIdentityRef.current = nextIdentity;
 
         if (existingTransfer) {
             // MODO EDICIÓN: Cargar datos del fichaje existente
@@ -41,13 +63,15 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             setPlayer(null);
             setPrice('');
             // **CORRECCIÓN CLAVE**: El comprador por defecto es el usuario actual, no el primero de la lista.
-            setBuyerId(user.uid); 
+            setBuyerId(user.uid);
             setSellerId('market');
             setTransferType('puja');
             setDate(now.toISOString().split('T')[0]);
             setTime(now.toTimeString().slice(0, 5));
         }
-    }, [isOpen, existingTransfer, season, user]); // Añadimos 'user' a las dependencias
+        operationIdRef.current = null;
+        pendingAttemptRef.current = null;
+    }, [isOpen, league, existingTransfer, season, user]);
 
     // Esta lógica de negocio se mantiene como la tenías
     useEffect(() => {
@@ -61,6 +85,7 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (submissionInFlightRef.current) return;
         if (!player || !price || !buyerId || !sellerId || !date || !time) {
             toast.error("Debes seleccionar un jugador de la lista y rellenar todos los campos.");
             return;
@@ -69,20 +94,22 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             toast.error("El comprador y el vendedor no pueden ser el mismo.");
             return;
         }
+        const parsedPrice = parseSpanishPrice(price);
+        if (parsedPrice === null) {
+            toast.error("El precio debe ser un número válido y no negativo.");
+            return;
+        }
 
-        setLoading(true);
-        const loadingToast = toast.loading(existingTransfer ? 'Actualizando fichaje...' : 'Registrando fichaje...');
         const combinedDateTime = new Date(`${date}T${time}`);
         if (isNaN(combinedDateTime.getTime())) {
-            toast.error("La fecha o la hora no son válidas.", { id: loadingToast });
-            setLoading(false);
+            toast.error("La fecha o la hora no son válidas.");
             return;
         }
 
         const transferData = {
             playerId: player.id,
             playerName: player.name,
-            price: parseFloat(String(price).replace(',', '.')) || 0,
+            price: parsedPrice,
             buyerId,
             buyerName: buyerId === 'market' ? 'Mercado' : season.members[buyerId]?.teamName,
             sellerId,
@@ -90,6 +117,32 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             type: transferType,
             timestamp: combinedDateTime,
         };
+        let creationPayload = null;
+        if (!existingTransfer) {
+            creationPayload = {
+                leagueId: league.id,
+                seasonId: season.id,
+                playerId: player.id,
+                playerName: player.name,
+                price: parsedPrice,
+                buyerId,
+                sellerId,
+                type: transferType,
+                timestamp: combinedDateTime.toISOString(),
+            };
+            const fingerprint = JSON.stringify(creationPayload);
+            if (pendingAttemptRef.current?.fingerprint !== fingerprint) {
+                operationIdRef.current = uuidv4();
+                pendingAttemptRef.current = { fingerprint, payload: creationPayload };
+            } else {
+                creationPayload = pendingAttemptRef.current.payload;
+            }
+            operationIdRef.current ||= uuidv4();
+        }
+
+        submissionInFlightRef.current = true;
+        setLoading(true);
+        const loadingToast = toast.loading(existingTransfer ? 'Actualizando fichaje...' : 'Registrando fichaje...');
 
         try {
             const basePath = collection(db, 'leagues', league.id, 'seasons', season.id, 'transfers');
@@ -98,10 +151,12 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                 await updateDoc(transferRef, transferData);
                 toast.success('Fichaje actualizado correctamente', { id: loadingToast });
             } else {
-                await addDoc(basePath, transferData);
-                if(buyerId !== 'market' && !season.members[buyerId]?.isPlaceholder){
-                    await grantXp(buyerId, 'TRANSFER');
-                }
+                await createTransfer({
+                    operationId: operationIdRef.current,
+                    ...creationPayload,
+                });
+                operationIdRef.current = null;
+                pendingAttemptRef.current = null;
                 toast.success('Fichaje registrado correctamente', { id: loadingToast });
             }
             onTransferRegistered();
@@ -110,8 +165,17 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             console.error("Error al registrar el fichaje:", error);
             toast.error("No se pudo completar la operación.", { id: loadingToast });
         } finally {
+            submissionInFlightRef.current = false;
             setLoading(false);
         }
+    };
+
+    const handleClose = () => {
+        if (submissionInFlightRef.current) return;
+        sessionIdentityRef.current = null;
+        operationIdRef.current = null;
+        pendingAttemptRef.current = null;
+        onClose();
     };
 
     if (!isOpen) return null;
@@ -121,7 +185,8 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-lg border dark:border-gray-700">
                 <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">{existingTransfer ? 'Editar Fichaje' : 'Registrar Nuevo Fichaje'}</h3>
                 {season ? (
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <form onSubmit={handleSubmit}>
+                        <fieldset disabled={loading} className="space-y-4 min-w-0 border-0 p-0 m-0 disabled:pointer-events-none">
                         <div><label className="label dark:text-gray-300">Jugador</label><PlayerAutocomplete onPlayerSelect={setPlayer} initialValue={player?.name}/></div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div><label className="label dark:text-gray-300">Fecha del Fichaje</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="input dark:bg-gray-700 dark:border-gray-600 dark:text-white" /></div>
@@ -154,7 +219,8 @@ export default function RegisterTransferModal({ isOpen, onClose, league, season,
                                 </select>
                             </div>
                         </div>
-                        <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={onClose} className="btn-secondary">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
+                        <div className="flex justify-end gap-4 pt-4"><button type="button" onClick={handleClose} disabled={loading} className="btn-secondary disabled:opacity-50">Cancelar</button><button type="submit" disabled={loading} className="btn-primary disabled:opacity-50">{loading ? 'Guardando...' : (existingTransfer ? 'Guardar Cambios' : 'Registrar Fichaje')}</button></div>
+                        </fieldset>
                     </form>
                 ) : (
                     <p className="text-gray-500 dark:text-gray-400">Cargando datos de la temporada...</p>

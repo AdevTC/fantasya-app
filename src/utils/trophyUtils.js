@@ -1,6 +1,7 @@
-import { doc, getDocs, collection, writeBatch, deleteDoc } from 'firebase/firestore';
+import { getDocs, collection } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { TROPHY_DEFINITIONS } from '../components/AdminTab';
+import { TROPHY_DEFINITIONS } from '../constants/trophies';
+import { replaceSeasonTrophies } from '../services/league-api';
 
 const calculateStandardDeviation = (array) => {
     const n = array.length;
@@ -53,7 +54,6 @@ export const calculateAndAwardTrophies = async (league, season) => {
 
         if (scoresForRound.length > 0) {
             scoresForRound.sort((a, b) => b.score - a.score);
-            const winner = scoresForRound[0];
             const lastPlaceScore = scoresForRound[scoresForRound.length - 1].score;
 
             scoresForRound.forEach(({ uid, score }, index) => {
@@ -137,7 +137,7 @@ export const calculateAndAwardTrophies = async (league, season) => {
         }
     });
     
-    const findTransferWinners = (metric, compareFn) => {
+    const findTransferWinners = (metric) => {
         let bestValue = -Infinity;
         let winners = [];
         memberIds.forEach(uid => {
@@ -152,13 +152,13 @@ export const calculateAndAwardTrophies = async (league, season) => {
         return { winners, value: bestValue };
     };
 
-    const marketKing = findTransferWinners(t => t.spent, (a,b) => a > b);
+    const marketKing = findTransferWinners(t => t.spent);
     if (marketKing.value > 0) marketKing.winners.forEach(uid => userTrophies[uid].push({ trophyId: 'MARKET_KING', value: marketKing.value }));
     
-    const leagueShark = findTransferWinners(t => t.earned - t.spent, (a,b) => a > b);
+    const leagueShark = findTransferWinners(t => t.earned - t.spent);
     if (leagueShark.value > 0) leagueShark.winners.forEach(uid => userTrophies[uid].push({ trophyId: 'LEAGUE_SHARK', value: leagueShark.value }));
 
-    const speculator = findTransferWinners(t => t.buys, (a,b) => a > b);
+    const speculator = findTransferWinners(t => t.buys);
     if (speculator.value > 0) speculator.winners.forEach(uid => userTrophies[uid].push({ trophyId: 'SPECULATOR', value: speculator.value }));
     
     const top5Prices = transfers.map(t => t.price).sort((a,b) => b - a).slice(0,5).filter(p => p > 0);
@@ -196,7 +196,7 @@ export const calculateAndAwardTrophies = async (league, season) => {
         }
     });
     
-    const findLineupWinners = (metric, compareFn) => {
+    const findLineupWinners = (metric) => {
         let bestValue = -Infinity;
         let winners = [];
         memberIds.forEach(uid => {
@@ -211,49 +211,38 @@ export const calculateAndAwardTrophies = async (league, season) => {
         return { winners, value: bestValue };
     };
 
-    const captainFantastic = findLineupWinners(s => s.captainPoints, (a, b) => a > b);
+    const captainFantastic = findLineupWinners(s => s.captainPoints);
     if (captainFantastic.value > 0) captainFantastic.winners.forEach(uid => userTrophies[uid].push({ trophyId: 'CAPTAIN_FANTASTIC', value: captainFantastic.value }));
 
-    const goldenBench = findLineupWinners(s => s.wastedBench, (a, b) => a > b);
+    const goldenBench = findLineupWinners(s => s.wastedBench);
     if (goldenBench.value > 0) goldenBench.winners.forEach(uid => userTrophies[uid].push({ trophyId: 'GOLDEN_BENCH', value: goldenBench.value }));
 
-    // --- Database Update ---
-    const batch = writeBatch(db);
-    for (const userId of memberIds) {
-        if (userTrophies[userId].length > 0) {
-            const achievementData = {
+    const awards = memberIds
+        .filter(userId => userTrophies[userId].length > 0)
+        .map(userId => ({
+            userId,
+            data: {
                 seasonName: season.name,
                 leagueName: league.name,
-                trophies: userTrophies[userId].map(t => ({...t, name: TROPHY_DEFINITIONS[t.trophyId].name, description: TROPHY_DEFINITIONS[t.trophyId].description})),
-                isPlaceholder: members[userId].isPlaceholder || false,
-                teamName: members[userId].teamName
-            };
-            
-            const leagueAchievementRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'achievements', userId);
-            batch.set(leagueAchievementRef, achievementData);
-            
-            if (!members[userId].isPlaceholder) {
-                const userAchievementRef = doc(db, 'users', userId, 'achievements', season.id);
-                batch.set(userAchievementRef, achievementData);
-            }
-        }
-    }
-    await batch.commit();
+                trophies: userTrophies[userId].map(t => ({
+                    ...t,
+                    name: TROPHY_DEFINITIONS[t.trophyId].name,
+                    description: TROPHY_DEFINITIONS[t.trophyId].description,
+                })),
+            },
+        }));
+    await replaceSeasonTrophies({
+        leagueId: league.id,
+        seasonId: season.id,
+        awards,
+    });
 };
 
 
 export const revokeTrophiesForSeason = async (leagueId, season) => {
-    const batch = writeBatch(db);
-    const memberIds = Object.keys(season.members);
-
-    for (const userId of memberIds) {
-        const leagueAchievementRef = doc(db, 'leagues', leagueId, 'seasons', season.id, 'achievements', userId);
-        batch.delete(leagueAchievementRef);
-
-        if (!season.members[userId].isPlaceholder) {
-            const userAchievementRef = doc(db, 'users', userId, 'achievements', season.id);
-            batch.delete(userAchievementRef);
-        }
-    }
-    await batch.commit();
+    await replaceSeasonTrophies({
+        leagueId,
+        seasonId: season.id,
+        awards: [],
+    });
 };

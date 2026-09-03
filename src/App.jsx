@@ -4,6 +4,7 @@ import { useAuth } from './hooks/useAuth';
 import { ThemeProvider } from './context/ThemeContext';
 import ThemedToaster from './components/ThemedToaster'; // Import new ThemedToaster
 import LoadingSpinner from './components/LoadingSpinner'; // Import LoadingSpinner
+import EnvironmentBanner from './components/EnvironmentBanner';
 
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
@@ -26,13 +27,16 @@ import ChatListPage from './pages/ChatListPage';
 import NotFoundPage from './pages/NotFoundPage'; // Import NotFoundPage
 
 function InitialRoute() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return <LoadingSpinner fullScreen text="Cargando tu estrategia..." />;
   }
 
-  return user ? <Navigate to="/dashboard" /> : <LandingPage />;
+  if (!user) return <LandingPage />;
+  return profile
+    ? <Navigate to="/dashboard" />
+    : <Navigate to="/complete-profile" />;
 }
 
 const AppWithLayout = () => (
@@ -46,6 +50,7 @@ function App() {
   return (
     <ThemeProvider>
       <ThemedToaster />
+      <EnvironmentBanner />
       <Router>
         <Routes>
           <Route path="/" element={<InitialRoute />} />

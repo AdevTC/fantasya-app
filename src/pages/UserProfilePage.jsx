@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc, runTransaction, arrayUnion, arrayRemove, onSnapshot } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../config/firebase';
 import { Mail, Trophy, Star, Edit, Pin, BarChart2, Calendar, Award as PodiumIcon, UserPlus, UserCheck, MessageSquare, Shield, HelpCircle, Flame } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -13,6 +12,7 @@ import TrophyDetailModal from '../components/TrophyDetailModal';
 import FeatDetailModal from '../components/FeatDetailModal';
 import XPGuideModal from '../components/XPGuideModal';
 import FollowListModal from '../components/FollowListModal';
+import { createOrGetChat } from '../services/admin-api';
 
 const CareerStatCard = ({ icon, value, label }) => (
     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
@@ -265,17 +265,14 @@ export default function UserProfilePage() {
 
     const handleStartChat = async () => {
         if (!currentUser || !profile || currentUser.uid === profile.id) return;
-
-        const functions = getFunctions();
-        const createOrGetChat = httpsCallable(functions, 'createOrGetChat');
         
         toast.loading('Iniciando chat...');
 
         try {
-            const result = await createOrGetChat({ otherUserUid: profile.id });
+            const result = await createOrGetChat(profile.id);
             toast.dismiss();
 
-            const chatId = result.data.chatId;
+            const chatId = result.chatId;
             if (chatId) {
                 navigate(`/chat/${chatId}`);
             } else {

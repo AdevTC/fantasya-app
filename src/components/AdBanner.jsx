@@ -1,16 +1,40 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
+import { resolveAdSenseRuntime } from '../config/ads-runtime';
+import { isUsingEmulators } from '../config/firebase';
+
+const ADSENSE_SCRIPT_ID = 'fantasya-adsense-script';
 
 const AdBanner = ({ slot, format = 'auto', responsive = 'true' }) => {
+  const initialized = useRef(false);
+  const adsRuntime = resolveAdSenseRuntime(
+    import.meta.env,
+    isUsingEmulators,
+  );
+
   useEffect(() => {
+    if (!adsRuntime.enabled || initialized.current) return;
+
+    initialized.current = true;
+
+    if (!document.getElementById(ADSENSE_SCRIPT_ID)) {
+      const script = document.createElement('script');
+      script.id = ADSENSE_SCRIPT_ID;
+      script.async = true;
+      script.crossOrigin = 'anonymous';
+      script.src =
+        'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' +
+        encodeURIComponent(adsRuntime.publisherId);
+      document.head.appendChild(script);
+    }
+
     try {
       (window.adsbygoogle = window.adsbygoogle || []).push({});
     } catch (e) {
-      console.error("Error al cargar el anuncio de AdSense:", e);
+      console.warn('Error al cargar el anuncio de AdSense:', e);
     }
-  }, []);
+  }, [adsRuntime.enabled, adsRuntime.publisherId]);
 
-  // No renderizar el anuncio si el ID de publicador no está configurado
-  if (!import.meta.env.VITE_ADSENSE_PUBLISHER_ID) {
+  if (!adsRuntime.enabled) {
     return null;
   }
 
@@ -19,7 +43,7 @@ const AdBanner = ({ slot, format = 'auto', responsive = 'true' }) => {
       <ins 
         className="adsbygoogle"
         style={{ display: 'block', width: '100%', minHeight: '90px', textAlign: 'center' }}
-        data-ad-client={import.meta.env.VITE_ADSENSE_PUBLISHER_ID}
+        data-ad-client={adsRuntime.publisherId}
         data-ad-slot={slot} // Cada bloque de anuncio tendrá su propio ID de "slot"
         data-ad-format={format}
         data-full-width-responsive={responsive}

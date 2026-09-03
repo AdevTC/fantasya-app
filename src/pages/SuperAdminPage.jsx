@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { UserCog, Search, ShieldCheck, ShieldOff, RefreshCw } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { calculateXpForAllUsers } from '../utils/xp';
+import { recalculateXp, setUserAppRole } from '../services/admin-api';
 
 export default function SuperAdminPage() {
     const [searchTerm, setSearchTerm] = useState('');
@@ -69,8 +69,7 @@ export default function SuperAdminPage() {
         }
         const loadingToast = toast.loading('Actualizando rol...');
         try {
-            const userRef = doc(db, 'users', userId);
-            await updateDoc(userRef, { appRole: newRole });
+            await setUserAppRole(userId, newRole);
             setSearchResults(prev => prev.map(user => 
                 user.id === userId ? { ...user, appRole: newRole } : user
             ));
@@ -86,7 +85,7 @@ export default function SuperAdminPage() {
         setRecalculating(true);
         const loadingToast = toast.loading('Recalculando XP para todos los usuarios...');
         try {
-            await calculateXpForAllUsers();
+            await recalculateXp();
             toast.success('¡XP de todos los usuarios recalculada!', { id: loadingToast });
         } catch (error) {
             console.error("Error recalculando XP:", error);

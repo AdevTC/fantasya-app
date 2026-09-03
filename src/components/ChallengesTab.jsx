@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, runTransaction, arrayUnion, arrayRemove, getDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import ChallengeModal from './ChallengeModal';
 import MarkWinnerModal from './MarkWinnerModal';
 import { Plus, Edit, Trash2, Award } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
-import { awardFeat } from '../utils/awardFeat';
 import toast from 'react-hot-toast';
+import {
+    deleteSeasonChallenge,
+    setChallengeWinners,
+} from '../services/league-api';
 
 const ChallengeCard = ({ challenge, onMarkWinner, onEdit, onDelete, userRole }) => {
     return (
@@ -82,32 +85,11 @@ export default function ChallengesTab({ league, season, userRole }) {
         if (!window.confirm(`¿Estás seguro de que quieres eliminar el reto "${challenge.title}"? Esta acción no se puede deshacer.`)) return;
         const loadingToast = toast.loading('Eliminando reto...');
         try {
-            const batch = writeBatch(db);
-
-            if (challenge.winners && challenge.winners.length > 0) {
-                 for (const winner of challenge.winners) {
-                    if (winner.uid.startsWith('placeholder_')) continue;
-                    const featRef = doc(db, 'users', winner.uid, 'feats', challenge.id);
-                    await runTransaction(db, async (transaction) => {
-                        const featDoc = await transaction.get(featRef);
-                        if (featDoc.exists()) {
-                            const instances = featDoc.data().instances || [];
-                            const updatedInstances = instances.filter(inst => 
-                                !(inst.leagueName === league.name && inst.seasonName === season.name)
-                            );
-                            if (updatedInstances.length === 0) {
-                                transaction.delete(featRef);
-                            } else {
-                                transaction.update(featRef, { instances: updatedInstances });
-                            }
-                        }
-                    });
-                }
-            }
-            
-            const challengeRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'challenges', challenge.id);
-            batch.delete(challengeRef);
-            await batch.commit();
+            await deleteSeasonChallenge({
+                leagueId: league.id,
+                seasonId: season.id,
+                challengeId: challenge.id,
+            });
 
             toast.success('Reto eliminado.', { id: loadingToast });
         } catch (error) {
@@ -117,61 +99,15 @@ export default function ChallengesTab({ league, season, userRole }) {
     };
 
     const handleMarkAsWinner = async (challenge, newWinners) => {
-        const challengeRef = doc(db, 'leagues', league.id, 'seasons', season.id, 'challenges', challenge.id);
-        const oldWinners = challenge.winners || [];
         const loadingToast = toast.loading('Actualizando ganadores...');
     
         try {
-            await runTransaction(db, async (transaction) => {
-                const oldWinnerUids = oldWinners.map(w => w.uid);
-                const newWinnerUids = newWinners.map(w => w.uid);
-                
-                const losers = oldWinnerUids.filter(uid => !newWinnerUids.includes(uid));
-                const winnersToAward = newWinners.filter(winner => !oldWinnerUids.includes(winner.uid));
-    
-                const featsToModify = new Map();
-                const allUids = [...new Set([...losers, ...winnersToAward.map(w => w.uid)])];
-
-                for (const uid of allUids) {
-                    if (uid.startsWith('placeholder_')) continue;
-                    const featRef = doc(db, 'users', uid, 'feats', challenge.id);
-                    const featDoc = await transaction.get(featRef);
-                    featsToModify.set(uid, { featRef, featDoc });
-                }
-    
-                transaction.update(challengeRef, {
-                    status: newWinners.length > 0 ? 'completed' : 'active',
-                    winners: newWinners,
-                });
-    
-                for (const loserUid of losers) {
-                    if (loserUid.startsWith('placeholder_')) continue;
-                    const { featRef, featDoc } = featsToModify.get(loserUid);
-                    if(featDoc.exists()){
-                        const instances = featDoc.data().instances || [];
-                        const updatedInstances = instances.filter(inst => 
-                            !(inst.leagueName === league.name && inst.seasonName === season.name)
-                        );
-                        if (updatedInstances.length === 0) {
-                            transaction.delete(featRef);
-                        } else {
-                            transaction.update(featRef, { instances: updatedInstances });
-                        }
-                    }
-                }
-    
-                for (const winner of winnersToAward) {
-                    if (winner.uid.startsWith('placeholder_')) continue;
-                    const { featRef, featDoc } = featsToModify.get(winner.uid);
-                    await awardFeat(winner.uid, challenge.id, {
-                        leagueName: league.name,
-                        seasonName: season.name,
-                        challengeTitle: challenge.title,
-                        description: challenge.description
-                    }, transaction, featDoc);
-                }
+            await setChallengeWinners({
+                leagueId: league.id,
+                seasonId: season.id,
+                challengeId: challenge.id,
+                winners: newWinners,
             });
-    
             toast.success('Ganadores actualizados.', { id: loadingToast });
         } catch (error) {
             console.error("Error al marcar ganador:", error);

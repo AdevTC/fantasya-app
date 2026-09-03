@@ -5,19 +5,22 @@
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
-    "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "check": "node --check index.js",
+    "seed:emulators": "node scripts/seed-emulators.js",
+    "test:unit": "node --test test/emulator-guard.test.js",
+    "test:seed": "node --test test/seed-emulators.integration.test.js",
+    "test:integrity": "node --test --test-concurrency=1 test/season-authz.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js",
+    "test:all": "node --test --test-concurrency=1 test/emulator-guard.test.js test/operations.test.js test/seed-emulators.integration.test.js test/emulator-reset.integration.test.js test/authz.integration.test.js test/profile.integration.test.js test/roles.integration.test.js test/team-unlink.integration.test.js test/xp.integration.test.js test/content.integration.test.js test/player-sync.integration.test.js test/season-authz.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js",
+    "test:admin": "node --test --test-concurrency=1 test/operations.test.js test/emulator-reset.integration.test.js test/authz.integration.test.js test/season-authz.integration.test.js test/profile.integration.test.js test/roles.integration.test.js test/team-unlink.integration.test.js test/xp.integration.test.js test/content.integration.test.js test/player-sync.integration.test.js test/membership.integration.test.js test/season-awards.integration.test.js test/chat.integration.test.js"
   },
   "engines": {
     "node": "22"
   },
   "main": "index.js",
   "dependencies": {
-    "firebase-admin": "^12.6.0",
-    "firebase-functions": "^7.0.5"
-  },
-  "devDependencies": {
-    "firebase-functions-test": "^3.1.0"
+    "firebase-admin": "^14.3.0",
+    "firebase-functions": "^7.3.2"
   },
   "private": true
 }

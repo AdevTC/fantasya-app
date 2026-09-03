@@ -64,6 +64,7 @@ export default function CommentSection({ postId }) {
                     className="input flex-1 !py-2 text-sm dark:bg-gray-700 dark:border-gray-600"
                     placeholder="Escribe un comentario..."
                     rows="1"
+                    maxLength="1000"
                 />
                 <button type="submit" className="btn-primary !py-2 text-sm">Comentar</button>
             </form>

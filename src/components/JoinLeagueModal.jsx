@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, runTransaction, getDoc, deleteField } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import toast from 'react-hot-toast';
+import { joinSeasonByInviteCode } from '../services/league-api';
 
 export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
   const [step, setStep] = useState(1);
@@ -80,59 +81,21 @@ export default function JoinLeagueModal({ isOpen, onClose, onLeagueJoined }) {
       const user = auth.currentUser;
       if (!user) throw new Error("Usuario no autenticado.");
 
-      const userProfileRef = doc(db, 'users', user.uid);
-      const userProfileSnap = await getDoc(userProfileRef);
-      if (!userProfileSnap.exists()) throw new Error("No se encontró tu perfil de usuario.");
-
-      const userData = userProfileSnap.data();
-      const username = userData.username;
-      const userPhotoURL = userData.photoURL || ''; // GET REAL PHOTO FROM FIRESTORE
-
-      const seasonRef = doc(db, 'leagues', leagueToJoin.id, 'seasons', seasonToJoin.id);
-
-      // --- TRANSACCIÓN SIMPLIFICADA ---
-      // Ahora la transacción solo hace una cosa: actualiza el mapa de miembros.
-      await runTransaction(db, async (transaction) => {
-        const freshSeasonDoc = await transaction.get(seasonRef);
-        if (!freshSeasonDoc.exists()) throw new Error("La temporada ya no existe.");
-
-        const currentMembers = freshSeasonDoc.data().members;
-
-        if (joinOption === 'claim') {
-          if (!selectedClaim) throw new Error("Debes seleccionar un equipo para reclamar.");
-          const placeholderData = currentMembers[selectedClaim];
-          if (!placeholderData || !placeholderData.isPlaceholder) throw new Error("Este equipo ya ha sido reclamado.");
-
-          const newMemberData = {
-            ...placeholderData,
-            username: username,
-            photoURL: userPhotoURL, // USE REAL PHOTO
-            isPlaceholder: false,
-            // CAMBIO CLAVE: Añadimos una "bandera" para la Cloud Function
-            claimedPlaceholderId: selectedClaim
-          };
-
-          transaction.update(seasonRef, {
-            [`members.${user.uid}`]: newMemberData,
-            // YA NO BORRAMOS EL FANTASMA AQUÍ, lo hará la Cloud Function
-          });
-
-        } else { // Crear un equipo nuevo (esta lógica no cambia)
-          if (!teamName.trim() || teamName.length > 24) throw new Error('El nombre de equipo no es válido.');
-          const newMember = {
-            username: username,
-            teamName: teamName.trim(),
-            photoURL: userPhotoURL, // USE REAL PHOTO
-            role: 'member',
-            isPlaceholder: false,
-            totalPoints: 0,
-            finances: { budget: 200, teamValue: 0 }
-          };
-          transaction.update(seasonRef, { [`members.${user.uid}`]: newMember });
-        }
+      if (joinOption === 'claim' && !selectedClaim) {
+        throw new Error("Debes seleccionar un equipo para reclamar.");
+      }
+      const result = await joinSeasonByInviteCode({
+        leagueId: leagueToJoin.id,
+        seasonId: seasonToJoin.id,
+        inviteCode,
+        ...(joinOption === 'claim'
+          ? { mode: 'claim', placeholderId: selectedClaim }
+          : { mode: 'create', teamName }),
       });
 
-      toast.success(`¡Te has unido a la temporada "${seasonToJoin.name}"! Procesando detalles...`);
+      toast.success(result.alreadyMember
+        ? `Ya pertenecías a la temporada "${seasonToJoin.name}".`
+        : `¡Te has unido a la temporada "${seasonToJoin.name}"!`);
       onLeagueJoined();
       onClose();
 

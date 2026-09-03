@@ -1,10 +1,12 @@
 // src/components/ProtectedRoute.jsx
 import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { requiresEmailVerification } from '../config/email-verification';
 
 export default function ProtectedRoute() {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     // Muestra una pantalla de carga mientras se verifica la autenticación
@@ -20,12 +22,11 @@ export default function ProtectedRoute() {
     return <Navigate to="/" />;
   }
   
-  // Las cuentas antiguas creadas antes de esta fecha no requieren verificación de email.
-  const verificationCutoffDate = new Date('2025-07-17T00:00:00Z');
-  const userCreationDate = new Date(user.metadata.creationTime);
+  if (location.pathname === '/complete-profile') {
+    return <Outlet />;
+  }
 
-  // Si el email del usuario no está verificado Y su cuenta fue creada después de la fecha de corte, se le bloquea.
-  if (!user.emailVerified && userCreationDate > verificationCutoffDate) {
+  if (requiresEmailVerification(user)) {
     // Lo redirigimos a la página de login con un mensaje.
     return <Navigate to="/login" />;
   }

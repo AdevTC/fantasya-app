@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { db } from '../config/firebase';
-import { doc, getDoc, writeBatch } from 'firebase/firestore';
+import { auth } from '../config/firebase';
+import { sendEmailVerification } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { createProfile } from '../services/admin-api';
+import {
+    getUsernameValidationError,
+    normalizeUsername,
+} from '../config/username';
+import { requiresEmailVerification } from '../config/email-verification';
 
 export default function CompleteProfilePage() {
     const { user } = useAuth();
@@ -12,20 +18,12 @@ export default function CompleteProfilePage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const validateUsername = (username) => {
-        if (username.length < 3 || username.length > 16) return "Debe tener entre 3 y 16 caracteres.";
-        if (!/^[a-z0-9_.]+$/.test(username)) return "Solo minúsculas, números, '_' y '.' permitidos.";
-        if (username.startsWith('.') || username.endsWith('.')) return "No puede empezar o acabar con un punto.";
-        if (/^\d/.test(username)) return "No puede empezar con un número.";
-        return null;
-    };
-
     const handleProfileComplete = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError('');
 
-        const validationError = validateUsername(username);
+        const validationError = getUsernameValidationError(username);
         if (validationError) {
             setError(validationError);
             toast.error(validationError);
@@ -34,31 +32,32 @@ export default function CompleteProfilePage() {
         }
 
         try {
-            const usernameRef = doc(db, 'usernames', username);
-            const usernameSnap = await getDoc(usernameRef);
-            if (usernameSnap.exists()) {
-                throw new Error("Este nombre de usuario ya está en uso.");
-            }
-
-            const batch = writeBatch(db);
-            const userDocRef = doc(db, 'users', user.uid);
-            batch.set(userDocRef, { 
-                username, 
-                email: user.email, 
-                createdAt: new Date(),
-                followers: [],
-                following: [] 
-            });
-            batch.set(usernameRef, { uid: user.uid });
-            await batch.commit();
+            await createProfile(normalizeUsername(username));
 
             toast.success('¡Perfil completado! Bienvenido a Fantasya.');
+            if (requiresEmailVerification(user)) {
+                try {
+                    await sendEmailVerification(user);
+                    toast.success('Te hemos enviado el correo de verificación.');
+                    await auth.signOut();
+                } catch (verificationError) {
+                    console.error(verificationError);
+                    toast.error(
+                        'El perfil está guardado. Reintenta el correo desde la pantalla de acceso.',
+                    );
+                }
+                navigate('/login');
+                return;
+            }
             navigate('/dashboard');
 
         } catch (err) {
             console.error(err);
-            setError(err.message);
-            toast.error(err.message);
+            const message = err.code === 'functions/already-exists'
+                ? 'Este nombre de usuario ya está en uso.'
+                : (err.message || 'No se pudo completar el perfil.');
+            setError(message);
+            toast.error(message);
         } finally {
             setLoading(false);
         }

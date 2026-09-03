@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../config/firebase';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    deleteObject,
+    ref,
+    uploadBytes,
+} from 'firebase/storage';
+import { v4 as uuidv4 } from 'uuid';
+import { storage } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { createPost } from '../services/content-api';
+import {
+    createPostAttempt,
+    isSamePostAttempt,
+    revokeBlobUrl,
+    shouldDiscardPostUpload,
+} from '../services/content-client-helpers';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, X, Tag } from 'lucide-react';
-import { grantXp } from '../utils/xp';
 
 export default function CreatePost() {
     const { user, profile } = useAuth();
@@ -15,6 +25,11 @@ export default function CreatePost() {
     const [loading, setLoading] = useState(false);
     const [tags, setTags] = useState([]);
     const [currentTag, setCurrentTag] = useState('');
+    const operationIdRef = useRef(null);
+    const pendingAttemptRef = useRef(null);
+    const submissionInFlightRef = useRef(false);
+
+    useEffect(() => () => revokeBlobUrl(imagePreview), [imagePreview]);
 
     const handleImageChange = (e) => {
         if (e.target.files[0]) {
@@ -40,6 +55,7 @@ export default function CreatePost() {
 
     const handleCreatePost = async (e) => {
         e.preventDefault();
+        if (submissionInFlightRef.current) return;
         if (content.trim().length < 1 && !image) {
             toast.error('La publicación debe tener texto o una imagen.');
             return;
@@ -48,30 +64,67 @@ export default function CreatePost() {
             toast.error('Debes estar autenticado para publicar.');
             return;
         }
+        const fingerprint = JSON.stringify({
+            content: content.trim(),
+            image: image ? [image.name, image.size, image.type, image.lastModified] : null,
+            tags,
+        });
+        const previousAttempt = pendingAttemptRef.current;
+        const sameAttempt = isSamePostAttempt(previousAttempt, {
+            fingerprint,
+            image,
+            uid: user.uid,
+        });
+        submissionInFlightRef.current = true;
         setLoading(true);
         const loadingToast = toast.loading('Publicando...');
 
         try {
-            let imageURL = null;
-            if (image) {
-                const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}_${image.name}`);
-                await uploadBytes(imageRef, image);
-                imageURL = await getDownloadURL(imageRef);
-                await grantXp(user.uid, 'POST_WITH_IMAGE');
-            } else {
-                await grantXp(user.uid, 'POST');
+            if (!sameAttempt) {
+                if (shouldDiscardPostUpload(previousAttempt)) {
+                    try {
+                        await deleteObject(ref(storage, previousAttempt.uploadPath));
+                    } catch (cleanupError) {
+                        if (cleanupError?.code !== 'storage/object-not-found') {
+                            console.error('Error al limpiar la imagen anterior:', cleanupError);
+                            toast.error(
+                                'No se pudo preparar el nuevo intento. Vuelve a intentarlo.',
+                                { id: loadingToast },
+                            );
+                            return;
+                        }
+                    }
+                }
+                operationIdRef.current = uuidv4();
+                pendingAttemptRef.current = createPostAttempt({
+                    fingerprint,
+                    image,
+                    operationId: operationIdRef.current,
+                    uid: user.uid,
+                });
+            }
+            operationIdRef.current = pendingAttemptRef.current.operationId;
+            let payload = pendingAttemptRef.current?.payload;
+            if (!payload) {
+                if (image) {
+                    const imageRef = ref(storage, pendingAttemptRef.current.uploadPath);
+                    await uploadBytes(imageRef, image);
+                }
+                payload = {
+                    content: content.trim(),
+                    hasImage: Boolean(image),
+                    tags: [...tags],
+                };
+                pendingAttemptRef.current.payload = payload;
             }
 
-            await addDoc(collection(db, 'posts'), {
-                content: content.trim(),
-                imageURL: imageURL,
-                tags: tags,
-                authorId: user.uid,
-                authorUsername: profile.username,
-                authorPhotoURL: profile.photoURL || null,
-                createdAt: serverTimestamp(),
-                likes: [],
+            pendingAttemptRef.current.callableStarted = true;
+            await createPost({
+                operationId: operationIdRef.current,
+                ...payload,
             });
+            operationIdRef.current = null;
+            pendingAttemptRef.current = null;
             setContent('');
             setImage(null);
             setImagePreview(null);
@@ -82,6 +135,7 @@ export default function CreatePost() {
             console.error("Error al crear el post:", error);
             toast.error('No se pudo crear la publicación.', { id: loadingToast });
         } finally {
+            submissionInFlightRef.current = false;
             setLoading(false);
         }
     };
@@ -89,6 +143,7 @@ export default function CreatePost() {
     return (
         <div className="bento-card">
             <form onSubmit={handleCreatePost}>
+                <fieldset disabled={loading} className="min-w-0 border-0 p-0 m-0 disabled:pointer-events-none">
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
@@ -105,6 +160,7 @@ export default function CreatePost() {
                             value={currentTag}
                             onChange={(e) => setCurrentTag(e.target.value)}
                             onKeyDown={handleTagInput}
+                            maxLength="32"
                             className="input !w-auto flex-grow !py-1 text-sm bg-gray-100/50 dark:bg-gray-700/50"
                             placeholder="Añade hasta 5 etiquetas (pulsa espacio)"
                             disabled={tags.length >= 5}
@@ -140,13 +196,14 @@ export default function CreatePost() {
                         <label htmlFor="imageUpload" className="cursor-pointer text-emerald-500 hover:text-emerald-600">
                             <ImageIcon size={24} />
                         </label>
-                        <input id="imageUpload" type="file" accept="image/*" onChange={handleImageChange} className="hidden"/>
+                        <input id="imageUpload" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleImageChange} className="hidden"/>
                         <p className="text-xs text-gray-500">{content.length}/280</p>
                     </div>
                     <button type="submit" disabled={loading} className="btn-primary">
                         {loading ? 'Publicando...' : 'Publicar'}
                     </button>
                 </div>
+                </fieldset>
             </form>
         </div>
     );
