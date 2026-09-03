@@ -10,8 +10,10 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import {
   createRulesEnvironment,
@@ -122,6 +124,15 @@ test('only participants can read a chat and its messages', async () => {
     IDS.chat,
     'messages',
   )));
+});
+
+test('participants can list their chats with the production query', async () => {
+  const memberDb = env.authenticatedContext(IDS.member).firestore();
+  const ownChats = query(
+    collection(memberDb, 'chats'),
+    where('participants', 'array-contains', IDS.member),
+  );
+  await assertSucceeds(getDocs(ownChats));
 });
 
 test('participant can send ordinary messages but cannot forge server events', async () => {

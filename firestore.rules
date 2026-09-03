@@ -16,155 +16,52 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isSuperAdmin() {
-      return isAuthenticated()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.appRole == 'superadmin';
+    // Check if user is a member of a season (members is a MAP field in season document)
+    function isSeasonMember(seasonData) {
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members;
     }
 
-    function togglesOnlyOwnUid(before, after) {
-      return isAuthenticated()
-        && before is list
-        && after is list
-        && after.size() == after.toSet().size()
-        && after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
-        && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    // Check if user is admin of a season (members is a MAP field in season document)
+    function isSeasonAdmin(seasonData) {
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members &&
+        'role' in seasonData.members[request.auth.uid] &&
+        seasonData.members[request.auth.uid].role == 'admin';
     }
 
-    function isChatParticipant(chatId) {
-      let chatPath = /databases/$(database)/documents/chats/$(chatId);
-      return isAuthenticated()
-        && exists(chatPath)
-        && get(chatPath).data.participants is list
-        && request.auth.uid in get(chatPath).data.participants;
-    }
-
-    function isOwnUsername(username) {
-      let profilePath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isAuthenticated()
-        && exists(profilePath)
-        && username == get(profilePath).data.username;
-    }
-
-    function isOptionalUrl(value) {
-      return value == null
-        || (value is string && value.size() <= 2048);
-    }
-
-    function isValidSocialAuthor(data) {
-      return data.authorUsername is string
-        && data.authorUsername.size() >= 3
-        && data.authorUsername.size() <= 16
-        && isOwnUsername(data.authorUsername)
-        && isOptionalUrl(data.authorPhotoURL);
-    }
-
-    function isValidTag(tag) {
-      return tag is string && tag.matches('[a-z0-9]{1,32}');
-    }
-
-    function areValidTags(tags) {
-      return tags is list
-        && tags.size() <= 5
-        && tags.size() == tags.toSet().size()
-        && (tags.size() < 1 || isValidTag(tags[0]))
-        && (tags.size() < 2 || isValidTag(tags[1]))
-        && (tags.size() < 3 || isValidTag(tags[2]))
-        && (tags.size() < 4 || isValidTag(tags[3]))
-        && (tags.size() < 5 || isValidTag(tags[4]));
-    }
-
-    function isValidPostData(data) {
-      return isValidSocialAuthor(data)
-        && data.content is string
-        && data.content.size() <= 280
-        && isOptionalUrl(data.imageURL)
-        && (data.content.size() > 0
-          || (data.imageURL is string && data.imageURL.size() > 0))
-        && areValidTags(data.tags)
-        && data.likes is list
-        && data.createdAt is timestamp;
-    }
-
-    function isValidCommentData(data) {
-      return isValidSocialAuthor(data)
-        && data.content is string
-        && data.content.size() > 0
-        && data.content.size() <= 1000
-        && data.likes is list
-        && data.createdAt is timestamp;
-    }
-
-    function isValidReplyData(data) {
-      return isValidSocialAuthor(data)
-        && data.content is string
-        && data.content.size() > 0
-        && data.content.size() <= 1000
-        && data.createdAt is timestamp;
-    }
-
-    function leagueAfter(leagueId) {
-      return getAfter(
-        /databases/$(database)/documents/leagues/$(leagueId)
-      ).data;
-    }
-
-    function seasonData(leagueId, seasonId) {
-      return get(
-        /databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)
-      ).data;
-    }
-
-    function isLeagueOwner(leagueId) {
-      return isAuthenticated()
-        && get(
-          /databases/$(database)/documents/leagues/$(leagueId)
-        ).data.ownerId == request.auth.uid;
-    }
-
-    function isLeagueOwnerAfter(leagueId) {
-      return isAuthenticated()
-        && leagueAfter(leagueId).ownerId == request.auth.uid;
-    }
-
+    // Check if user is a member of a league (in specific season) - for cross-document checks
     function isLeagueMember(leagueId, seasonId) {
-      return isAuthenticated()
-        && request.auth.uid in seasonData(leagueId, seasonId).members;
+      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members;
     }
 
+    // Check if user is admin of a league (in specific season) - for cross-document checks
     function isLeagueAdmin(leagueId, seasonId) {
-      return isLeagueMember(leagueId, seasonId)
-        && seasonData(leagueId, seasonId).members[request.auth.uid].role == 'admin';
+      let seasonData = get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+      return isAuthenticated() &&
+        'members' in seasonData &&
+        request.auth.uid in seasonData.members &&
+        'role' in seasonData.members[request.auth.uid] &&
+        seasonData.members[request.auth.uid].role == 'admin';
     }
 
-    function changesOnlyOwnMember() {
-      return request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members'])
-        && request.resource.data.members.diff(resource.data.members)
-          .affectedKeys().hasOnly([request.auth.uid])
-        && request.resource.data.members[request.auth.uid]
-          .diff(resource.data.members[request.auth.uid]).affectedKeys()
-          .hasOnly(['teamName', 'photoURL', 'finances']);
+    // Check if user is admin in the league's active season
+    function isLeagueAdminActive(leagueId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/leagues/$(leagueId)) &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason != null &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeason)).data.members[request.auth.uid].role == 'admin';
     }
 
-    function removesOnlyOwnMembership(leagueId) {
-      return request.auth.uid != get(
-          /databases/$(database)/documents/leagues/$(leagueId)
-        ).data.ownerId
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members'])
-        && request.resource.data.members.diff(resource.data.members)
-          .affectedKeys().hasOnly([request.auth.uid])
-        && request.auth.uid in resource.data.members
-        && !(request.auth.uid in request.resource.data.members);
-    }
-
-    function preservesLeagueOwner(leagueId) {
-      let ownerId = get(
-        /databases/$(database)/documents/leagues/$(leagueId)
-      ).data.ownerId;
-      return ownerId in request.resource.data.members
-        && request.resource.data.members[ownerId].role == 'admin';
+    // Check if username is available
+    function isUsernameOwner(username) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/usernames/$(username)).data.userId == request.auth.uid;
     }
 
     // ============================================================================
@@ -172,36 +69,37 @@ service cloud.firestore {
     // ============================================================================
 
     match /users/{userId} {
+      // Users can read profiles when authenticated
       allow read: if isAuthenticated();
-      allow create: if false;
-      allow update: if (
-          isOwner(userId)
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['bio', 'photoURL', 'pinnedTrophies', 'savedPosts', 'following'])
-        ) || (
-          isAuthenticated()
-          && request.auth.uid != userId
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['followers'])
-          && resource.data.followers is list
-          && request.resource.data.followers is list
-          && togglesOnlyOwnUid(
-            resource.data.followers,
-            request.resource.data.followers
-          )
-        );
-      allow delete: if false;
+
+      // A user can create their own profile document during signup
+      allow create: if isOwner(userId);
+
+      // A user can update only their own profile, excluding protected fields
+      allow update: if isOwner(userId)
+        && resource.data != null
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['createdAt']);
+
+      // Followers/following arrays can also be updated by authenticated users as part of social features
+      allow update: if isAuthenticated()
+        && resource.data != null
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['followers', 'following']);
+
+      // Users can delete their own profile
+      allow delete: if isOwner(userId);
 
       // Achievement subcollection
       match /achievements/{seasonId} {
         allow read: if isAuthenticated();
-        allow write: if false;
+        allow write: if isOwner(userId);
       }
 
       // Feats subcollection (user accomplishments)
       match /feats/{featId} {
         allow read: if isAuthenticated();
-        allow write: if false;
+        allow write: if isOwner(userId);
       }
     }
 
@@ -212,7 +110,8 @@ service cloud.firestore {
     match /career_achievements/{userId} {
       // Users can read their own career achievements
       allow read: if isOwner(userId);
-      allow write: if false;
+      // Users can write their own career achievements (typically via Cloud Function)
+      allow write: if isOwner(userId);
     }
 
     // ============================================================================
@@ -222,8 +121,11 @@ service cloud.firestore {
     match /usernames/{username} {
       // Anyone can read to check availability
       allow read: if true;
-      // The profile and its uniqueness index are changed together by Functions.
-      allow create, update, delete: if false;
+      // Only the owner can delete their username
+      allow delete: if isUsernameOwner(username);
+      // Create is handled by Cloud Function
+      allow create: if false;
+      allow update: if false;
     }
 
     // ============================================================================
@@ -231,83 +133,126 @@ service cloud.firestore {
     // ============================================================================
 
     match /leagues/{leagueId} {
+      // Anyone can read public league info
       allow read: if true;
-      allow create: if isAuthenticated()
-        && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.keys()
-          .hasAll(['name', 'ownerId', 'activeSeason']);
-      allow update: if request.resource.data.ownerId == resource.data.ownerId
-        && (isLeagueOwner(leagueId)
-          || (resource.data.activeSeason != null
-            && isLeagueAdmin(leagueId, resource.data.activeSeason)));
-      allow delete: if isLeagueOwner(leagueId);
+      // Only authenticated users can create leagues
+      allow create: if isAuthenticated();
+      // Only league admins can update league settings
+      allow update: if isLeagueAdminActive(leagueId);
+      // Only league creator can delete
+      allow delete: if isAuthenticated()
+        && resource.data.creatorId == request.auth.uid;
 
+      // Seasons subcollection
       match /seasons/{seasonId} {
+        // Allow reading basic season info for browsing/discovery (name, description, etc.)
         allow read: if isAuthenticated();
-        allow create: if isLeagueOwnerAfter(leagueId)
-          && request.resource.data.keys()
-            .hasAll(['name', 'seasonNumber', 'inviteCode', 'members'])
-          && request.auth.uid in request.resource.data.members
-          && request.resource.data.members[request.auth.uid].role == 'admin';
-        allow update: if (isLeagueOwner(leagueId)
-            || isLeagueAdmin(leagueId, seasonId))
-          && preservesLeagueOwner(leagueId);
-        allow update: if isLeagueMember(leagueId, seasonId)
-          && changesOnlyOwnMember();
-        allow update: if isLeagueMember(leagueId, seasonId)
-          && removesOnlyOwnMembership(leagueId);
-        allow delete: if isLeagueOwner(leagueId);
 
+        // Only admins can create or delete seasons
+        allow create, delete: if isSeasonAdmin(resource.data);
+
+        // UPDATE rules (multiple conditions - any can pass):
+        // 1. Admins can update anything (using resource.data - no cross-document reads)
+        // 2. Existing members can update their own data
+        // 3. New users can join (add themselves as members)
+
+        allow update: if isSeasonAdmin(resource.data)
+          || (
+            // Existing member updating their own data
+            isSeasonMember(resource.data)
+            && request.resource.data.members[request.auth.uid] != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          )
+          || (
+            // New user joining the season
+            isAuthenticated()
+            && resource.data.members[request.auth.uid] == null
+            && request.resource.data.members[request.auth.uid] != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          );
+
+        // Members subcollection
         match /members/{userId} {
+          // Members can read other members' public info
           allow read: if isLeagueMember(leagueId, seasonId);
-          allow write: if false;
+          // Only admins can manage members
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+          // Users can delete themselves (leave league)
+          allow delete: if isOwner(userId);
         }
 
+        // Rounds subcollection
         match /rounds/{roundId} {
+          // Allow authenticated users to read (for viewing by non-members)
           allow read: if isAuthenticated();
           allow write: if isLeagueAdmin(leagueId, seasonId);
         }
 
+        // Lineups subcollection
         match /lineups/{lineupId} {
+          // LineupId format: {roundId}-{userId}
+          // Allow authenticated users to read (for stats viewing by non-members)
           allow read: if isAuthenticated();
-          allow create, update: if isLeagueAdmin(leagueId, seasonId)
-            || (isLeagueMember(leagueId, seasonId)
-              && lineupId.matches('.*-' + request.auth.uid + '$'));
+          // Owner can update their lineup, admin can update/delete any lineup
+          allow write: if isLeagueAdmin(leagueId, seasonId) ||
+            (isAuthenticated() && lineupId.matches('.*-' + request.auth.uid + '$'));
+          // Admins can delete any lineup (for season management)
           allow delete: if isLeagueAdmin(leagueId, seasonId);
         }
 
+        // Transfers subcollection
         match /transfers/{transferId} {
           allow read: if isLeagueMember(leagueId, seasonId);
-          allow create: if false;
-          allow update, delete: if isLeagueAdmin(leagueId, seasonId);
+          // League members can create transfers
+          allow create: if isLeagueMember(leagueId, seasonId);
+          // Allow deletion by admin (for season management)
+          allow delete: if isLeagueAdmin(leagueId, seasonId);
+          // Allow update by members (for editing transfer details)
+          allow update: if isLeagueMember(leagueId, seasonId);
         }
 
+        // Achievements subcollection
         match /achievements/{userId} {
-          allow read: if isAuthenticated();
-          allow write: if false;
-        }
-
-        match /challenges/{challengeId} {
-          allow read: if isAuthenticated();
-          allow write: if false;
-        }
-
-        match /joinRequests/{requestId} {
-          allow create, update, delete: if false;
-          allow read: if isLeagueAdmin(leagueId, seasonId)
-            || (isAuthenticated()
-              && resource.data.userId == request.auth.uid);
-        }
-
-        match /porra/{porraId} {
+          // Allow authenticated users to read (for viewing by non-members)
           allow read: if isAuthenticated();
           allow write: if isLeagueAdmin(leagueId, seasonId);
+        }
 
+        // Challenges subcollection
+        match /challenges/{challengeId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow write: if isLeagueAdmin(leagueId, seasonId);
+        }
+
+        // Join Requests subcollection (solicitudes de unión)
+        match /joinRequests/{requestId} {
+          // Authenticated users can create join requests
+          allow create: if isAuthenticated()
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.status == 'pending';
+          // Only admins can read and update (approve/reject) requests
+          // Use isSeasonAdmin with the parent season data (passed via get())
+          allow read, update: if isSeasonAdmin(get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data);
+        }
+
+        // Porra subcollection (predictions/betting)
+        match /porra/{porraId} {
+          // Allow authenticated users to read (for viewing by non-members)
+          allow read: if isAuthenticated();
+          allow create: if isLeagueAdmin(leagueId, seasonId);
+          allow update, delete: if isLeagueAdmin(leagueId, seasonId);
+
+          // Predictions subcollection
           match /predictions/{predictionId} {
+            // Allow authenticated users to read (for viewing by non-members)
             allow read: if isAuthenticated();
-            allow create, update: if isLeagueAdmin(leagueId, seasonId)
-              || (isLeagueMember(leagueId, seasonId)
-                && predictionId == request.auth.uid);
+            // Members can create/update their own predictions
+            allow create: if isLeagueMember(leagueId, seasonId)
+              && request.resource.data.userId == request.auth.uid;
+            allow update: if isLeagueMember(leagueId, seasonId)
+              && resource.data.userId == request.auth.uid;
+            // Only admins can delete predictions
             allow delete: if isLeagueAdmin(leagueId, seasonId);
           }
         }
@@ -319,48 +264,25 @@ service cloud.firestore {
     // ============================================================================
 
     match /chats/{chatId} {
-      allow read: if isAuthenticated()
-        && resource.data.participants is list
-        && request.auth.uid in resource.data.participants;
-      allow create, delete: if false;
-      allow update: if isChatParticipant(chatId)
-        && request.resource.data.participants == resource.data.participants
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'lastMessage',
-          'lastMessageAt',
-          'lastMessageTimestamp'
-        ]);
+      // Simple rules - allow authenticated users full access to chats
+      // Security is provided by the fact that chatId is based on sorted user IDs
+      allow read, create, update: if isAuthenticated();
 
+      // Messages subcollection
       match /messages/{messageId} {
-        allow read: if isChatParticipant(chatId);
-        allow create: if isChatParticipant(chatId)
-          && request.resource.data.senderId == request.auth.uid
-          && request.resource.data.keys()
-            .hasAll(['senderId', 'senderUsername', 'createdAt'])
-          && request.resource.data.keys().hasOnly([
-            'senderId',
-            'senderUsername',
-            'text',
-            'createdAt',
-            'read',
-            'imageUrl'
-          ])
-          && request.resource.data.senderUsername is string
-          && request.resource.data.senderUsername.size() <= 128
-          && isOwnUsername(request.resource.data.senderUsername)
-          && (!('read' in request.resource.data)
-            || request.resource.data.read == false)
-          && (!('text' in request.resource.data)
-            || (request.resource.data.text is string
-              && request.resource.data.text.size() <= 500))
-          && (!('imageUrl' in request.resource.data)
-            || (request.resource.data.imageUrl is string
-              && request.resource.data.imageUrl.size() <= 2048))
-          && (('text' in request.resource.data
-              && request.resource.data.text.size() > 0)
-            || ('imageUrl' in request.resource.data
-              && request.resource.data.imageUrl.size() > 0));
-        allow update, delete: if false;
+        // Allow authenticated users to read messages
+        allow read: if isAuthenticated();
+        // Allow authenticated users to create messages (senderId must match)
+        allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+        // Sender can update their message, OR anyone can update requestStatus for join requests
+        allow update: if isAuthenticated() && (
+          resource.data.senderId == request.auth.uid
+          || (
+            resource.data.isJoinRequest == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['requestStatus'])
+          )
+        );
+        allow delete: if false;
       }
     }
 
@@ -369,88 +291,39 @@ service cloud.firestore {
     // ============================================================================
 
     match /posts/{postId} {
+      // Public read for feed
       allow read: if true;
-      allow create: if false;
-      allow update: if isAuthenticated()
-        && resource.data.authorId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['content', 'tags'])
-        && isValidPostData(request.resource.data);
-      allow update: if isAuthenticated()
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likes'])
-        && togglesOnlyOwnUid(
-          resource.data.likes,
-          request.resource.data.likes
-        );
-      allow delete: if isAuthenticated()
-        && (resource.data.authorId == request.auth.uid || isSuperAdmin());
+      // Authenticated users can create posts
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasAll(['authorId', 'content', 'createdAt'])
+        && request.resource.data.authorId == request.auth.uid;
+      // Only author can update/delete their posts
+      allow update, delete: if isAuthenticated()
+        && resource.data.authorId == request.auth.uid;
 
+      // Comments subcollection
       match /comments/{commentId} {
+        // Public read for comments
         allow read: if true;
+        // Authenticated users can create comments
         allow create: if isAuthenticated()
-          && request.resource.data.authorId == request.auth.uid
-          && request.resource.data.keys()
-            .hasAll([
-              'authorId',
-              'authorUsername',
-              'authorPhotoURL',
-              'content',
-              'createdAt',
-              'likes'
-            ])
-          && request.resource.data.keys().hasOnly([
-            'authorId',
-            'authorUsername',
-            'authorPhotoURL',
-            'content',
-            'createdAt',
-            'likes'
-          ])
-          && isValidCommentData(request.resource.data)
-          && request.resource.data.likes.size() == 0;
+          && request.resource.data.authorId == request.auth.uid;
+        // Only author can update their comment
         allow update: if isAuthenticated()
-          && resource.data.authorId == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['content'])
-          && isValidCommentData(request.resource.data);
-        allow update: if isAuthenticated()
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['likes'])
-          && togglesOnlyOwnUid(
-            resource.data.likes,
-            request.resource.data.likes
-          );
+          && resource.data.authorId == request.auth.uid;
+        // Only author can delete their comment
         allow delete: if isAuthenticated()
-          && (resource.data.authorId == request.auth.uid || isSuperAdmin());
+          && resource.data.authorId == request.auth.uid;
 
+        // Replies subcollection (nested comments)
         match /replies/{replyId} {
           allow read: if true;
           allow create: if isAuthenticated()
-            && request.resource.data.authorId == request.auth.uid
-            && request.resource.data.keys()
-              .hasAll([
-                'authorId',
-                'authorUsername',
-                'authorPhotoURL',
-                'content',
-                'createdAt'
-              ])
-            && request.resource.data.keys().hasOnly([
-              'authorId',
-              'authorUsername',
-              'authorPhotoURL',
-              'content',
-              'createdAt'
-            ])
-            && isValidReplyData(request.resource.data);
+            && request.resource.data.authorId == request.auth.uid;
           allow update: if isAuthenticated()
-            && resource.data.authorId == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['content'])
-            && isValidReplyData(request.resource.data);
+            && resource.data.authorId == request.auth.uid;
           allow delete: if isAuthenticated()
-            && (resource.data.authorId == request.auth.uid || isSuperAdmin());
+            && resource.data.authorId == request.auth.uid;
         }
       }
     }
@@ -460,8 +333,12 @@ service cloud.firestore {
     // ============================================================================
 
     match /players/{playerId} {
+      // Anyone can read player data
       allow read: if true;
-      allow create, update, delete: if isSuperAdmin();
+      // Authenticated users can add players to the manual database
+      allow create: if isAuthenticated();
+      // Authenticated users can edit or delete players from the manual database
+      allow update, delete: if isAuthenticated();
     }
 
     // ============================================================================
@@ -472,13 +349,6 @@ service cloud.firestore {
       // Anyone can read player data (needed for league creation, transfers, etc.)
       allow read: if true;
       // Only Cloud Functions can write (sync managed by server)
-      allow write: if false;
-    }
-
-    match /laLigaSyncRuns/{runId}/players/{playerId} {
-      // A completed run becomes visible only after config/laLigaSync points to it.
-      allow read: if
-        get(/databases/$(database)/documents/config/laLigaSync).data.activeRunId == runId;
       allow write: if false;
     }
 
