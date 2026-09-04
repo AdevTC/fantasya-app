@@ -62,6 +62,50 @@ test('pins a reproducible Gen2 request-count observation before legacy deletion'
   }
 });
 
+test('requires predeclared aggregate exact-SHA usage evidence before deletion', () => {
+  assert.match(runbook, /uso autenticado/i);
+  assert.match(runbook, /SHA exacto[\s\S]*(?:sesiones|eventos) autenticad/i);
+  assert.match(runbook, /`MIN_AUTHENTICATED_SESSIONS`\s*=\s*(?:[2-9]|\d{2,})/);
+  assert.match(runbook, /al menos 2 sesiones[\s\S]*no operad/i);
+  assert.match(
+    runbook,
+    /antes de (?:definir|iniciar) `T0`[\s\S]*fuente agregada[\s\S]*umbral/i,
+  );
+  assert.match(
+    runbook,
+    /(?:fuente|umbral)[\s\S]*no (?:pueden|se pueden|puede)[\s\S]*retroactiv/i,
+  );
+  assert.match(
+    runbook,
+    /operador[\s\S]*release[\s\S]*auditoría[\s\S]*smoke[\s\S]*no cuentan/i,
+  );
+  assert.match(runbook, /actividad ambigua[\s\S]*no atribuida[\s\S]*no cuenta/i);
+  assert.match(runbook, /misma ventana[\s\S]*30 días/i);
+  assert.match(
+    runbook,
+    /si no existe[\s\S]*fuente[\s\S]*`T0` no puede (?:empezar|comenzar)/i,
+  );
+  assert.match(
+    runbook,
+    /telemetría[\s\S]*privacidad[\s\S]*tarea no destructiva separada/i,
+  );
+  assert.match(runbook, /conteo agregado[\s\S]*sesiones autenticadas[\s\S]*SHA exacto/i);
+  assert.match(
+    runbook,
+    /catálogo de jugadores[\s\S]*(?:evento|conteo) agregado[\s\S]*sólo lectura/i,
+  );
+  assert.match(
+    runbook,
+    /sin identificadores de usuario[\s\S]*IPs[\s\S]*tokens[\s\S]*datos personales/i,
+  );
+  assert.match(
+    runbook,
+    /evidencia (?:faltante|parcial)[\s\S]*por debajo del umbral[\s\S]*bloquea[\s\S]*nueva ventana completa/i,
+  );
+  assert.match(runbook, /aprobación destructiva separada/i);
+  assert.match(runbook, /Esta guía no autoriza ejecutar el borrado/i);
+});
+
 test('extends the metric query beyond the minimum 30-day window', () => {
   assert.match(runbook, /`QUERY_END_UTC`/);
   assert.match(runbook, /`MAX_TIMEOUT_SECONDS`/);

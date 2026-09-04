@@ -210,12 +210,45 @@ Conservar logs y tiempos sin copiar datos personales ni secretos.
 
 ## Fase 7: retirada posterior de las Functions legacy
 
-Esta fase no forma parte del despliegue inicial. La ventana válida no empieza
-con el despliegue de Functions, con la apertura o merge de la PR ni con un check
-de Vercel pendiente. Definir `T0` sólo después de comprobar en Vercel que el
-frontend nuevo está activo en producción con el SHA exacto del merge y de
-registrar ese SHA, la URL del deployment y la hora de confirmación en UTC. Las
-llamadas anteriores a `T0`, incluidas las del frontend legacy antes del merge,
+Esta fase no forma parte del despliegue inicial. Antes de definir `T0`, fijar en
+el ticket una fuente agregada de evidencia de uso autenticado y el umbral
+`MIN_AUTHENTICATED_SESSIONS` = 2. El mínimo es de al menos 2 sesiones no
+operadoras durante la misma ventana de 30 días. La fuente y el umbral no pueden
+elegirse ni cambiarse retroactivamente.
+
+La fuente debe ser exacta, respetuosa con la privacidad y consultable en modo de
+sólo lectura. Registrar antes de `T0` su proveedor, proyecto, dataset o vista,
+versión de esquema y consulta inmutable. La vista agregada debe usar dimensiones
+equivalentes a `frontend_sha`, `authenticated`, `traffic_class`, día UTC y tipo de
+evento, y atribuir directamente al SHA exacto las sesiones autenticadas de
+producción. La consulta fijada debe devolver para (`START_UTC`, `END_UTC`]:
+
+- un conteo agregado de sesiones autenticadas atribuidas al SHA exacto, filtrado a
+  tráfico de producción no operador y comparado con
+  `MIN_AUTHENTICATED_SESSIONS`;
+- para el catálogo de jugadores, un evento agregado y un conteo agregado de carga
+  desde Firestore en modo de sólo lectura para ese mismo SHA y rango.
+
+La evidencia conservada contiene sólo esos agregados, la identificación técnica y
+versión de la fuente, la consulta, el SHA y el rango UTC. La evidencia se conserva
+sin identificadores de usuario, nombres, correos, IPs,
+tokens ni otros datos personales. Las acciones de operador,
+el tráfico de release, auditoría y smoke no cuentan.
+La actividad ambigua o no atribuida no cuenta. El origen debe excluir esas clases
+antes de agregar; no se infieren ni corrigen manualmente después.
+
+Actualmente no existe una fuente validada que cumpla este contrato. Si no existe
+esa fuente, `T0` no puede comenzar. La telemetría o instrumentación necesaria debe
+diseñarse, revisarse en privacidad, implementarse y aprobarse en
+una tarea no destructiva separada. Esta guía no implementa ni autoriza telemetría,
+despliegues o borrados.
+
+La ventana válida tampoco empieza con el despliegue de Functions, con la apertura
+o merge de la PR ni con un check de Vercel pendiente. Definir `T0` sólo después de
+que la fuente y el umbral anteriores estén fijados y de comprobar en Vercel que el
+frontend nuevo está activo en producción con el SHA exacto del merge y de registrar
+ese SHA, la URL del deployment y la hora de confirmación en UTC.
+Las llamadas anteriores a `T0`, incluidas las del frontend legacy antes del merge,
 no cuentan semánticamente para elegir `T0` ni forman parte de la ventana mínima.
 Sin embargo, si una llamada iniciada antes de `T0` termina o se muestrea en un
 punto posterior a `START_UTC`, el gate la trata como positiva y exige un nuevo
@@ -230,11 +263,12 @@ pero no es el extremo final de la consulta de evidencia. Una solicitud anterior 
 hasta `END_UTC` no es una prueba válida de cero llamadas.
 
 Cero llamadas en las tres Functions legacy no basta por sí solo: puede significar
-que nadie usó la aplicación. Durante la misma ventana se debe conservar evidencia
-sanitizada de que el SHA exacto del frontend de la versión actual recibió uso
-significativo y autenticado, excluyendo auditorías y smokes. Además, realizar un
+que nadie usó la aplicación. Durante la misma ventana se debe conservar la evidencia
+agregada predeclarada de uso autenticado de la versión actual. Además, realizar un
 smoke controlado que cargue el catálogo de jugadores desde Firestore en modo de
-sólo lectura y confirmar en la observación que no invoca ningún servicio legacy.
+sólo lectura y confirmar en la observación que no invoca ningún servicio legacy;
+este smoke no cuenta para `MIN_AUTHENTICATED_SESSIONS` ni sustituye el evento
+agregado de catálogo producido por sesiones no operadoras.
 
 Observar individualmente durante esa ventana continua estas tres Functions:
 
@@ -336,17 +370,23 @@ consulta debe cubrir además el timeout real más alto de las tres Functions.
    margen, salida sanitizada de los tres mapeos Function-servicio, filtro literal,
    respuesta JSON de todas las páginas por servicio, suma final individual y una
    captura donde sean visibles proyecto, métrica, filtros y rango UTC; añadir la
-   comprobación sanitizada de uso significativo y autenticado del SHA actual y el
-   resultado del smoke de catálogo. No guardar identificadores de usuario, tokens,
-   cabeceras de autorización, secretos ni datos personales.
+   identificación técnica y versión de la fuente agregada predeclarada, su consulta
+   inmutable, el conteo agregado exacto de sesiones autenticadas del SHA actual, el
+   evento y conteo agregados de catálogo de sólo lectura, y el resultado separado
+   del smoke de catálogo. No guardar identificadores de usuario, nombres, correos,
+   IPs, tokens, cabeceras de autorización, secretos ni datos personales.
 
 No borrar ninguna si cualquiera registra una llamada, faltan datos de
 observación, el frontend del SHA nuevo no está confirmado o existe una anomalía
 de reglas. Si no hay uso significativo durante la ventana, o la actividad consiste
 sólo en auditorías o smokes, no borrar: iniciar una nueva ventana cuando exista uso
-real. Exigir que las tres muestren exactamente cero invocaciones durante los 30 días
-continuos, repetir el inventario `content-v2` y obtener una nueva aprobación
-destructiva separada. Sólo entonces se puede ejecutar:
+real. La evidencia faltante o parcial, ambigua, por debajo del umbral, atribuida a un
+SHA no exacto o procedente de una fuente distinta de la predeclarada bloquea la
+eliminación. Después de que la fuente sea válida exige una nueva ventana completa de
+30 días; no se recupera ni completa retroactivamente. Exigir que las tres muestren
+exactamente cero invocaciones durante esos 30 días continuos, repetir el inventario
+`content-v2` y obtener una nueva aprobación destructiva separada. Sólo entonces se
+puede ejecutar:
 
 ```powershell
 npm run delete:prod:functions:legacy-sync
@@ -376,6 +416,7 @@ usuario, tokens, secretos ni datos personales:
   sin nombres, correos ni otros identificadores de usuario;
 - aprobación, inicio/fin y resultado de cada grupo;
 - smoke de lectura y funcional, métricas observadas y cualquier umbral activado;
-- ventana completa de 30 días continuos de las tres Functions legacy, uso
-  significativo y autenticado del SHA actual y smoke de catálogo de sólo lectura
-  antes de considerar su retirada.
+- ventana completa de 30 días continuos de las tres Functions legacy, definición
+  pre-T0 de fuente y umbral, conteo agregado exacto de sesiones autenticadas del SHA
+  actual, evento/conteo agregado de catálogo de sólo lectura y resultado separado
+  del smoke antes de considerar su retirada.
