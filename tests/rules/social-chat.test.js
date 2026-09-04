@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import test, { after, before, beforeEach } from 'node:test';
 import {
   assertFails,
@@ -132,7 +133,14 @@ test('participants can list their chats with the production query', async () => 
     collection(memberDb, 'chats'),
     where('participants', 'array-contains', IDS.member),
   );
-  await assertSucceeds(getDocs(ownChats));
+  const result = await assertSucceeds(getDocs(ownChats));
+  assert.deepEqual(result.docs.map((snapshot) => snapshot.id), [IDS.chat]);
+
+  const anotherUsersChats = query(
+    collection(memberDb, 'chats'),
+    where('participants', 'array-contains', IDS.outsider),
+  );
+  await assertFails(getDocs(anotherUsersChats));
 });
 
 test('participant can send ordinary messages but cannot forge server events', async () => {
