@@ -668,7 +668,7 @@ test('runbook preserves additive Functions and states billing limitations', () =
   );
   assert.match(
     productionRunbook,
-    /Functions aditivas quedan desplegadas sin uso[\s\S]*release separada, diseñada y aprobada/,
+    /Las Functions aditivas y los tres endpoints legacy permanecen desplegados durante\s+el incidente[\s\S]*Cualquier corrección o retirada del backend requiere una release\s+separada, diseñada y aprobada/,
   );
   assert.match(
     productionRunbook,
