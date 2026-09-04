@@ -31,6 +31,12 @@ test('starts the legacy zero-call gate only after the exact frontend SHA is acti
   );
 });
 
+test('prohibits the unsafe Firestore rollback from being reused', () => {
+  assert.match(runbook, /`f42effd`[\s\S]*no (?:es|constituye)[\s\S]*rollback seguro/i);
+  assert.match(runbook, /no existe[\s\S]*ruleset legacy[\s\S]*preaprobado/i);
+  assert.doesNotMatch(runbook, /últimos archivos de reglas legacy conocidos como buenos/i);
+});
+
 test('pins a reproducible Gen2 request-count observation before legacy deletion', () => {
   assert.match(runbook, /`run\.googleapis\.com\/request_count`/);
   assert.match(runbook, /`cloud_run_revision`/);
@@ -41,6 +47,11 @@ test('pins a reproducible Gen2 request-count observation before legacy deletion'
   assert.match(runbook, /\(`startTime`, `endTime`\]/);
   assert.match(runbook, /120 segundos/i);
   assert.match(runbook, /respuesta JSON[\s\S]*captura/i);
+  assert.match(runbook, /al menos 30 días continuos/i);
+  assert.match(runbook, /cero (?:llamadas|solicitudes)[\s\S]*no (?:basta|es suficiente)/i);
+  assert.match(runbook, /uso significativo[\s\S]*versión actual/i);
+  assert.match(runbook, /catálogo de jugadores[\s\S]*sólo lectura/i);
+  assert.match(runbook, /si no hay uso significativo[\s\S]*no borrar/i);
 
   for (const functionName of [
     'syncLaLigaPlayers',
@@ -51,7 +62,7 @@ test('pins a reproducible Gen2 request-count observation before legacy deletion'
   }
 });
 
-test('extends the metric query beyond the minimum 24-hour window', () => {
+test('extends the metric query beyond the minimum 30-day window', () => {
   assert.match(runbook, /`QUERY_END_UTC`/);
   assert.match(runbook, /`MAX_TIMEOUT_SECONDS`/);
   assert.match(

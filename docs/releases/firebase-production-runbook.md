@@ -24,8 +24,9 @@ retirada.
 Los tres endpoints relacionados con esta capacidad —`syncLaLigaPlayers`,
 `getLaLigaSyncStatus` y `clearLaLigaPlayers`— siguen desplegados temporalmente
 para mantener la compatibilidad. No deben invocarse manualmente ni retirarse
-hasta superar el gate de observación de 24 horas y la aprobación separada de la
-fase 7.
+hasta superar el gate de observación de al menos 30 días continuos, respaldado
+por uso significativo de la versión actual, y la aprobación separada de la fase
+7.
 
 ## Puertas obligatorias antes de empezar
 
@@ -190,22 +191,22 @@ principal, y aceptar sólo con una aprobación IAM específica.
 No usar `git reset --hard`, reescribir historial ni editar producción de forma
 improvisada desde la consola.
 
-Si el fallo ocurre después de publicar Firestore o Storage, el orden de
-rollback es obligatorio:
+El commit `f42effd` no es un rollback seguro y nunca debe volver a desplegarse.
+Ese cambio reabrió temporalmente mutaciones del cliente sobre campos
+privilegiados de usuarios y sobre la pertenencia a chats. No existe ningún
+ruleset legacy amplio preaprobado para rollback.
 
-1. restaurar en Git los últimos archivos de reglas legacy conocidos como buenos
-   mediante un commit/revert revisado;
-2. desplegar y verificar primero esas reglas legacy mientras el frontend V2
-   sigue publicado;
-3. confirmar que las lecturas/escrituras compatibles vuelven a funcionar;
-4. sólo entonces crear, verificar y publicar el revert del frontend mediante
-   Git/Vercel.
+Si el fallo ocurre después de publicar reglas de Firestore o Storage, preferir
+una corrección hacia delante revisada, basada en las reglas actuales verificadas,
+y desplegarla sólo mediante un commit probado y aprobado. Si un frontend anterior
+necesita realmente un cambio de compatibilidad en reglas, crear y probar primero
+un commit de compatibilidad estrecho antes de publicar ese frontend. No debilitar
+reglas ad hoc durante un incidente.
 
-Después de restaurar las reglas legacy y publicar el revert del frontend, las
-Functions aditivas quedan desplegadas sin uso. Cualquier corrección o retirada
-del backend requiere una release separada, diseñada y aprobada; no se improvisa
-ningún comando de Functions durante el incidente. Mantener los endpoints legacy
-y conservar logs y tiempos sin copiar datos personales ni secretos.
+Las Functions aditivas y los tres endpoints legacy permanecen desplegados durante
+el incidente. Cualquier corrección o retirada del backend requiere una release
+separada, diseñada y aprobada; no se improvisa ningún comando de Functions.
+Conservar logs y tiempos sin copiar datos personales ni secretos.
 
 ## Fase 7: retirada posterior de las Functions legacy
 
@@ -221,13 +222,19 @@ punto posterior a `START_UTC`, el gate la trata como positiva y exige un nuevo
 `T0`. Este falso positivo conservador es deliberado: la métrica `DELTA` prevalece
 sobre la hora de inicio que se atribuya a la llamada.
 
-Fijar `START_UTC = T0` y `END_UTC = T0 + 24 horas`, ambos como timestamps RFC
-3339 terminados en `Z`, por ejemplo `2026-09-03T10:00:00Z` y
-`2026-09-04T10:00:00Z`. No mover los extremos después de iniciar la ventana.
-`END_UTC` marca el fin de las 24 horas mínimas, pero no es el extremo final de
-la consulta de evidencia. Una solicitud anterior a `END_UTC` puede quedar en un
-punto `DELTA` con `endTime` posterior; consultar sólo hasta `END_UTC` no es una
-prueba válida de cero llamadas.
+Fijar `START_UTC = T0` y `END_UTC = T0 + 30 días`, ambos como timestamps RFC 3339
+terminados en `Z`. No mover los extremos después de iniciar la ventana. El gate
+requiere al menos 30 días continuos. `END_UTC` marca el fin de esa ventana mínima,
+pero no es el extremo final de la consulta de evidencia. Una solicitud anterior a
+`END_UTC` puede quedar en un punto `DELTA` con `endTime` posterior; consultar sólo
+hasta `END_UTC` no es una prueba válida de cero llamadas.
+
+Cero llamadas en las tres Functions legacy no basta por sí solo: puede significar
+que nadie usó la aplicación. Durante la misma ventana se debe conservar evidencia
+sanitizada de que el SHA exacto del frontend de la versión actual recibió uso
+significativo y autenticado, excluyendo auditorías y smokes. Además, realizar un
+smoke controlado que cargue el catálogo de jugadores desde Firestore en modo de
+sólo lectura y confirmar en la observación que no invoca ningún servicio legacy.
 
 Observar individualmente durante esa ventana continua estas tres Functions:
 
@@ -284,7 +291,7 @@ consulta debe cubrir además el timeout real más alto de las tres Functions.
    `MAX_TIMEOUT_SECONDS = 540`, `QUERY_END_UTC` es `END_UTC + 12 minutos`.
    Esperar hasta que el reloj UTC alcance o supere `QUERY_END_UTC` antes de
    consultar. `QUERY_END_UTC` es el extremo de evidencia; `END_UTC` sigue siendo
-   el fin de la ventana mínima de 24 horas.
+   el fin de la ventana mínima de 30 días.
 
 2. Para cada uno de los tres `SERVICE_NAME`, abrir el método de sólo lectura
    [`projects.timeSeries.list`](https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list)
@@ -324,18 +331,22 @@ consulta debe cubrir además el timeout real más alto de las tres Functions.
    paginada por completo o una consulta distinta no equivale a cero. La captura
    de Metrics Explorer que muestre `No data` por sí sola tampoco basta.
 
-4. Conservar en la PR o ticket un artefacto de evidencia con: SHA y URL de
+4. Conservar en la PR o ticket un artefacto de evidencia sanitizada con: SHA y URL de
    Vercel, `START_UTC`/`END_UTC`/`QUERY_END_UTC`, timeout máximo y cálculo del
    margen, salida sanitizada de los tres mapeos Function-servicio, filtro literal,
    respuesta JSON de todas las páginas por servicio, suma final individual y una
-   captura donde sean visibles proyecto, métrica, filtros y rango UTC. No guardar
-   tokens, cabeceras de autorización, secretos ni datos personales.
+   captura donde sean visibles proyecto, métrica, filtros y rango UTC; añadir la
+   comprobación sanitizada de uso significativo y autenticado del SHA actual y el
+   resultado del smoke de catálogo. No guardar identificadores de usuario, tokens,
+   cabeceras de autorización, secretos ni datos personales.
 
 No borrar ninguna si cualquiera registra una llamada, faltan datos de
 observación, el frontend del SHA nuevo no está confirmado o existe una anomalía
-de reglas. Exigir que las tres muestren exactamente cero invocaciones durante
-la ventana completa, repetir el inventario `content-v2` y obtener una nueva
-aprobación destructiva separada. Sólo entonces se puede ejecutar:
+de reglas. Si no hay uso significativo durante la ventana, o la actividad consiste
+sólo en auditorías o smokes, no borrar: iniciar una nueva ventana cuando exista uso
+real. Exigir que las tres muestren exactamente cero invocaciones durante los 30 días
+continuos, repetir el inventario `content-v2` y obtener una nueva aprobación
+destructiva separada. Sólo entonces se puede ejecutar:
 
 ```powershell
 npm run delete:prod:functions:legacy-sync
@@ -356,12 +367,15 @@ Firestore en modo de sólo lectura.
 
 ## Registro mínimo de la release
 
-Guardar en la PR o ticket, sin secretos ni datos personales:
+Guardar en la PR o ticket únicamente evidencia sanitizada, sin identificadores de
+usuario, tokens, secretos ni datos personales:
 
 - SHA de PR, SHA de merge y SHAs de rollback;
 - resultado y hora de CI, Vercel, preflights e inventarios;
-- identidad que realizó cada operación Firebase y owner implicado en Vercel;
+- rol responsable de cada operación Firebase y rol owner implicado en Vercel,
+  sin nombres, correos ni otros identificadores de usuario;
 - aprobación, inicio/fin y resultado de cada grupo;
 - smoke de lectura y funcional, métricas observadas y cualquier umbral activado;
-- ventana completa de 24 horas de las tres Functions legacy antes de considerar
-  su retirada.
+- ventana completa de 30 días continuos de las tres Functions legacy, uso
+  significativo y autenticado del SHA actual y smoke de catálogo de sólo lectura
+  antes de considerar su retirada.
