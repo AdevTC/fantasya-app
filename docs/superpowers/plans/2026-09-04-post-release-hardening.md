@@ -34,7 +34,7 @@
 - Consumes: the existing `IDS.chat`, `IDS.member`, `IDS.outsider` fixture and the production `array-contains` query shape.
 - Produces: exact result-set and negative-query assertions with no production-code changes.
 
-- [ ] **Step 1: Capture the current focused baseline**
+- [x] **Step 1: Capture the current focused baseline**
 
 Run:
 
@@ -45,7 +45,7 @@ node scripts/run-with-firebase-emulators.mjs "node --test --test-concurrency=1 t
 
 Expected: the current suite passes before the coverage-only change.
 
-- [ ] **Step 2: Add exact result and negative-query assertions**
+- [x] **Step 2: Add exact result and negative-query assertions**
 
 Import strict assertions:
 
@@ -66,7 +66,7 @@ const anotherUsersChats = query(
 await assertFails(getDocs(anotherUsersChats));
 ```
 
-- [ ] **Step 3: Verify the focused rules suite**
+- [x] **Step 3: Verify the focused rules suite**
 
 Run:
 
@@ -77,7 +77,7 @@ node scripts/run-with-firebase-emulators.mjs "node --test --test-concurrency=1 t
 
 Expected: every `social-chat` test passes, including the exact member result and rejected cross-user query.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add tests/rules/social-chat.test.js
@@ -95,7 +95,7 @@ git commit -m "test: strengthen chat list query coverage"
 **Interfaces:**
 - Produces: a tested runbook that rejects the unsafe rules rollback and requires a 30-day, usage-backed legacy observation window.
 
-- [ ] **Step 1: Write failing runbook contract assertions**
+- [x] **Step 1: Write failing runbook contract assertions**
 
 Add a test that requires the runbook to identify `f42effd` as prohibited and to state that no broad legacy ruleset is a pre-approved rollback:
 
@@ -117,7 +117,7 @@ assert.match(runbook, /catálogo de jugadores[\s\S]*sólo lectura/i);
 assert.match(runbook, /si no hay uso significativo[\s\S]*no borrar/i);
 ```
 
-- [ ] **Step 2: Run the unit contract and observe RED**
+- [x] **Step 2: Run the unit contract and observe RED**
 
 Run:
 
@@ -128,7 +128,7 @@ node --test tests/unit/release-runbook-observability.test.js
 
 Expected: FAIL because the current runbook still calls 24 hours sufficient and describes a generic legacy-rules restoration.
 
-- [ ] **Step 3: Correct the rollback procedure**
+- [x] **Step 3: Correct the rollback procedure**
 
 Update phase 6 to state all of the following explicitly:
 
@@ -139,7 +139,7 @@ Update phase 6 to state all of the following explicitly:
 - if an older frontend truly requires a compatibility rules change, create and test a narrow compatibility commit before publishing that frontend;
 - do not weaken rules ad hoc during an incident.
 
-- [ ] **Step 4: Correct the retirement gate for a low-traffic friends application**
+- [x] **Step 4: Correct the retirement gate for a low-traffic friends application**
 
 Keep the existing Cloud Run metric, timeout, sampling-delay and pagination procedure, but change the minimum retirement gate to:
 
@@ -153,7 +153,7 @@ Keep the existing Cloud Run metric, timeout, sampling-delay and pagination proce
 
 Update the release-record checklist to store only sanitized evidence, never user identifiers, tokens, or secrets.
 
-- [ ] **Step 5: Run the focused unit and rules tests**
+- [x] **Step 5: Run the focused unit and rules tests**
 
 Run:
 
@@ -165,7 +165,7 @@ node scripts/run-with-firebase-emulators.mjs "node --test --test-concurrency=1 t
 
 Expected: both commands pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add tests/unit/release-runbook-observability.test.js docs/releases/firebase-production-runbook.md
@@ -182,7 +182,7 @@ git commit -m "docs: harden rollback and legacy retirement gates"
 **Interfaces:**
 - Produces: a clean hardening branch with full local verification evidence and no production mutation.
 
-- [ ] **Step 1: Run the full verification gate**
+- [x] **Step 1: Run the full verification gate**
 
 Run:
 
@@ -193,7 +193,7 @@ npm run verify
 
 Expected: exit `0`; all unit, rules, Functions, build, syntax, and lint-budget checks pass.
 
-- [ ] **Step 2: Inspect the final diff and repository state**
+- [x] **Step 2: Inspect the final diff and repository state**
 
 Run:
 
@@ -205,6 +205,6 @@ git log --oneline main..HEAD
 
 Expected: no whitespace errors, no uncommitted files, and only the planned hardening commits.
 
-- [ ] **Step 3: Review before any remote action**
+- [x] **Step 3: Review before any remote action**
 
 Generate a branch diff package and obtain a whole-branch code review. Do not push, open a PR, merge, deploy, or delete Functions as part of this task without a later explicit workflow step.
